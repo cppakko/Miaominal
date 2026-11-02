@@ -40,14 +40,14 @@ pub(crate) fn session_summary(
         if profile.is_local() {
             return tab.title().to_owned();
         }
-        return format!("{}@{}:{}", profile.username, profile.host, profile.port);
+        return profile.summary();
     }
 
     if let Some(profile) = session.pending_profile.as_ref() {
         if profile.is_local() {
             return tab.title().to_owned();
         }
-        return format!("{}@{}:{}", profile.username, profile.host, profile.port);
+        return profile.summary();
     }
 
     tab.title().to_owned()

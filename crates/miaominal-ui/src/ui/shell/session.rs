@@ -394,7 +394,8 @@ impl AppView {
                 .resolved_profile_for_tab(tab_id)
         });
 
-        let Some(profile) = profile else {
+        // SFTP rides on SSH; Telnet and local terminals have no file channel.
+        let Some(profile) = profile.filter(SessionProfile::is_ssh) else {
             self.shell.status_message =
                 i18n::string("session.messages.open_sftp_requires_active_ssh");
             cx.notify();
@@ -452,7 +453,7 @@ impl AppView {
                     .reopen_profile_for_tab(tab_id, None)?;
                 Some(ClosedTabBundle::Sftp { profile })
             }
-            TabKindTag::Session | TabKindTag::LocalTerminal => {
+            TabKindTag::Session | TabKindTag::LocalTerminal | TabKindTag::Telnet => {
                 let mut removed = self.owned_tab_indices_for_topbar(index);
                 removed.sort_unstable();
                 removed.dedup();

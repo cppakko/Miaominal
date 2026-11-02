@@ -66,7 +66,9 @@ fn tab_kind_can_open_in_new_window(
     match kind {
         TabKindTag::Sftp => true,
         TabKindTag::Session => session_purpose == Some(SessionPurpose::Terminal),
-        TabKindTag::LocalTerminal => session_purpose == Some(SessionPurpose::Terminal),
+        TabKindTag::LocalTerminal | TabKindTag::Telnet => {
+            session_purpose == Some(SessionPurpose::Terminal)
+        }
         TabKindTag::Hosts => false,
     }
 }

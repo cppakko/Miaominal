@@ -24,6 +24,9 @@ pub(crate) enum TabKindTag {
     Session,
     Sftp,
     LocalTerminal,
+    /// Telnet terminal: a remote session without SSH sidecars (SFTP,
+    /// monitoring, agent, forwarding).
+    Telnet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

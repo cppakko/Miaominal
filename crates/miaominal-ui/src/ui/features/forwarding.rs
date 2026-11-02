@@ -97,7 +97,7 @@ fn apply_forwarding_change(
     };
     let profile = profiles
         .iter_mut()
-        .find(|profile| &profile.id == profile_id && !profile.is_local())
+        .find(|profile| &profile.id == profile_id && profile.is_ssh())
         .ok_or_else(|| {
             anyhow::anyhow!(i18n::string(
                 "errors.forwarding.validation.selected_host_profile_missing"
@@ -444,7 +444,7 @@ impl ForwardingController {
         SearchableVec::new(
             profiles
                 .iter()
-                .filter(|profile| !profile.is_local())
+                .filter(|profile| profile.is_ssh())
                 .map(ProfileSelectItem::new)
                 .collect::<Vec<_>>(),
         )

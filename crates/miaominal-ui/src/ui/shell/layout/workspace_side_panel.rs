@@ -151,7 +151,7 @@ pub(in crate::ui::shell::layout) fn render_session_workspace_side_panel(
         .workspace
         .tabs
         .get(session_tab_id)
-        .is_some_and(|tab| tab.is_local_terminal());
+        .is_some_and(|tab| tab.is_plain_terminal());
     let side_panel_view = if is_local_terminal {
         SessionSidePanelView::Snippets
     } else {

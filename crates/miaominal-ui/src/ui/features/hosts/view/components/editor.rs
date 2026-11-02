@@ -21,7 +21,7 @@ use gpui_kit::component::stepper::Stepper;
 use gpui_kit::component::{IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, SharedString, Window, div, px, rgb};
-use miaominal_core::profile::{AuthMethod, ProfileKind, ShellType};
+use miaominal_core::profile::{AuthMethod, ShellType};
 
 use gpui_kit::base::TestSupportExt;
 use gpui_kit::component::Size;
@@ -55,7 +55,6 @@ impl HostsController {
         let scroll_handle = self.host_editor_scroll_handle();
 
         let kind_layout = HostEditorKindLayout::for_kind(host_editor.profile_kind);
-        let is_local_profile = kind_layout.is_local();
         let title = i18n::string(kind_layout.title_key(host_editor_is_new));
         let show_delete = !host_editor_is_new && self.selected_profile().is_some();
 
@@ -124,6 +123,25 @@ impl HostsController {
                     });
                 }
             });
+        let telnet_agent_exec_tabs = SegmentedSwitch::new("host-editor-telnet-agent-exec")
+            .selected_index(if host_editor.telnet_agent_exec_enabled {
+                1
+            } else {
+                0
+            })
+            .width(204.0)
+            .height(34.0)
+            .padding(2.0)
+            .item(i18n::string("settings.values.off"))
+            .item(i18n::string("settings.values.on"))
+            .on_click({
+                let controller = controller.clone();
+                move |index, _, cx| {
+                    controller.update(cx, |controller, cx| {
+                        controller.set_telnet_agent_exec_enabled(index == 1, cx);
+                    });
+                }
+            });
 
         let shell_type_selected_index = match host_editor.shell_type {
             ShellType::Posix => 0,
@@ -157,25 +175,24 @@ impl HostsController {
             });
 
         let profile_kind_tabs = SegmentedSwitch::new("host-editor-profile-kind")
-            .selected_index(if is_local_profile { 1 } else { 0 })
+            .selected_index(kind_layout.kind_index())
             .width(320.0)
             .height(34.0)
             .padding(2.0)
             .item(i18n::string("hosts.editor.profile_kinds.ssh"))
+            .item(i18n::string("hosts.editor.profile_kinds.telnet"))
             .item_with_tooltip(
                 i18n::string("hosts.editor.profile_kinds.local"),
                 i18n::string("hosts.local_only.hint"),
             )
             .on_click({
                 let controller = controller.clone();
-                move |index, _, cx| {
-                    let kind = match index {
-                        0 => ProfileKind::Ssh,
-                        1 => ProfileKind::Local,
-                        _ => return,
+                move |index, window, cx| {
+                    let Some(kind) = HostEditorKindLayout::kind_for_index(index) else {
+                        return;
                     };
                     controller.update(cx, |controller, cx| {
-                        controller.set_host_editor_profile_kind(kind, cx);
+                        controller.set_host_editor_profile_kind(kind, window, cx);
                     });
                 }
             });
@@ -258,7 +275,7 @@ impl HostsController {
                         false,
                     ))
                     .child(surface_text_input_stack(
-                        i18n::string("hosts.editor.fields.ssh_port"),
+                        i18n::string(kind_layout.port_label_key()),
                         host_editor.port_input.clone(),
                         TextInputSurface::Low,
                         false,
@@ -345,6 +362,12 @@ impl HostsController {
                 }),
         );
 
+        // Telnet only offers an optional auto-login password.
+        let credential_auth_method = if kind_layout.shows_auth_method() {
+            auth_method
+        } else {
+            AuthMethod::Password
+        };
         let credentials_section = SectionCard::new(
             AppIcon::Key,
             i18n::string("hosts.editor.sections.credentials"),
@@ -356,18 +379,28 @@ impl HostsController {
                     TextInputSurface::Low,
                     false,
                 ))
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(roles.on_surface_variant))
-                                .child(i18n::string("hosts.editor.fields.identity_source")),
-                        )
-                        .child(auth_method_tabs),
-                )
-                .when(auth_method == AuthMethod::Password, |this| {
+                .when(kind_layout.shows_auth_method(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(i18n::string("hosts.editor.fields.identity_source")),
+                            )
+                            .child(auth_method_tabs),
+                    )
+                })
+                .when(kind_layout.is_telnet(), |this| {
+                    this.child(
+                        div()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(roles.on_surface_variant))
+                            .child(i18n::string("hosts.editor.telnet.auto_login_hint")),
+                    )
+                })
+                .when(credential_auth_method == AuthMethod::Password, |this| {
                     this.child(surface_secret_text_input_stack(
                         i18n::string("hosts.editor.fields.password"),
                         host_editor.password_input.clone(),
@@ -383,7 +416,8 @@ impl HostsController {
                     ))
                 })
                 .when(
-                    auth_method == AuthMethod::ManagedKey || auth_method == AuthMethod::KeyFile,
+                    credential_auth_method == AuthMethod::ManagedKey
+                        || credential_auth_method == AuthMethod::KeyFile,
                     |this| {
                         this.child(
                             v_flex()
@@ -410,7 +444,7 @@ impl HostsController {
                         )
                     },
                 )
-                .when(auth_method == AuthMethod::Agent, |this| {
+                .when(credential_auth_method == AuthMethod::Agent, |this| {
                     this.child(surface_text_input_stack(
                         i18n::string("hosts.editor.fields.agent_identity"),
                         host_editor.agent_identity_input.clone(),
@@ -418,7 +452,7 @@ impl HostsController {
                         false,
                     ))
                 })
-                .when(auth_method != AuthMethod::Password, |this| {
+                .when(credential_auth_method != AuthMethod::Password, |this| {
                     this.child(surface_text_input_stack(
                         i18n::string("hosts.editor.fields.certificate"),
                         host_editor.certificate_input.clone(),
@@ -433,19 +467,42 @@ impl HostsController {
             i18n::string("hosts.editor.sections.advanced"),
             v_flex()
                 .gap_3()
-                .when(kind_layout.shows_ssh_advanced_fields(), |this| {
+                .when(kind_layout.is_telnet(), |this| {
                     this.child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(miaominal_settings::FontSize::Body.scaled())
-                                .text_color(rgb(roles.on_surface_variant))
-                                .child(i18n::string("hosts.editor.fields.agent_forwarding")),
-                        )
-                        .child(agent_forwarding_tabs),
-                )
-                .child(surface_text_editor_stack(
+                        v_flex()
+                            .id("host-editor-telnet-agent-exec-section")
+                            .test_support()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(i18n::string("hosts.editor.fields.telnet_agent_exec")),
+                            )
+                            .child(telnet_agent_exec_tabs)
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(i18n::string("hosts.editor.telnet.agent_exec_hint")),
+                            ),
+                    )
+                })
+                .when(kind_layout.shows_agent_forwarding(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .text_color(rgb(roles.on_surface_variant))
+                                    .child(i18n::string("hosts.editor.fields.agent_forwarding")),
+                            )
+                            .child(agent_forwarding_tabs),
+                    )
+                })
+                .when(kind_layout.shows_remote_advanced_fields(), |this| {
+                    this.child(surface_text_editor_stack(
                     i18n::string("hosts.editor.fields.startup_command"),
                     host_editor.startup_command_input.clone(),
                     116.0,
@@ -481,7 +538,7 @@ impl HostsController {
                                         .bg(rgb(roles.surface_container_low)),
                                 ),
                         )
-                        .child(
+                        .when(kind_layout.shows_proxy_jump(), |this| this.child(
                             v_flex()
                                 .w_full()
                                 .gap_2()
@@ -534,8 +591,8 @@ impl HostsController {
                                         )
                                     },
                                 ),
-                        )
-                        .child(
+                        ))
+                        .when(kind_layout.shows_proxy_jump(), |this| this.child(
                             div()
                                 .w_full()
                                 .rounded(px(14.0))
@@ -619,10 +676,10 @@ impl HostsController {
                                                 ),
                                         ),
                                 ),
-                        )
+                        ))
                 )
                 })
-                .child(
+                .when(kind_layout.shows_environment_variables(), |this| this.child(
                     v_flex()
                         .w_full()
                         .gap_3()
@@ -633,7 +690,7 @@ impl HostsController {
                             .child(i18n::string("hosts.editor.environment_variables.section_title")),
                         )
                         .child(environment_variables),
-                )
+                ))
                 .when(kind_layout.shows_shell_type(), |this| {
                     this.child(
                     v_flex()

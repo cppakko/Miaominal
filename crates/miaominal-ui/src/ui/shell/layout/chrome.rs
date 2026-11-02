@@ -104,7 +104,7 @@ fn snapshot_supports_sftp(kind: TopbarTabVisualKind) -> bool {
 fn topbar_tab_icon(kind: TopbarTabVisualKind) -> Option<AppIcon> {
     match kind {
         TopbarTabVisualKind::Hosts => None,
-        TopbarTabVisualKind::Session => Some(AppIcon::LaptopMinimal),
+        TopbarTabVisualKind::Session | TopbarTabVisualKind::Telnet => Some(AppIcon::LaptopMinimal),
         TopbarTabVisualKind::Sftp => Some(AppIcon::FolderSymlink),
         TopbarTabVisualKind::LocalTerminal => Some(AppIcon::Computer),
     }
@@ -122,7 +122,9 @@ fn tab_is_error_status(tab: &TabDescriptor, session: Option<&SessionTabSnapshot>
             let closed = i18n::string("session.status.closed");
             tab.status == error || tab.status == closed
         }
-        TabKindTag::LocalTerminal => session.is_some_and(connection_state_is_error),
+        TabKindTag::LocalTerminal | TabKindTag::Telnet => {
+            session.is_some_and(connection_state_is_error)
+        }
         TabKindTag::Hosts => false,
     }
 }
@@ -717,6 +719,7 @@ impl ChromeAppViewExt for AppView {
                     TabKindTag::Session => TopbarTabVisualKind::Session,
                     TabKindTag::Sftp => TopbarTabVisualKind::Sftp,
                     TabKindTag::LocalTerminal => TopbarTabVisualKind::LocalTerminal,
+                    TabKindTag::Telnet => TopbarTabVisualKind::Telnet,
                 };
 
                 VisibleTopbarTab {
@@ -1329,6 +1332,9 @@ impl ChromeAppViewExt for AppView {
         });
         let workspace = session.is_some() || sftp.is_some();
         let local = active_tab.is_some_and(|tab| tab.is_local_terminal());
+        // The resource monitor and SFTP transfers ride on SSH; local and
+        // Telnet terminals offer neither.
+        let ssh_sidecars = !active_tab.is_some_and(|tab| tab.is_plain_terminal());
         let connected = session.as_ref().is_some_and(|session| session.connected())
             || sftp.as_ref().is_some_and(|(_, state)| state.connected());
         let profile = active_tab.and_then(|tab| {
@@ -1548,7 +1554,7 @@ impl ChromeAppViewExt for AppView {
                                         ),
                                     )
                                 })
-                                .when(session.is_some() && !local, |row| {
+                                .when(session.is_some() && ssh_sidecars, |row| {
                                     row.child(
                                         tool(
                                             "session-monitor-panel-toggle",
@@ -1571,7 +1577,11 @@ impl ChromeAppViewExt for AppView {
                                             },
                                         ),
                                     )
-                                    .child(
+                                })
+                                // The agent runs over SSH exec channels or, for
+                                // Telnet, inside the terminal tab itself.
+                                .when(session.is_some() && !local, |row| {
+                                    row.child(
                                         tool(
                                             "session-agent-panel-toggle",
                                             AppIcon::Sparkles,
@@ -1588,7 +1598,7 @@ impl ChromeAppViewExt for AppView {
                                         ),
                                     )
                                 })
-                                .when(!local, |row| {
+                                .when(ssh_sidecars, |row| {
                                     row.child(
                                         tool(
                                             "sftp-progress-center-toggle",

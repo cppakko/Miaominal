@@ -271,7 +271,11 @@ impl AppView {
                 crate::ui::i18n::string("hosts.home.local")
             } else {
                 if profile.group.trim().is_empty() {
-                    "SSH".into()
+                    if profile.is_telnet() {
+                        "Telnet".into()
+                    } else {
+                        "SSH".into()
+                    }
                 } else {
                     profile.group.clone()
                 }
@@ -288,7 +292,9 @@ impl AppView {
                         profile.username,
                         profile.group,
                         profile.tags.join(" "),
-                        if profile.is_local() {
+                        if profile.is_telnet() {
+                            "telnet"
+                        } else if profile.is_local() {
                             "local terminal shell 本地终端"
                         } else {
                             "ssh sftp"

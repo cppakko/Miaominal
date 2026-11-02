@@ -114,6 +114,7 @@ pub(in crate::ui::shell) fn render_workspace_surface(
 
     let session_index = app.active_terminal_session_index(cx);
     let session_tab_id = session_index.and_then(|index| app.workspace.tabs.id_at(index));
+    // Telnet tabs keep the agent: it types commands into the terminal itself.
     let is_local_terminal_tab = session_tab_id
         .and_then(|tab_id| app.workspace.tabs.get(tab_id))
         .is_some_and(|tab| tab.is_local_terminal());

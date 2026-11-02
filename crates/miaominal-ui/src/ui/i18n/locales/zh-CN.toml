@@ -669,7 +669,6 @@ connected = "已连接"
 [session.footer.tooltips]
 monitor_panel = "切换左侧面板"
 agent_panel = "切换聊天面板"
-sftp_panel = "打开 SFTP 面板"
 
 [session.workspace]
 connecting_forwarding_rule = "正在连接转发规则"
@@ -1306,6 +1305,8 @@ add = "添加主机"
 edit = "编辑主机"
 add_local = "添加本地终端"
 edit_local = "编辑本地终端"
+add_telnet = "添加 Telnet 主机"
+edit_telnet = "编辑 Telnet 主机"
 
 [hosts.editor.sections]
 general = "常规"
@@ -1315,7 +1316,12 @@ terminal = "终端"
 
 [hosts.editor.profile_kinds]
 ssh = "SSH"
+telnet = "Telnet"
 local = "本地终端"
+
+[hosts.editor.telnet]
+agent_exec_hint = "关闭时 AI 只读取屏幕并给出命令，由你自己执行；开启后 AI 会直接在此终端中输入并执行命令，需要远端是带 base64 和 mktemp 的 Linux/Unix shell。"
+auto_login_hint = "可选。服务器提示登录名或密码时会自动输入已保存的值。Telnet 以明文传输这些信息。"
 
 [hosts.editor.auth_methods]
 password = "密码"
@@ -1336,6 +1342,8 @@ select_working_directory = "选择工作目录"
 [hosts.editor.fields]
 address = "地址"
 ssh_port = "SSH 端口"
+telnet_port = "Telnet 端口"
+telnet_agent_exec = "允许 AI 执行命令"
 label = "名称"
 group = "分组"
 tags = "标签"

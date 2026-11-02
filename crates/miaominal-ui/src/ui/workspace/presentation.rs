@@ -22,6 +22,7 @@ pub(crate) enum TopbarTabVisualKind {
     Session,
     Sftp,
     LocalTerminal,
+    Telnet,
 }
 
 #[derive(Clone, Debug)]

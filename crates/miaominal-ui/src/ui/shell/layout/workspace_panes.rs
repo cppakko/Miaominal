@@ -749,7 +749,7 @@ impl WorkspacePanesAppViewExt for AppView {
                             .get(&pane_id)
                             .and_then(|parked| parked.active_tab)
                             .and_then(|tab_id| view.workspace.tabs.get(tab_id))
-                            .is_some_and(|tab| tab.is_local_terminal());
+                            .is_some_and(|tab| tab.is_plain_terminal());
 
                         build_terminal_context_menu(
                             menu,
@@ -968,7 +968,7 @@ impl WorkspacePanesAppViewExt for AppView {
                             .workspace
                             .active_tab
                             .and_then(|tab_id| view.workspace.tabs.get(tab_id))
-                            .is_some_and(|tab| tab.is_local_terminal());
+                            .is_some_and(|tab| tab.is_plain_terminal());
 
                         build_terminal_context_menu(
                             menu,

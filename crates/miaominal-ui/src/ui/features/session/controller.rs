@@ -817,6 +817,12 @@ impl SessionController {
             &[("connection", &connection)],
         );
         let profile_id = profile.id.clone();
+        // Telnet sessions have no SSH sidecars, so they never collect monitoring.
+        let (tab_kind, auto_collect_monitoring) = if profile.is_telnet() {
+            (TabKindTag::Telnet, false)
+        } else {
+            (TabKindTag::Session, auto_collect_monitoring)
+        };
 
         let session = SessionTabState {
             profile_id,
@@ -845,13 +851,7 @@ impl SessionController {
             owner_route: None,
         };
         (
-            SessionTabDescriptor::new(
-                id,
-                title,
-                status,
-                TabKindTag::Session,
-                TabPlacement::TopLevel,
-            ),
+            SessionTabDescriptor::new(id, title, status, tab_kind, TabPlacement::TopLevel),
             session.into(),
         )
     }

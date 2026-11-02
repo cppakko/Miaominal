@@ -128,7 +128,16 @@ impl TabDescriptor {
     }
 
     pub(crate) fn is_session(&self) -> bool {
-        matches!(self.kind, TabKindTag::Session | TabKindTag::LocalTerminal)
+        matches!(
+            self.kind,
+            TabKindTag::Session | TabKindTag::LocalTerminal | TabKindTag::Telnet
+        )
+    }
+
+    /// Terminal tabs without SSH sidecars: no SFTP, resource monitor, agent
+    /// commands or port forwarding.
+    pub(crate) fn is_plain_terminal(&self) -> bool {
+        matches!(self.kind, TabKindTag::LocalTerminal | TabKindTag::Telnet)
     }
 
     pub(crate) fn is_local_terminal(&self) -> bool {

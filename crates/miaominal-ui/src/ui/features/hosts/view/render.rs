@@ -58,7 +58,6 @@ fn build_host_context_menu(
     actions: HostPageActions,
     profile_id: String,
     is_favorite: bool,
-    is_local: bool,
     is_ssh: bool,
 ) -> PopupMenu {
     let favorite_controller = controller.clone();
@@ -96,7 +95,8 @@ fn build_host_context_menu(
             }
         });
     }));
-    let menu = if is_local {
+    // SFTP needs an SSH connection; local and Telnet hosts have no file channel.
+    let menu = if !is_ssh {
         menu
     } else {
         menu.item(
@@ -177,8 +177,7 @@ fn profile_item(
     let more_id = menu_id.clone();
     let connect_id = menu_id.clone();
     let is_favorite = profile.is_favorite;
-    let is_local = profile.is_local();
-    let is_ssh = profile.kind == miaominal_core::profile::ProfileKind::Ssh;
+    let is_ssh = profile.is_ssh();
     let right_controller = controller.clone();
     let right_actions = actions.clone();
     let more_actions = actions.clone();
@@ -207,7 +206,6 @@ fn profile_item(
                 more_actions.clone(),
                 more_id.clone(),
                 is_favorite,
-                is_local,
                 is_ssh,
             )
         });
@@ -221,7 +219,6 @@ fn profile_item(
                 right_actions.clone(),
                 menu_id.clone(),
                 is_favorite,
-                is_local,
                 is_ssh,
             )
         })
@@ -262,8 +259,7 @@ impl HostsController {
             HostPageActions::new(on_connect, on_edit, on_open_sftp),
             profile.id.clone(),
             profile.is_favorite,
-            profile.is_local(),
-            profile.kind == miaominal_core::profile::ProfileKind::Ssh,
+            profile.is_ssh(),
         )
     }
 

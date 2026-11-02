@@ -807,7 +807,6 @@ connected = "CONNECTED"
 [session.footer.tooltips]
 monitor_panel = "Toggle left panel"
 agent_panel = "Toggle chat panel"
-sftp_panel = "Open SFTP panel"
 
 [session.workspace]
 connecting_forwarding_rule = "Connecting forwarding rule"
@@ -1444,6 +1443,8 @@ add = "Add Host"
 edit = "Edit Host"
 add_local = "Add Local Terminal"
 edit_local = "Edit Local Terminal"
+add_telnet = "Add Telnet Host"
+edit_telnet = "Edit Telnet Host"
 
 [hosts.editor.sections]
 general = "General"
@@ -1453,7 +1454,12 @@ terminal = "Terminal"
 
 [hosts.editor.profile_kinds]
 ssh = "SSH"
+telnet = "Telnet"
 local = "Local terminal"
+
+[hosts.editor.telnet]
+agent_exec_hint = "Off: the AI assistant only reads the screen and suggests commands for you to run. On: it types and runs commands in this terminal itself; needs a Linux/Unix shell with base64 and mktemp."
+auto_login_hint = "Optional. When the server asks for a login or password, the saved values are typed automatically. Telnet sends them unencrypted."
 
 [hosts.editor.auth_methods]
 password = "Password"
@@ -1474,6 +1480,8 @@ select_working_directory = "Select the working directory"
 [hosts.editor.fields]
 address = "Address"
 ssh_port = "SSH Port"
+telnet_port = "Telnet Port"
+telnet_agent_exec = "Let AI run commands"
 label = "Name"
 group = "Group"
 tags = "Tags"

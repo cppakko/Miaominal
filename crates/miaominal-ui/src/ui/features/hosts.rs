@@ -81,6 +81,8 @@ pub(in crate::ui) struct HostEditorForms {
     pub(in crate::ui) shell_type: ShellType,
     pub(in crate::ui) editing_auth_method: AuthMethod,
     pub(in crate::ui) agent_forwarding_enabled: bool,
+    /// Telnet: allow the AI assistant to type commands into the terminal.
+    pub(in crate::ui) telnet_agent_exec_enabled: bool,
     pub(in crate::ui) profile_kind: ProfileKind,
     pub(in crate::ui) local_shell_input: Entity<InputState>,
     pub(in crate::ui) local_shell_args_input: Entity<InputState>,
@@ -511,6 +513,9 @@ impl HostsController {
             agent_forwarding_enabled: selected_profile_data
                 .as_ref()
                 .is_some_and(|profile| profile.agent_forwarding),
+            telnet_agent_exec_enabled: selected_profile_data
+                .as_ref()
+                .is_some_and(|profile| profile.telnet_agent_exec),
             profile_kind: selected_profile_data
                 .as_ref()
                 .map(|profile| profile.kind)
@@ -767,7 +772,8 @@ impl HostsController {
             .borrow()
             .iter()
             .filter(|profile| {
-                !profile.is_local()
+                // Only SSH hosts can carry a ProxyJump hop.
+                profile.is_ssh()
                     && profile.id != target_profile_id
                     && !chained_ids.contains(profile.id.as_str())
             })
@@ -821,6 +827,15 @@ impl HostsController {
         cx.notify();
     }
 
+    pub(in crate::ui) fn set_telnet_agent_exec_enabled(
+        &self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.host_editor_forms_mut().telnet_agent_exec_enabled = enabled;
+        cx.notify();
+    }
+
     pub(in crate::ui) fn set_agent_forwarding_enabled(
         &self,
         enabled: bool,
@@ -833,13 +848,34 @@ impl HostsController {
     pub(in crate::ui) fn set_host_editor_profile_kind(
         &self,
         kind: ProfileKind,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.host_editor_forms().profile_kind == kind {
+        let previous = self.host_editor_forms().profile_kind;
+        if previous == kind {
             return;
         }
         self.host_editor_forms_mut().profile_kind = kind;
+        // Follow the protocol's well-known port unless the user typed a custom one.
+        if let Some(port) = Self::default_port_for_kind(kind) {
+            let port_input = self.host_editor_forms().port_input.clone();
+            let current = port_input.read(cx).value().trim().to_string();
+            let previous_default =
+                Self::default_port_for_kind(previous).map(|port| port.to_string());
+            if current.is_empty() || previous_default.as_deref() == Some(current.as_str()) {
+                set_input_value(&port_input, port.to_string(), window, cx);
+            }
+            set_input_placeholder(&port_input, port.to_string(), window, cx);
+        }
         cx.notify();
+    }
+
+    fn default_port_for_kind(kind: ProfileKind) -> Option<u16> {
+        match kind {
+            ProfileKind::Ssh | ProfileKind::Rdp => Some(22),
+            ProfileKind::Telnet => Some(miaominal_core::telnet::DEFAULT_TELNET_PORT),
+            ProfileKind::Local => None,
+        }
     }
 
     pub(in crate::ui) fn set_local_shell_path(
@@ -870,7 +906,8 @@ impl HostsController {
     fn host_editor_profile_kind(kind: ProfileKind) -> ProfileKind {
         match kind {
             ProfileKind::Local => ProfileKind::Local,
-            ProfileKind::Ssh | ProfileKind::Telnet | ProfileKind::Rdp => ProfileKind::Ssh,
+            ProfileKind::Telnet => ProfileKind::Telnet,
+            ProfileKind::Ssh | ProfileKind::Rdp => ProfileKind::Ssh,
         }
     }
 
@@ -1567,6 +1604,7 @@ impl HostsController {
         forms.shell_type = profile.shell_type;
         forms.editing_auth_method = Self::host_editor_auth_method(profile.effective_auth_method());
         forms.agent_forwarding_enabled = profile.agent_forwarding;
+        forms.telnet_agent_exec_enabled = profile.telnet_agent_exec;
         forms.profile_kind = profile.kind;
     }
 
@@ -1629,6 +1667,7 @@ impl HostsController {
         forms.shell_type = ShellType::Posix;
         forms.editing_auth_method = AuthMethod::Password;
         forms.agent_forwarding_enabled = false;
+        forms.telnet_agent_exec_enabled = false;
         forms.profile_kind = ProfileKind::Ssh;
     }
 
@@ -2157,6 +2196,51 @@ impl HostsController {
             ))
             .into());
         }
+        let parse_port = || -> anyhow::Result<u16> {
+            port_text.trim().parse().map_err(|_| {
+                anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
+                    "errors.profile.validation.invalid_port",
+                    &[("port", &port_text)],
+                )))
+            })
+        };
+
+        if forms.profile_kind == ProfileKind::Telnet {
+            let port = parse_port()?;
+            let profiles = self.profiles.borrow();
+            let existing = profiles.iter().find(|profile| profile.id == profile_id);
+            let has_password = !password.trim().is_empty();
+            let prior_password = existing.is_some_and(|profile| profile.has_stored_password);
+            let name = if !name.is_empty() {
+                name
+            } else if username.is_empty() {
+                host.clone()
+            } else {
+                format!("{}@{}", username, host)
+            };
+            let mut profile = SessionProfile::blank(profile_id, 1);
+            profile.name = name;
+            profile.group = group;
+            profile.tags = tags;
+            profile.kind = ProfileKind::Telnet;
+            profile.host = host;
+            profile.port = port;
+            profile.username = username;
+            profile.password = password;
+            // Telnet has no SSH identity; the password only drives auto-login.
+            profile.auth_method = Some(AuthMethod::Password);
+            profile.startup_command = startup_command;
+            profile.charset = charset;
+            profile.entry_proxy_id = entry_proxy_id;
+            profile.has_stored_password = has_password || prior_password;
+            profile.telnet_agent_exec = forms.telnet_agent_exec_enabled;
+            if let Some(existing) = existing {
+                profile.is_favorite = existing.is_favorite;
+                profile.last_connected_at = existing.last_connected_at;
+            }
+            return Ok(profile);
+        }
+
         if username.is_empty() {
             return Err(ValidationFailure::required(i18n::string(
                 "errors.profile.validation.username_required",
@@ -2169,12 +2253,7 @@ impl HostsController {
         } else {
             name
         };
-        let port: u16 = port_text.trim().parse().map_err(|_| {
-            anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
-                "errors.profile.validation.invalid_port",
-                &[("port", &port_text)],
-            )))
-        })?;
+        let port = parse_port()?;
 
         let profiles = self.profiles.borrow();
         let existing = profiles.iter().find(|profile| profile.id == profile_id);
@@ -3223,6 +3302,108 @@ mod tests {
         assert_eq!(profile.local_shell_args, "--login");
         assert!(profile.host.is_empty());
         assert!(profile.proxy_jump_profile_ids.is_empty());
+        assert!(!cx.update(|cx| controller.read(cx).editor_state().host_editor_open));
+        std::fs::remove_file(store_path).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn telnet_profile_editor_uses_telnet_defaults_and_saves_without_ssh_identity(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let catalog = Rc::new(CatalogFixture::default());
+        let source = catalog.clone();
+        let store_path = std::env::temp_dir().join(format!(
+            "miaominal-host-telnet-ui-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (window_handle, harness) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(480.), px(1200.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    cx.new(|cx| {
+                        let controller = cx.new(|cx| {
+                            let mut args = test_args(&source, vec![]);
+                            args.session_store = Some(SessionStore::with_path(store_path.clone()));
+                            HostsController::new(args, window, cx)
+                        });
+                        controller.update(cx, |controller, cx| {
+                            controller.add_profile(vec![], window, cx)
+                        });
+                        Harness { controller }
+                    })
+                },
+            )
+            .expect("open host editor test window")
+        });
+        let controller = cx.update(|cx| harness.read(cx).controller.clone());
+        let forms = cx.update(|cx| controller.read(cx).host_editor_forms());
+        let name_id = ("input", forms.name_input.entity_id());
+        let host_id = ("input", forms.host_input.entity_id());
+        let port_id = ("input", forms.port_input.entity_id());
+        let password_id = ("input", forms.password_input.entity_id());
+        let agent_identity_id = ("input", forms.agent_identity_input.entity_id());
+        cx.update_window(window_handle, |_, window, cx| {
+            window.render_frame(cx);
+            let kind = window.find("host-editor-profile-kind-section").bounds();
+            window.click_at(
+                "host-editor-profile-kind-section",
+                point(kind.size.width / 2., px(17.)),
+                cx,
+            );
+            assert_eq!(
+                controller.read(cx).host_editor_forms().profile_kind,
+                ProfileKind::Telnet
+            );
+            window.render_frame(cx);
+            assert_eq!(window.find(port_id).value(), Some("23"));
+            assert!(window.find(password_id).visible());
+            assert!(window.try_find(agent_identity_id).is_none());
+            assert!(window.try_find("host-editor-test-connection").is_none());
+            assert!(
+                window
+                    .find("host-editor-telnet-agent-exec-section")
+                    .visible()
+            );
+
+            window.click(host_id, cx);
+            window.input("switch.lan", cx);
+            window.click(name_id, cx);
+            window.press("ctrl-a", cx);
+            window.input("Core switch", cx);
+            let draft = controller
+                .read(cx)
+                .read_profile_save_draft(cx)
+                .expect("a Telnet profile needs no username or SSH identity");
+            assert_eq!(draft.kind, ProfileKind::Telnet);
+            window.click("host-editor-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(catalog.commits.get(), 1);
+        let profile = &catalog.profiles.borrow()[0];
+        assert_eq!(profile.kind, ProfileKind::Telnet);
+        assert_eq!(profile.name, "Core switch");
+        assert_eq!(profile.host, "switch.lan");
+        assert_eq!(profile.port, 23);
+        assert!(profile.username.is_empty());
+        assert!(profile.proxy_jump_profile_ids.is_empty());
+        assert!(profile.environment_variables.is_empty());
+        assert!(
+            profile.agent_suggests_only(),
+            "AI execution is opt-in for Telnet"
+        );
         assert!(!cx.update(|cx| controller.read(cx).editor_state().host_editor_open));
         std::fs::remove_file(store_path).unwrap();
     }

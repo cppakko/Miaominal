@@ -52,7 +52,7 @@ pub(in crate::ui::features::hosts) fn host_card(
     let subtitle: Option<SharedString> = if profile.is_local() {
         Some(i18n::string("hosts.home.local").into())
     } else if profile.group.trim().is_empty() {
-        None
+        profile.is_telnet().then(|| SharedString::from("Telnet"))
     } else {
         Some(profile.group.clone().into())
     };

@@ -202,7 +202,7 @@ impl WorkspaceTransferHost for AppView {
     }
     fn transfer_retire_resources(&mut self, id: TabId, kind: TabKindTag, cx: &mut Context<Self>) {
         match kind {
-            TabKindTag::Session | TabKindTag::LocalTerminal => {
+            TabKindTag::Session | TabKindTag::LocalTerminal | TabKindTag::Telnet => {
                 self.controllers.session.read(cx).retire_tab_resources(id);
             }
             TabKindTag::Sftp => self.controllers.sftp.read(cx).retire_tab_resources(id),
