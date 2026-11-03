@@ -1352,7 +1352,7 @@ fn sftp_transfer_action_button(
 
 fn sftp_progress_center_card(
     section_id: ElementId,
-    header: impl IntoElement,
+    header: Option<AnyElement>,
     content: impl IntoElement,
 ) -> impl IntoElement {
     let content_shell = div()
@@ -1369,7 +1369,9 @@ fn sftp_progress_center_card(
         .id(section_id)
         .flex()
         .flex_col()
-        .child(div().w_full().flex_shrink_0().child(header))
+        .when_some(header, |this, header| {
+            this.child(div().w_full().flex_shrink_0().child(header))
+        })
         .child(content_shell)
 }
 
@@ -1743,13 +1745,15 @@ impl SftpController {
             .iter()
             .filter(|(_, (_, transfer))| matches!(transfer.status, SftpTransferStatus::Failed(_)))
             .count();
-        let header = self.render_sftp_progress_center_header(
-            controller.clone(),
-            section_id.clone(),
-            transfer_count,
-            active_count,
-            failed_count,
-        );
+        let header = (!transfers.is_empty()).then(|| {
+            self.render_sftp_progress_center_header(
+                controller.clone(),
+                section_id.clone(),
+                transfer_count,
+                active_count,
+                failed_count,
+            )
+        });
         let scroll_handle = self.progress_scroll_handle();
 
         let content = if transfers.is_empty() {
@@ -1819,33 +1823,6 @@ impl SftpController {
             .items_center()
             .gap_2()
             .px_3()
-            .child(
-                div()
-                    .size(px(30.0))
-                    .flex_shrink_0()
-                    .rounded(px(9.0))
-                    .bg(rgb(roles.surface_container_low))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(rgb(roles.primary))
-                    .child(Icon::new(AppIcon::ArrowUpDown).small()),
-            )
-            .child(
-                div()
-                    .text_size(miaominal_settings::FontSize::Heading.scaled())
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(roles.on_surface))
-                    .child(i18n::string("sftp.ui.transfer_center_title")),
-            )
-            .child(badge(
-                i18n::string_args(
-                    "sftp.ui.transfer_count",
-                    &[("count", &transfer_count.to_string())],
-                ),
-                roles.surface_container_highest,
-                roles.on_surface_variant,
-            ))
             .when(active_count > 0, |this| {
                 this.child(badge(
                     i18n::string_args(
