@@ -253,7 +253,7 @@ jobs:
               apt-get install -y --no-install-recommends \
                 libasound2 libcom-err2 libegl1 libexpat1 libfontconfig1 \
                 libfreetype6 libfribidi0 libgbm1 libgl1 libglapi-mesa \
-                libgmp10 libgpg-error0 libharfbuzz0 libice6 libjack-jackd2-0 \
+                libgmp10 libgpg-error0 libharfbuzz0b libice6 libjack-jackd2-0 \
                 libopengl0 libpipewire-0.3-0 libsm6 libstdc++6 libusb-1.0-0 \
                 libuuid1 libwayland-client0 libx11-xcb1 libxcb-dri2-0 \
                 libxcb-dri3-0 zlib1g
