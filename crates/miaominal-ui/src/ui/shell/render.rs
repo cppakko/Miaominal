@@ -217,7 +217,7 @@ impl Render for AppView {
                         this.mx(space(8.0))
                             .rounded_t(space(16.0))
                             .pt(space(12.0))
-                            .pr(space(12.0))
+                            .when(!has_active_session, |this| this.pr(space(12.0)))
                     })
                     .child(shell_body),
             )
