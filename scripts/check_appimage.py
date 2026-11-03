@@ -74,6 +74,53 @@ def check_appdir(root: Path) -> Path:
     return desktop
 
 
+LOADER_CHECK_MARKER = "MIAOMINAL_APPIMAGE_LOADER_CHECK="
+
+
+def check_runtime_loader(root: Path) -> None:
+    """Run AppRun's headless ELF-loader check, not the application GUI.
+
+    Clear host loader overrides, then check that dependencies shipped in usr/lib
+    actually resolve there. A build runner's GTK installation must not hide a
+    broken AppRun, and tracing /bin/sh instead of Miaominal must not pass.
+    """
+    root = root.resolve(strict=True)
+    launcher = require_file(root, "AppRun", executable=True)
+    if launcher.is_symlink() or b"MIAOMINAL_APPIMAGE_CHECK_RUNTIME" not in launcher.read_bytes():
+        raise ValueError("AppRun must be a library-loading launcher with a runtime check")
+    environment = os.environ.copy()
+    for name in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_TRACE_LOADED_OBJECTS"):
+        environment.pop(name, None)
+    environment["APPDIR"] = str(root)
+    environment["MIAOMINAL_APPIMAGE_CHECK_RUNTIME"] = "1"
+    try:
+        result = subprocess.run([str(launcher)], check=True, capture_output=True,
+                                text=True, env=environment, timeout=30)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"application loader check failed: {error.stderr or error}") from error
+    lines = result.stdout.splitlines()
+    marker = f"{LOADER_CHECK_MARKER}{root / 'usr/bin/miaominal'}"
+    if marker not in lines:
+        raise ValueError("AppRun did not trace the Miaominal application loader")
+    if any(re.search(r"=>\s*not found(?:\s|$)", line) for line in lines):
+        raise ValueError(f"application has unresolved shared libraries:\n{result.stdout}")
+    bundled = 0
+    for line in lines:
+        match = re.fullmatch(r"\s*(\S+)\s+=>\s+(.+?)\s+\(0x[0-9a-fA-F]+\)\s*", line)
+        if not match:
+            continue
+        name, resolved = match.groups()
+        candidate = root / "usr/lib" / name
+        if not candidate.is_file():
+            continue
+        expected = require_file(root, f"usr/lib/{name}").resolve()
+        if Path(resolved).resolve() != expected:
+            raise ValueError(f"bundled library {name} loaded outside the AppDir: {resolved}")
+        bundled += 1
+    if not bundled:
+        raise ValueError("application loader did not load any bundled shared library")
+
+
 def check_appimage(image: Path) -> None:
     check_filename(image.name)
     image = image.resolve(strict=True)
@@ -87,9 +134,11 @@ def check_appimage(image: Path) -> None:
         # Native runtime extraction needs neither FUSE nor DISPLAY and checks
         # the published payload, not just cargo-bundle's staging directory.
         subprocess.run([str(image), "--appimage-extract"], cwd=directory,
-                       check=True, stdout=subprocess.DEVNULL)
-        desktop = check_appdir(Path(directory) / "squashfs-root")
-        subprocess.run(["desktop-file-validate", str(desktop)], check=True)
+                       check=True, stdout=subprocess.DEVNULL, timeout=120)
+        root = Path(directory) / "squashfs-root"
+        desktop = check_appdir(root)
+        subprocess.run(["desktop-file-validate", str(desktop)], check=True, timeout=30)
+        check_runtime_loader(root)
 
 
 def main() -> int:
@@ -101,9 +150,10 @@ def main() -> int:
     try:
         if args.appdir:
             check_appdir(args.path)
+            check_runtime_loader(args.path)
         else:
             check_appimage(args.path)
-    except (OSError, ValueError, configparser.Error, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, configparser.Error, subprocess.SubprocessError) as error:
         print(f"AppImage validation failed: {error}", file=sys.stderr)
         return 1
     print(f"AppImage validation passed: {args.path}")

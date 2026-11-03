@@ -7,7 +7,7 @@ use resvg::usvg;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::BufWriter;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 const SYSTEM_ICON_PATH: &str = "assets/app_icon_system.svg";
@@ -82,8 +82,7 @@ fn render_icon(svg_path: &Path, icon_size: u32) -> Result<Pixmap, Box<dyn Error>
 
 fn write_png(svg_path: &Path, output_path: &Path, icon_size: u32) -> Result<(), Box<dyn Error>> {
     let pixmap = render_icon(svg_path, icon_size)?;
-    pixmap.save_png(output_path)?;
-    Ok(())
+    write_if_changed(output_path, &pixmap.encode_png()?)
 }
 
 fn write_ico(
@@ -104,8 +103,24 @@ fn write_ico(
         frames.push(frame);
     }
 
-    let output = fs::File::create(output_path)?;
-    IcoEncoder::new(BufWriter::new(output)).encode_images(&frames)?;
+    let mut encoded = Vec::new();
+    IcoEncoder::new(&mut encoded).encode_images(&frames)?;
+    write_if_changed(output_path, &encoded)
+}
+
+fn write_if_changed(output_path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {
+    // Bundle icons are checked in. An unchanged icon must remain usable from
+    // a read-only checkout, and concurrent Cargo builds must not truncate it.
+    match fs::read(output_path) {
+        Ok(existing) if existing == contents => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("failed to read {}: {error}", output_path.display()).into());
+        }
+    }
+    fs::write(output_path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;
     Ok(())
 }
 

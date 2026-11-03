@@ -1,6 +1,7 @@
 """AppImage payload regressions, independent of Rust and Linux build tools."""
 
 import base64
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -11,7 +12,16 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_appimage import check_appdir, check_appimage, check_filename
+from check_appimage import (
+    LOADER_CHECK_MARKER, check_appdir, check_appimage, check_filename, check_runtime_loader,
+)
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location(
+    "fix_appimage", ROOT / "packaging/linux/fix-appimage.py")
+fixer = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = fixer
+SPEC.loader.exec_module(fixer)
 
 
 PNG = base64.b64decode(
@@ -57,6 +67,9 @@ class AppDirTests(unittest.TestCase):
             path = self.root / name
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
+        (self.root / "AppRun").write_bytes(fixer.LAUNCHER.read_bytes())
+        (self.root / "usr/lib").mkdir()
+        (self.root / "usr/lib/libmiaominal_appimage_probe.so").write_bytes(b"fixture")
         (self.root / ".DirIcon").write_bytes(PNG)
         (self.root / "miaominal.png").write_bytes(PNG)
         self.desktop = self.root / "miaominal.desktop"
@@ -174,17 +187,28 @@ class AppDirTests(unittest.TestCase):
         image.chmod(0o755)
         return image
 
+    def loader_output(self, root=None):
+        root = root or self.root.resolve()
+        return (f"{LOADER_CHECK_MARKER}{root / 'usr/bin/miaominal'}\n"
+                f" libmiaominal_appimage_probe.so => "
+                f"{root / 'usr/lib/libmiaominal_appimage_probe.so'} (0x00001234)\n")
+
     def extract(self, args, **kwargs):
-        if args[1] == "--appimage-extract":
+        if len(args) > 1 and args[1] == "--appimage-extract":
             shutil.copytree(self.root, Path(kwargs["cwd"]) / "squashfs-root")
+        output = ""
+        if Path(args[0]).name == "AppRun":
+            output = self.loader_output(Path(args[0]).parent)
+        return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
 
     def test_final_image_is_extracted_before_desktop_validation(self):
         image = self.make_image()
         with patch("check_appimage.subprocess.run", side_effect=self.extract) as run:
             check_appimage(image)
-        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_count, 3)
         self.assertEqual(run.call_args_list[0].args[0], [str(image), "--appimage-extract"])
         self.assertEqual(run.call_args_list[1].args[0][0], "desktop-file-validate")
+        self.assertEqual(Path(run.call_args_list[2].args[0][0]).name, "AppRun")
 
     def test_final_payload_missing_diricon_fails_before_desktop_validation(self):
         image = self.make_image()
@@ -208,6 +232,165 @@ class AppDirTests(unittest.TestCase):
                    side_effect=subprocess.CalledProcessError(1, "extract")):
             with self.assertRaises(subprocess.CalledProcessError):
                 check_appimage(image)
+
+    def test_runtime_loader_uses_only_bundled_library_search_path(self):
+        completed = subprocess.CompletedProcess([], 0, stdout=self.loader_output(), stderr="")
+        with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/host/override",
+                                     "LD_PRELOAD": "/host/preload.so",
+                                     "LD_TRACE_LOADED_OBJECTS": "1"}), \
+                patch("check_appimage.subprocess.run", return_value=completed) as run:
+            check_runtime_loader(self.root)
+        environment = run.call_args.kwargs["env"]
+        self.assertNotIn("LD_LIBRARY_PATH", environment)
+        self.assertNotIn("LD_PRELOAD", environment)
+        self.assertNotIn("LD_TRACE_LOADED_OBJECTS", environment)
+        self.assertEqual(environment["MIAOMINAL_APPIMAGE_CHECK_RUNTIME"], "1")
+        self.assertEqual(environment["APPDIR"], str(self.root.resolve()))
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_runtime_loader_rejects_missing_dependencies(self):
+        output = self.loader_output() + " libgtk-3.so.0 => not found\n"
+        completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+        with patch("check_appimage.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "unresolved shared libraries"):
+                check_runtime_loader(self.root)
+
+    def test_runtime_loader_rejects_host_libraries_masking_bundled_ones(self):
+        output = self.loader_output().replace(
+            str(self.root.resolve() / "usr/lib/libmiaominal_appimage_probe.so"),
+            "/usr/lib/libmiaominal_appimage_probe.so")
+        completed = subprocess.CompletedProcess([], 0, stdout=output, stderr="")
+        with patch("check_appimage.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "loaded outside the AppDir"):
+                check_runtime_loader(self.root)
+
+    def test_runtime_loader_rejects_tracing_the_launcher_shell(self):
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout="libc.so.6 => /lib/libc.so.6 (0x1234)\n", stderr="")
+        with patch("check_appimage.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "did not trace the Miaominal"):
+                check_runtime_loader(self.root)
+
+    def test_runtime_loader_requires_at_least_one_bundled_resolution(self):
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout=f"{LOADER_CHECK_MARKER}{self.root.resolve() / 'usr/bin/miaominal'}\n",
+            stderr="")
+        with patch("check_appimage.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "any bundled shared library"):
+                check_runtime_loader(self.root)
+
+    def test_runtime_loader_rejects_old_launcher_before_execution(self):
+        (self.root / "AppRun").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        with patch("check_appimage.subprocess.run") as run:
+            with self.assertRaisesRegex(ValueError, "library-loading launcher"):
+                check_runtime_loader(self.root)
+        run.assert_not_called()
+
+    def test_install_launcher_unlinks_entry_without_overwriting_binary(self):
+        binary = self.root / "usr/bin/miaominal"
+        before = binary.read_bytes()
+        (self.root / "AppRun").unlink()
+        self.symlink("AppRun", "usr/bin/miaominal")
+        fixer.install_launcher(self.root)
+        self.assertFalse((self.root / "AppRun").is_symlink())
+        self.assertEqual(binary.read_bytes(), before)
+        self.assertEqual((self.root / "AppRun").read_bytes(), fixer.LAUNCHER.read_bytes())
+
+    def make_repack_image(self):
+        image = self.make_image()
+        prefix = image.read_bytes() + bytes(128 - image.stat().st_size)
+        image.write_bytes(prefix + b"hsqsold payload")
+        return image, prefix
+
+    def repack_operation(self, args, **kwargs):
+        if len(args) > 1 and args[1] == "--appimage-offset":
+            return subprocess.CompletedProcess(args, 0, stdout="128\n", stderr="")
+        if len(args) > 1 and args[1] == "--appimage-extract":
+            return self.extract(args, **kwargs)
+        if args[0] == "mksquashfs":
+            root = Path(args[1])
+            self.assertEqual((root / "AppRun").read_bytes(), fixer.LAUNCHER.read_bytes())
+            self.assertEqual((root / "usr/bin/miaominal").read_bytes(),
+                             (self.root / "usr/bin/miaominal").read_bytes())
+            Path(args[2]).write_bytes(b"hsqsfixed payload")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    def test_repack_preserves_runtime_and_replaces_only_payload(self):
+        image, prefix = self.make_repack_image()
+        with patch("fix_appimage.subprocess.run", side_effect=self.repack_operation) as run:
+            fixer.fix_appimage(image)
+        self.assertEqual(image.read_bytes(), prefix + b"hsqsfixed payload")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args_list[2].args[0][0], "mksquashfs")
+        self.assertIn("-noappend", run.call_args_list[2].args[0])
+
+    def test_repack_rejects_invalid_runtime_offset_before_extracting(self):
+        image, _ = self.make_repack_image()
+        before = image.read_bytes()
+        for offset in ("not a number\n", "0\n", "999999\n", "127\n"):
+            completed = subprocess.CompletedProcess([], 0, stdout=offset, stderr="")
+            with self.subTest(offset=offset), \
+                    patch("fix_appimage.subprocess.run", return_value=completed) as run:
+                with self.assertRaises(ValueError):
+                    fixer.fix_appimage(image)
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(image.read_bytes(), before)
+
+    def test_repack_failure_leaves_original_image_untouched(self):
+        image, _ = self.make_repack_image()
+        before = image.read_bytes()
+
+        def fail_pack(args, **kwargs):
+            if args[0] == "mksquashfs":
+                raise subprocess.CalledProcessError(1, args)
+            return self.repack_operation(args, **kwargs)
+
+        with patch("fix_appimage.subprocess.run", side_effect=fail_pack):
+            with self.assertRaises(subprocess.CalledProcessError):
+                fixer.fix_appimage(image)
+        self.assertEqual(image.read_bytes(), before)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("cc"),
+                         "native ELF loader/argument smoke test runs on Linux CI")
+    def test_native_launcher_loads_bundled_library_and_preserves_arguments_and_environment(self):
+        # No RPATH and a private SONAME: the bare executable cannot start using
+        # host libraries. This catches launchers that merely look correct.
+        root = self.root.with_name("AppDir with spaces")
+        shutil.copytree(self.root, root)
+        library = root / "usr/lib/libmiaominal_appimage_probe.so"
+        library_source = Path(self.directory.name) / "library.c"
+        library_source.write_text("int appimage_probe(void) { return 42; }\n", encoding="utf-8")
+        main_source = Path(self.directory.name) / "main.c"
+        main_source.write_text(
+            '#include <stdio.h>\n#include <stdlib.h>\n'
+            'int appimage_probe(void);\n'
+            'int main(int argc, char **argv) {\n'
+            ' if (appimage_probe() != 42) return 99;\n'
+            ' for (int i = 1; i < argc; ++i) puts(argv[i]);\n'
+            ' puts(getenv("APPIMAGE")); puts(getenv("APPDIR")); return 7;\n}\n',
+            encoding="utf-8")
+        subprocess.run(["cc", "-shared", "-fPIC", str(library_source),
+                        "-Wl,-soname,libmiaominal_appimage_probe.so", "-o", str(library)],
+                       check=True, capture_output=True)
+        binary = root / "usr/bin/miaominal"
+        subprocess.run(["cc", str(main_source), "-L", str(root / "usr/lib"),
+                        "-lmiaominal_appimage_probe", "-o", str(binary)],
+                       check=True, capture_output=True)
+        environment = os.environ.copy()
+        for name in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_TRACE_LOADED_OBJECTS"):
+            environment.pop(name, None)
+        bare = subprocess.run([str(binary)], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(bare.returncode, 0)
+        self.assertIn("libmiaominal_appimage_probe.so", bare.stderr)
+        check_runtime_loader(root)
+        environment["APPIMAGE"] = "/original/image with spaces.AppImage"
+        environment["APPDIR"] = "/runtime/supplied-appdir"
+        arguments = ["one argument", "", "$HOME;*"]
+        launched = subprocess.run([str(root / "AppRun"), *arguments], env=environment,
+                                  capture_output=True, text=True)
+        self.assertEqual(launched.returncode, 7, launched.stderr)
+        self.assertEqual(launched.stdout.splitlines(),
+                         [*arguments, environment["APPIMAGE"], environment["APPDIR"]])
 
 
 if __name__ == "__main__":

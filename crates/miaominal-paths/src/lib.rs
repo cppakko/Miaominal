@@ -250,14 +250,28 @@ pub fn initialize_runtime() -> Result<RuntimeContext> {
 fn initialize_runtime_from_environment() -> Result<RuntimeContext> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     let executable = std::env::current_exe().context("failed to locate current executable")?;
-    initialize_runtime_with(&arguments, &executable)
+    #[cfg(target_os = "linux")]
+    let (appimage, appdir) = (
+        std::env::var_os("APPIMAGE").map(PathBuf::from),
+        std::env::var_os("APPDIR").map(PathBuf::from),
+    );
+    #[cfg(not(target_os = "linux"))]
+    let (appimage, appdir) = (None::<PathBuf>, None::<PathBuf>);
+    initialize_runtime_with(
+        &arguments,
+        &executable,
+        appimage.as_deref(),
+        appdir.as_deref(),
+    )
 }
 
 fn initialize_runtime_with(
     arguments: &[std::ffi::OsString],
     executable: &Path,
+    appimage: Option<&Path>,
+    appdir: Option<&Path>,
 ) -> Result<RuntimeContext> {
-    let portable_root = portable_root_for_executable(executable)?;
+    let portable_root = portable_root_for_runtime(executable, appimage, appdir)?;
     let portable_requested = arguments.iter().any(|argument| argument == "--portable")
         || portable_root.join(PORTABLE_FLAG_FILE).is_file();
     if portable_requested {
@@ -562,6 +576,53 @@ fn clear_active_data_dir_with(context: &RuntimeContext) -> Result<()> {
             context.active_data_dir().display()
         )
     })
+}
+
+fn portable_root_for_runtime(
+    executable: &Path,
+    appimage: Option<&Path>,
+    appdir: Option<&Path>,
+) -> Result<PathBuf> {
+    let (Some(appimage), Some(appdir)) = (appimage, appdir) else {
+        return portable_root_for_executable(executable);
+    };
+    let executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_path_buf());
+    let Ok(appdir) = appdir.canonicalize() else {
+        return portable_root_for_executable(&executable);
+    };
+    // A native executable launched by another AppImage may inherit these
+    // variables. Only the executable inside this AppDir belongs to the image.
+    if !executable.starts_with(&appdir) {
+        return portable_root_for_executable(&executable);
+    }
+    if !appimage.is_absolute() {
+        return Err(anyhow!("AppImage runtime path must be absolute"));
+    }
+    let image = appimage
+        .canonicalize()
+        .with_context(|| format!("failed to locate AppImage {}", appimage.display()))?;
+    if image.starts_with(&appdir) || !image.is_file() {
+        return Err(anyhow!(
+            "AppImage path {} is not an image outside its AppDir",
+            image.display()
+        ));
+    }
+    let mut header = [0u8; 11];
+    fs::File::open(&image)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .with_context(|| format!("failed to inspect AppImage {}", image.display()))?;
+    if &header[..4] != b"\x7fELF" || &header[8..] != b"AI\x02" {
+        return Err(anyhow!(
+            "AppImage path {} is not a type-2 AppImage",
+            image.display()
+        ));
+    }
+    image
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow!("{} has no parent directory", image.display()))
 }
 
 fn portable_root_for_executable(executable: &Path) -> Result<PathBuf> {
@@ -2098,8 +2159,8 @@ mod tests {
         fs::write(root.path().join(PORTABLE_FLAG_FILE), b"")
             .expect("portable flag should be written");
 
-        let context =
-            initialize_runtime_with(&[], &executable).expect("portable runtime should initialize");
+        let context = initialize_runtime_with(&[], &executable, None, None)
+            .expect("portable runtime should initialize");
 
         assert_eq!(context.mode(), RuntimeMode::Portable);
         assert_eq!(
@@ -2122,13 +2183,119 @@ mod tests {
         });
         fs::write(&executable, b"test executable").expect("fake executable should be written");
 
-        let context =
-            initialize_runtime_with(&[std::ffi::OsString::from("--portable")], &executable)
-                .expect("portable runtime should initialize from argument");
+        let context = initialize_runtime_with(
+            &[std::ffi::OsString::from("--portable")],
+            &executable,
+            None,
+            None,
+        )
+        .expect("portable runtime should initialize from argument");
 
         assert_eq!(context.mode(), RuntimeMode::Portable);
         assert!(context.active_data_dir().is_dir());
         assert!(!root.path().join(PORTABLE_FLAG_FILE).exists());
+    }
+
+    fn appimage_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let appdir = directory.path().join("mounted-image");
+        let executable = appdir.join("usr/bin/miaominal");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"mounted application executable").unwrap();
+        let downloads = directory.path().join("downloads");
+        fs::create_dir(&downloads).unwrap();
+        let image = downloads.join("Miaominal.AppImage");
+        fs::write(&image, b"\x7fELF\x02\x01\x01\x00AI\x02").unwrap();
+        (directory, executable, image, appdir)
+    }
+
+    #[test]
+    fn appimage_portable_argument_uses_the_original_image_directory() {
+        let (_directory, executable, image, appdir) = appimage_fixture();
+        let context = initialize_runtime_with(
+            &[std::ffi::OsString::from("--portable")],
+            &executable,
+            Some(&image),
+            Some(&appdir),
+        )
+        .expect("portable AppImage should use the writable directory beside the image");
+        let image_root = image.parent().unwrap().canonicalize().unwrap();
+        assert_eq!(context.mode(), RuntimeMode::Portable);
+        assert_eq!(
+            context.active_data_dir(),
+            image_root.join(PORTABLE_DATA_DIR)
+        );
+        assert_eq!(context.bootstrap_dir(), image_root);
+        assert_eq!(
+            context.credential_policy(),
+            CredentialPolicy::LocalVaultRequired
+        );
+        assert!(
+            !executable
+                .parent()
+                .unwrap()
+                .join(PORTABLE_DATA_DIR)
+                .exists()
+        );
+        assert!(!appdir.join(PORTABLE_DATA_DIR).exists());
+    }
+
+    #[test]
+    fn appimage_portable_flag_is_detected_beside_the_image() {
+        let (_directory, executable, image, appdir) = appimage_fixture();
+        let root = image.parent().unwrap();
+        fs::write(root.join(PORTABLE_FLAG_FILE), b"").unwrap();
+        let context = initialize_runtime_with(&[], &executable, Some(&image), Some(&appdir))
+            .expect("portable flag beside the AppImage should be honored");
+        assert_eq!(context.mode(), RuntimeMode::Portable);
+        assert_eq!(
+            context.active_data_dir(),
+            root.canonicalize().unwrap().join(PORTABLE_DATA_DIR)
+        );
+        assert!(!appdir.join(PORTABLE_DATA_DIR).exists());
+    }
+
+    #[test]
+    fn inherited_appimage_environment_does_not_redirect_a_native_executable() {
+        let (directory, _mounted_executable, image, appdir) = appimage_fixture();
+        let native_root = directory.path().join("native");
+        fs::create_dir(&native_root).unwrap();
+        let executable = native_root.join("miaominal");
+        fs::write(&executable, b"native executable").unwrap();
+        let context = initialize_runtime_with(
+            &[std::ffi::OsString::from("--portable")],
+            &executable,
+            Some(&image),
+            Some(&appdir),
+        )
+        .expect("an unrelated AppImage environment must not affect native portable mode");
+        assert_eq!(
+            context.active_data_dir(),
+            native_root.canonicalize().unwrap().join(PORTABLE_DATA_DIR)
+        );
+        assert!(!image.parent().unwrap().join(PORTABLE_DATA_DIR).exists());
+    }
+
+    #[test]
+    fn appimage_portable_root_rejects_an_invalid_image() {
+        let (_directory, executable, image, appdir) = appimage_fixture();
+        fs::write(&image, b"\x7fELF\x02\x01\x01\x00BAD").unwrap();
+        let error = portable_root_for_runtime(&executable, Some(&image), Some(&appdir))
+            .expect_err("an arbitrary file must not be accepted as the runtime image");
+        assert!(error.to_string().contains("type-2 AppImage"));
+        assert!(!image.parent().unwrap().join(PORTABLE_DATA_DIR).exists());
+    }
+
+    #[test]
+    fn appimage_portable_root_rejects_relative_image_paths() {
+        let (_directory, executable, _image, appdir) = appimage_fixture();
+        let error = portable_root_for_runtime(
+            &executable,
+            Some(Path::new("Miaominal.AppImage")),
+            Some(&appdir),
+        )
+        .expect_err("the AppImage runtime must supply an absolute path");
+        assert!(error.to_string().contains("absolute"));
     }
 
     #[test]

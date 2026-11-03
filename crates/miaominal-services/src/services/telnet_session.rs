@@ -5,6 +5,7 @@
 //! desktop workspace reuses terminal rendering, split panes, search, clipboard
 //! and reconnect paths. Protocol handling lives in `miaominal_core::telnet`.
 
+use std::future::Future;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -15,8 +16,8 @@ use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use miaominal_secrets::SecretStore;
 use miaominal_ssh::transport::{BoxedTransport, connect_via_proxy, resolve_entry_proxy};
 use miaominal_ssh::{
-    SessionChannels, SessionCommand, SessionConnection, SessionEvent, SessionHop, SessionPhase,
-    SessionPhaseChange, session_channels,
+    SessionCancellation, SessionChannels, SessionCommand, SessionConnection, SessionEvent,
+    SessionHop, SessionPhase, SessionPhaseChange, session_channels,
 };
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::runtime::Handle as TokioHandle;
@@ -41,16 +42,21 @@ pub(crate) fn start_telnet_session(
         events,
     } = session_channels();
     let runtime = runtime.clone();
+    let cancellation = connection.commands.cancellation();
     let thread = std::thread::Builder::new()
         .name(format!("telnet-session-{}", profile.id))
         .spawn(move || {
-            runtime.block_on(run_telnet_session(
-                profile,
-                all_proxies,
-                secrets,
-                (columns, lines),
-                commands,
-                events,
+            runtime.block_on(run_cancellable_session(
+                run_telnet_session(
+                    profile,
+                    all_proxies,
+                    secrets,
+                    (columns, lines),
+                    commands,
+                    events.clone(),
+                ),
+                cancellation,
+                &events,
             ));
         })
         .expect("failed to spawn Telnet session thread");
@@ -60,6 +66,24 @@ pub(crate) fn start_telnet_session(
 
 fn terminal_size(columns: usize, lines: usize) -> (usize, usize) {
     (columns.max(MIN_TERMINAL_COLUMNS), lines.max(1))
+}
+
+async fn run_cancellable_session(
+    session: impl Future<Output = ()>,
+    cancellation: SessionCancellation,
+    events: &Sender<SessionEvent>,
+) {
+    tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            // Closing must not wait for TCP writes, shutdown, or a full event
+            // queue. Dropping the whole session also drops its transport.
+            // If the UI is already backpressured, channel EOF still follows
+            // the queued events once the worker releases its senders.
+            let _ = events.try_send(SessionEvent::Closed);
+        }
+        () = session => {}
+    }
 }
 
 async fn run_telnet_session(
@@ -328,6 +352,102 @@ mod tests {
             }
         }
         output
+    }
+
+    #[tokio::test]
+    async fn close_cancels_a_blocked_transport_write() {
+        let (client, server) = tokio::io::duplex(64);
+        let mut server = Server {
+            stream: server,
+            pending: Vec::new(),
+        };
+        let SessionChannels {
+            mut connection,
+            commands,
+            events,
+        } = session_channels();
+        let cancellation = connection.commands.cancellation();
+        let mut session = tokio::spawn(async move {
+            let profile = telnet_profile();
+            run_cancellable_session(
+                async {
+                    drive_telnet_session(&profile, client, (80, 24), commands, &events)
+                        .await
+                        .expect("cancelled I/O is dropped, not reported as a transport error");
+                },
+                cancellation,
+                &events,
+            )
+            .await;
+        });
+        server.expect(&[IAC, WILL, OPTION_NAWS]).await;
+        connection
+            .commands
+            .send_bytes(vec![b'x'; 16 * 1024])
+            .unwrap();
+        // Seeing actual input proves the command branch has started. The tiny
+        // transport buffer cannot accept the remaining paste without reads.
+        server.expect(b"x").await;
+        assert!(!session.is_finished());
+        connection.commands.close().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), &mut session)
+            .await
+            .expect("close must interrupt a blocked write")
+            .expect("session task should not panic");
+
+        let mut closed = 0;
+        while let Some(event) = connection.events.recv().await {
+            match event {
+                SessionEvent::Closed => closed += 1,
+                SessionEvent::Error(error) => panic!("explicit close is orderly: {error}"),
+                _ => {}
+            }
+        }
+        assert_eq!(closed, 1);
+        let mut received = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            server.stream.read_to_end(&mut received),
+        )
+        .await
+        .expect("dropping the cancelled session must close its transport")
+        .expect("server should see orderly EOF");
+        assert!(received.len() < 16 * 1024);
+    }
+
+    #[tokio::test]
+    async fn close_does_not_wait_for_a_full_event_queue() {
+        let SessionChannels {
+            connection,
+            commands: _commands,
+            events,
+        } = session_channels();
+        while events.try_send(SessionEvent::Output(vec![b'x'])).is_ok() {}
+        let cancellation = connection.commands.cancellation();
+        connection.commands.close().unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            run_cancellable_session(std::future::pending(), cancellation, &events),
+        )
+        .await
+        .expect("close must not block while trying to publish Closed");
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_sessions_do_not_start_work() {
+        let SessionChannels {
+            connection,
+            commands: _commands,
+            events,
+        } = session_channels();
+        let cancellation = connection.commands.cancellation();
+        connection.commands.close().unwrap();
+        run_cancellable_session(
+            async { panic!("a cancelled session must not poll connection setup") },
+            cancellation,
+            &events,
+        )
+        .await;
     }
 
     #[tokio::test]

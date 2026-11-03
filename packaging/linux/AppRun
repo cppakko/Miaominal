@@ -1,0 +1,17 @@
+#!/bin/sh
+# Resolve this launcher, not APPIMAGE (the image file) or the caller's cwd.
+# Preserve the runtime's APPIMAGE/APPDIR and every application argument.
+set -eu
+appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH
+
+# Trace the application's ELF loader only, after this shell has started.
+# Setting LD_TRACE_LOADED_OBJECTS on AppRun itself would just trace /bin/sh.
+if [ "${MIAOMINAL_APPIMAGE_CHECK_RUNTIME:-}" = "1" ]; then
+    unset MIAOMINAL_APPIMAGE_CHECK_RUNTIME
+    printf 'MIAOMINAL_APPIMAGE_LOADER_CHECK=%s\n' "$appdir/usr/bin/miaominal"
+    LD_TRACE_LOADED_OBJECTS=1
+    export LD_TRACE_LOADED_OBJECTS
+fi
+exec "$appdir/usr/bin/miaominal" "$@"

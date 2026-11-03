@@ -108,6 +108,7 @@ jobs:
             rpm_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}.rpm
             portable_name: Miaominal-linux-x86_64-${{ needs.prepare.outputs.version }}-portable.zip
             file_arch: x86-64
+            appimage_arch: x86_64
             deb_arch: amd64
             rpm_arch: x86_64
           - runner: ubuntu-22.04-arm
@@ -118,6 +119,7 @@ jobs:
             rpm_name: Miaominal-linux-aarch64-${{ needs.prepare.outputs.version }}.rpm
             portable_name: Miaominal-linux-arm64-${{ needs.prepare.outputs.version }}-portable.zip
             file_arch: ARM aarch64
+            appimage_arch: aarch64
             deb_arch: arm64
             rpm_arch: aarch64
 
@@ -181,8 +183,16 @@ jobs:
           cargo install cargo-deb --version 3.7.0 --locked
           cargo install cargo-generate-rpm --version 0.21.0 --locked
 
+      - name: Test POSIX background job startup
+        run: cargo test -p miaominal-agent job_start_posix
+
       - name: Build Linux AppImage
-        run: cargo bundle --release --format appimage
+        run: |
+          cargo bundle --release --format appimage
+          # cargo-bundle 0.12 copies libraries but its AppRun is only a symlink.
+          # Repack with our loader launcher, preserving the downloaded runtime.
+          python3 packaging/linux/fix-appimage.py \
+            "target/release/bundle/appimage/${BIN_NAME}_${{ needs.prepare.outputs.version }}_${{ matrix.appimage_arch }}.AppImage"
 
       - name: Build Debian package
         run: bash packaging/linux/build-deb.sh --no-build
@@ -194,7 +204,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          appimage_path="$(find target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          appimage_path="target/release/bundle/appimage/${BIN_NAME}_${{ needs.prepare.outputs.version }}_${{ matrix.appimage_arch }}.AppImage"
           deb_path="$(find target/debian -maxdepth 1 -type f -name 'miaominal_*.deb' -print -quit)"
           rpm_path="$(find target/generate-rpm -maxdepth 1 -type f -name 'miaominal-*.rpm' -print -quit)"
 
@@ -231,6 +241,31 @@ jobs:
           rpm -qip "dist/${{ matrix.rpm_name }}"
           dpkg-deb --field "dist/${{ matrix.deb_name }}" Recommends | grep -F "libayatana-appindicator3-1"
           rpm -qp --recommends "dist/${{ matrix.rpm_name }}" | grep -F "libayatana-appindicator-gtk3"
+
+      - name: Check AppImage startup without host GTK
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/dist:/artifacts:ro" \
+            -v "$PWD/packaging/linux:/checks:ro" \
+            ubuntu:22.04 bash -euc '
+              apt-get update
+              # Host libraries from the cargo-bundle 0.12 AppImage excludelist.
+              # GTK, GDK and Pango must come from the image itself.
+              apt-get install -y --no-install-recommends \
+                libasound2 libcom-err2 libegl1 libexpat1 libfontconfig1 \
+                libfreetype6 libfribidi0 libgbm1 libgl1 libglapi-mesa \
+                libgmp10 libgpg-error0 libharfbuzz0 libice6 libjack-jackd2-0 \
+                libopengl0 libpipewire-0.3-0 libsm6 libstdc++6 libusb-1.0-0 \
+                libuuid1 libwayland-client0 libx11-xcb1 libxcb-dri2-0 \
+                libxcb-dri3-0 zlib1g
+              if dpkg-query -W -f="\${Status}" libgtk-3-0 2>/dev/null | grep -q "install ok installed"; then
+                echo "GTK must be absent from the startup test host" >&2
+                exit 1
+              fi
+              bash /checks/check-appimage-startup.sh "/artifacts/$1"
+            ' -- "${{ matrix.appimage_name }}"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4

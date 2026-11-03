@@ -296,8 +296,10 @@ impl ToolRuntime for ChannelToolRuntime {
             }
             for (name, target_channel, is_default) in entries {
                 let base = target_info(&name, &target_channel, is_default);
-                // Probing would type into a read-only target's terminal.
-                if target_channel.is_suggest_only() {
+                // A terminal-only target may be running a foreground program.
+                // Even opt-in execution must never turn an automatic environment
+                // refresh into unsolicited input to that program.
+                if target_channel.is_terminal_only() || target_channel.is_suggest_only() {
                     targets.push(base);
                     continue;
                 }
@@ -1068,6 +1070,27 @@ fn posix_command(shell: ShellType, script: &str) -> String {
     format!("sh -c {}", shell_quote(script, shell))
 }
 
+/// Build the POSIX launcher without putting its setup in a backgrounded
+/// `&&` list. Every directory change must succeed before the sole `&` launches
+/// the user command, otherwise a stale cwd could run that command in HOME.
+fn job_start_script(command: &str, dir: &str, cwd: Option<&str>) -> String {
+    let quote = |value: &str| shell_quote(value, ShellType::Posix);
+    let cwd = cwd
+        .map(|cwd| format!("cd -- {} || exit $?; ", quote(cwd)))
+        .unwrap_or_default();
+    let inner_script = format!("{command}\necho $? > {}", quote(&format!("{dir}/exit")));
+    format!(
+        "mkdir -p {dir} || exit $?; cd -- \"$HOME\" || exit $?; {cwd}\
+         if command -v setsid >/dev/null 2>&1; then S=setsid; else S=; fi; \
+         $S nohup sh -c {quoted} > {out} 2>&1 < /dev/null & \
+         printf '%s\\n' \"$!\" > {pid} || exit $?; echo started",
+        dir = quote(dir),
+        quoted = quote(&inner_script),
+        out = quote(&format!("{dir}/out")),
+        pid = quote(&format!("{dir}/pid")),
+    )
+}
+
 async fn job_tool(
     inner: &Inner,
     channel: &AgentExecChannel,
@@ -1087,18 +1110,8 @@ async fn job_tool(
             channel.policy().enforce_command(&command, true)?;
             let job_id = uuid::Uuid::new_v4().to_string();
             let dir = job_dir(&job_id).unwrap_or_default();
-            let cwd = arguments
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(|cwd| format!(" && cd {}", shell_quote(cwd, ShellType::Posix)))
-                .unwrap_or_default();
-            let inner_script = format!("{command}\necho $? > {dir}/exit",);
-            let script = format!(
-                "mkdir -p {dir} && cd \"$HOME\"{cwd} && \
-                 if command -v setsid >/dev/null 2>&1; then S=setsid; else S=; fi; \
-                 $S nohup sh -c {quoted} > {dir}/out 2>&1 < /dev/null & echo $! > {dir}/pid; echo started",
-                quoted = shell_quote(&inner_script, ShellType::Posix),
-            );
+            let script =
+                job_start_script(&command, &dir, arguments.get("cwd").and_then(Value::as_str));
             channel.exec(posix_command(shell, &script)).await?;
             inner
                 .jobs
@@ -1211,6 +1224,114 @@ mod tests {
             call_id: "c".into(),
             name: name.into(),
             arguments,
+        }
+    }
+
+    #[test]
+    fn job_start_guards_setup_in_foreground_before_backgrounding() {
+        let script = job_start_script("pwd", "/tmp/job", Some("-P"));
+        let (setup, launch) = script.split_once("if command -v setsid").unwrap();
+        assert_eq!(
+            setup,
+            "mkdir -p '/tmp/job' || exit $?; cd -- \"$HOME\" || exit $?; cd -- '-P' || exit $?; "
+        );
+        assert!(!setup.contains('&'), "setup must not be backgrounded");
+        assert!(launch.contains("< /dev/null & printf"));
+        assert!(launch.ends_with("|| exit $?; echo started"));
+
+        let script = job_start_script("pwd", "/tmp/job", None);
+        let (setup, _) = script.split_once("if command -v setsid").unwrap();
+        assert_eq!(
+            setup,
+            "mkdir -p '/tmp/job' || exit $?; cd -- \"$HOME\" || exit $?; "
+        );
+    }
+
+    #[cfg(unix)]
+    mod job_start_posix {
+        use super::*;
+        use std::path::Path;
+        use std::process::{Command, Output};
+
+        fn run_launcher(dir: &Path, home: &Path, cwd: Option<&str>, wait: bool) -> Output {
+            let mut script = job_start_script("pwd", dir.to_str().unwrap(), cwd);
+            if wait {
+                script.push_str("; wait");
+            }
+            Command::new("sh")
+                .arg("-c")
+                .arg(script)
+                .env("HOME", home)
+                .output()
+                .expect("run the POSIX job launcher with the harmless pwd command")
+        }
+
+        fn assert_not_started(output: &Output, dir: &Path) {
+            assert!(!output.status.success(), "{output:?}");
+            assert!(!String::from_utf8_lossy(&output.stdout).contains("started"));
+            for file in ["pid", "out", "exit"] {
+                assert!(!dir.join(file).exists(), "job unexpectedly created {file}");
+            }
+        }
+
+        #[test]
+        fn invalid_cwd_never_starts_a_job_in_home() {
+            let directory = tempfile::tempdir().unwrap();
+            let home = directory.path().join("home");
+            std::fs::create_dir(&home).unwrap();
+            std::fs::write(home.join("not-a-directory"), "fixture").unwrap();
+            for (index, cwd) in ["missing", "not-a-directory", "-P", ""].iter().enumerate() {
+                let dir = directory.path().join(format!("job-{index}"));
+                let output = run_launcher(&dir, &home, Some(cwd), false);
+                assert_not_started(&output, &dir);
+            }
+        }
+
+        #[test]
+        fn setup_failures_never_report_a_started_job() {
+            let directory = tempfile::tempdir().unwrap();
+            let dir = directory.path().join("job");
+            let output = run_launcher(&dir, &directory.path().join("missing-home"), None, false);
+            assert_not_started(&output, &dir);
+
+            let blocked_dir = directory.path().join("not-a-directory");
+            std::fs::write(&blocked_dir, "fixture").unwrap();
+            let output = run_launcher(&blocked_dir, directory.path(), None, false);
+            assert_not_started(&output, &blocked_dir);
+        }
+
+        #[test]
+        fn successful_jobs_keep_home_relative_and_quoted_working_directories() {
+            let directory = tempfile::tempdir().unwrap();
+            let home = directory.path().join("home");
+            let project = directory.path().join("project's folder");
+            let option_name = home.join("-P");
+            std::fs::create_dir(&home).unwrap();
+            std::fs::create_dir(&project).unwrap();
+            std::fs::create_dir(&option_name).unwrap();
+            for (index, (cwd, expected)) in [
+                (None, &home),
+                (Some("../project's folder"), &project),
+                (Some("-P"), &option_name),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let dir = directory.path().join(format!("job's folder {index}"));
+                let output = run_launcher(&dir, &home, cwd, true);
+                assert!(output.status.success(), "{output:?}");
+                assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "started");
+                let actual = std::fs::read_to_string(dir.join("out")).unwrap();
+                assert_eq!(
+                    Path::new(actual.trim()).canonicalize().unwrap(),
+                    expected.canonicalize().unwrap()
+                );
+                assert_eq!(
+                    std::fs::read_to_string(dir.join("exit")).unwrap().trim(),
+                    "0"
+                );
+                assert!(dir.join("pid").is_file());
+            }
         }
     }
 
@@ -1350,21 +1471,25 @@ mod tests {
         assert_eq!(outcome.status, ToolResultStatus::Failed);
     }
 
-    fn telnet_runtime(exec_enabled: bool) -> ChannelToolRuntime {
-        let mut profile = miaominal_core::profile::SessionProfile::blank("telnet", 1);
+    fn telnet_channel(exec_enabled: bool) -> AgentExecChannel {
+        let mut profile =
+            miaominal_core::profile::SessionProfile::blank(uuid::Uuid::new_v4().to_string(), 1);
         profile.kind = miaominal_core::profile::ProfileKind::Telnet;
         profile.name = "switch".into();
         profile.host = "switch.lan".into();
         profile.telnet_agent_exec = exec_enabled;
-        let channel = AgentExecChannel::for_profile(
+        AgentExecChannel::for_profile(
             profile,
             vec![],
             miaominal_secrets::SecretStore::new_locked_vault(),
             miaominal_storage::known_hosts_store::KnownHostsStore::with_path(
                 std::env::temp_dir().join("agent-telnet-suggest-known-hosts"),
             ),
-        );
-        ChannelToolRuntime::new(Some(channel), "switch", None)
+        )
+    }
+
+    fn telnet_runtime(exec_enabled: bool) -> ChannelToolRuntime {
+        ChannelToolRuntime::new(Some(telnet_channel(exec_enabled)), "switch", None)
     }
 
     #[test]
@@ -1416,6 +1541,84 @@ mod tests {
         assert!(infos[0].notes[0].contains("read-only"));
         let infos = telnet_runtime(true).target_infos();
         assert!(infos[0].notes[0].contains("visible terminal"));
+    }
+
+    #[tokio::test]
+    async fn opt_in_telnet_environment_never_types_into_the_foreground_program() {
+        use crate::channel::{TerminalExecHandle, TerminalOutputTap};
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        let miaominal_ssh::SessionChannels {
+            connection,
+            mut commands,
+            ..
+        } = miaominal_ssh::session_channels();
+        let (_tap, output) = TerminalOutputTap::channel();
+        let channel = telnet_channel(true)
+            .with_terminal_exec(TerminalExecHandle::new(connection.commands.clone(), output));
+        let runtime = ChannelToolRuntime::new(Some(channel), "switch", None);
+        let expected = runtime.target_infos();
+        assert!(expected[0].pty);
+        assert!(expected[0].notes[0].contains("visible terminal"));
+
+        // Repeated new turns must stay passive, including a cold environment
+        // cache. No shell prompt / foreground-process assumption is available.
+        for _ in 0..3 {
+            let infos =
+                tokio::time::timeout(std::time::Duration::from_secs(1), runtime.environment())
+                    .await
+                    .expect("terminal-only environment facts must not wait for remote output")
+                    .expect("configured target");
+            assert_eq!(infos, expected);
+            assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        }
+    }
+
+    #[tokio::test]
+    async fn ssh_environment_keeps_its_cache_while_auxiliary_telnet_stays_passive() {
+        use crate::channel::{TerminalExecHandle, TerminalOutputTap};
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        let miaominal_ssh::SessionChannels {
+            connection,
+            mut commands,
+            ..
+        } = miaominal_ssh::session_channels();
+        let (_tap, output) = TerminalOutputTap::channel();
+        let telnet = telnet_channel(true)
+            .with_terminal_exec(TerminalExecHandle::new(connection.commands.clone(), output));
+        let expected_telnet = target_info("switch", &telnet, false);
+
+        let ssh = AgentExecChannel::for_profile(
+            miaominal_core::profile::SessionProfile::blank(uuid::Uuid::new_v4().to_string(), 1),
+            vec![],
+            miaominal_secrets::SecretStore::new_locked_vault(),
+            miaominal_storage::known_hosts_store::KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-ssh-environment-cache-known-hosts"),
+            ),
+        );
+        let key = format!("{}|ssh", ssh.profile_id());
+        let mut cached = target_info("ssh", &ssh, true);
+        cached.os = "linux".into();
+        cached.cwd = "/home/user/project".into();
+        cached.notes = vec!["cached SSH probe".into()];
+        environment_cache()
+            .lock()
+            .unwrap()
+            .insert(key.clone(), (Instant::now(), cached.clone()));
+        let runtime = ChannelToolRuntime::new(
+            Some(ssh.with_aux_channels(HashMap::from([("@switch".into(), telnet)]))),
+            "ssh",
+            None,
+        );
+
+        let infos = tokio::time::timeout(std::time::Duration::from_secs(1), runtime.environment())
+            .await
+            .expect("cached SSH and terminal-only targets need no network round trip")
+            .expect("configured targets");
+        assert_eq!(infos, vec![cached, expected_telnet]);
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        environment_cache().lock().unwrap().remove(&key);
     }
 
     #[tokio::test]
