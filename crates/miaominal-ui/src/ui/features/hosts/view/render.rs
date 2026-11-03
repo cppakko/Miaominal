@@ -1,5 +1,6 @@
 use super::components::host_card;
 use crate::ui::assets::AppIcon;
+use crate::ui::components::empty_state::empty_page;
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, ShellTypography, space};
 use crate::ui::components::{animated_card_collection, view_mode_switcher};
 use crate::ui::contracts::navigation::ProfileViewMode;
@@ -8,7 +9,7 @@ use crate::ui::i18n;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{
-    Icon, Selectable, Sizable as _,
+    Icon, Selectable,
     button::{Button, ButtonVariants as _},
     h_flex, v_flex,
 };
@@ -277,11 +278,20 @@ impl HostsController {
         let actions = HostPageActions::new(on_connect, on_edit, on_open_sftp);
         let catalog = self.catalog_view();
         let profiles = self.profiles();
+        if profiles.is_empty() {
+            return empty_page(AppIcon::Computer, i18n::string("hosts.home.empty"))
+                .id("hosts-empty-region")
+                .test_support()
+                .into_any_element();
+        }
         let remote: Vec<_> = profiles
             .iter()
             .filter(|profile| !profile.is_local())
             .collect();
-        let selected = catalog.hosts_group_filter.as_deref();
+        let selected = catalog
+            .hosts_group_filter
+            .as_deref()
+            .filter(|_| !remote.is_empty());
         let visible: Vec<_> = remote
             .iter()
             .copied()
@@ -419,7 +429,8 @@ impl HostsController {
             .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
             .mx_auto()
             .gap(space(24.0))
-            .pb(space(112.0));
+            .when(visible.is_empty(), |content| content.h_full().min_h_0())
+            .when(!visible.is_empty(), |content| content.pb(space(112.0)));
         if selected.is_none() && !self.editor_state().host_editor_open && !recent.is_empty() {
             content = content.child(
                 v_flex()
@@ -484,37 +495,34 @@ impl HostsController {
             )
             .child(view_toggle);
         let library = if visible.is_empty() {
-            let controller = controller.clone();
-            v_flex()
-                .items_center()
-                .gap(space(12.0))
-                .py(space(40.0))
-                .child(section_heading(i18n::string(if remote.is_empty() {
+            empty_page(
+                AppIcon::Computer,
+                i18n::string(if remote.is_empty() {
                     "hosts.home.empty"
                 } else {
                     "hosts.home.empty_group"
-                })))
-                .child(
-                    Button::new("hosts-empty-create")
-                        .primary()
-                        .large()
-                        .line_height(space(ShellTypography::BODY_LINE_HEIGHT))
-                        .h(space(40.0))
-                        .px(space(16.0))
-                        .rounded(miaominal_settings::scaled_font_size(12.0))
-                        .bg(colors.primary)
-                        .label(i18n::string("hosts.home.create"))
-                        .on_click(move |_, _, cx| {
-                            controller.update(cx, |controller, cx| {
-                                controller.request_new_profile_editor(cx)
-                            })
-                        }),
-                )
-                .into_any_element()
+                }),
+            )
+            .id("hosts-empty-region")
+            .test_support()
+            .h_auto()
+            .flex_1()
+            .min_h_0()
+            .into_any_element()
         } else {
             render_collection(&visible, false, "library-host").into_any_element()
         };
-        content = content.child(v_flex().gap(space(12.0)).child(heading).child(library));
+        content = content.child(
+            v_flex()
+                .id("hosts-library")
+                .test_support()
+                .gap(space(12.0))
+                .when(visible.is_empty(), |section| section.flex_1().min_h_0())
+                .when(!visible.is_empty(), |section| {
+                    section.child(heading.flex_shrink_0())
+                })
+                .child(library),
+        );
         div()
             .size_full()
             .min_h_0()
@@ -522,7 +530,9 @@ impl HostsController {
             .flex_col()
             .bg(colors.canvas)
             .pt(space(8.0))
-            .child(div().px(space(inset + 4.0)).child(controls))
+            .when(!remote.is_empty(), |page| {
+                page.child(div().px(space(inset + 4.0)).child(controls))
+            })
             .child(
                 div()
                     .id("hosts-collection-scroll")
@@ -530,10 +540,13 @@ impl HostsController {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        div()
-                            .size_full()
-                            .overflow_y_scrollbar()
-                            .child(div().px(space(inset + 4.0)).pt(space(8.0)).child(content)),
+                        div().size_full().overflow_y_scrollbar().child(
+                            div()
+                                .px(space(inset + 4.0))
+                                .pt(space(8.0))
+                                .when(visible.is_empty(), |body| body.h_full())
+                                .child(content),
+                        ),
                     ),
             )
             .into_any_element()

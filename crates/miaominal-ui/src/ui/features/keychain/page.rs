@@ -4,7 +4,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon,
     catalog_card_surface, catalog_card_title,
 };
-use crate::ui::components::empty_state::empty_state as shell_empty_state;
+use crate::ui::components::empty_state::empty_page;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{EditorFooterActionTone, SegmentedSwitch, editor_footer_button};
 use crate::ui::{
@@ -15,16 +15,6 @@ use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu};
 use miaominal_core::keychain::{ManagedKeyGenerationAlgorithm, ManagedKeySource};
-
-fn keychain_empty_state(
-    title: impl Into<SharedString>,
-    copy: impl Into<SharedString>,
-) -> impl IntoElement {
-    let title = title.into();
-    let copy = copy.into();
-
-    shell_empty_state(AppIcon::Key, format!("{}\n{}", title, copy))
-}
 
 fn managed_key_source_label(source: ManagedKeySource) -> String {
     match source {
@@ -224,6 +214,39 @@ impl KeychainController {
                 ),
             );
 
+        let empty_copy = if show_managed_keys && visible_managed_keys.is_empty() {
+            Some((
+                "keychain.empty.no_managed_keys_title",
+                "keychain.empty.no_managed_keys_copy",
+            ))
+        } else if show_agent_identities && visible_agent_identities.is_empty() {
+            Some((
+                "keychain.empty.no_agent_identities_title",
+                "keychain.empty.no_agent_identities_copy",
+            ))
+        } else {
+            None
+        };
+        if let Some((title, copy)) = empty_copy {
+            return v_flex()
+                .size_full()
+                .min_h_0()
+                .gap_6()
+                .child(header.flex_shrink_0())
+                .child(
+                    div()
+                        .id("keychain-empty-region")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .child(empty_page(
+                            AppIcon::Key,
+                            format!("{}\n{}", i18n::string(title), i18n::string(copy)),
+                        )),
+                )
+                .into_any_element();
+        }
+
         let content = v_flex()
             .w_full()
             .min_w_0()
@@ -246,21 +269,14 @@ impl KeychainController {
                                     "keychain.page.managed_keys",
                                 ))),
                         )
-                        .child(if visible_managed_keys.is_empty() {
-                            keychain_empty_state(
-                                i18n::string("keychain.empty.no_managed_keys_title"),
-                                i18n::string("keychain.empty.no_managed_keys_copy"),
-                            )
-                            .into_any_element()
-                        } else {
+                        .child(
                             card_grid(available_width)
                                 .id("keychain-managed-grid")
                                 .test_support()
                                 .children(visible_managed_keys.into_iter().map(|key| {
                                     managed_key_card(key, entity.clone()).into_any_element()
-                                }))
-                                .into_any_element()
-                        }),
+                                })),
+                        ),
                 )
             })
             .when(show_agent_identities, |this| {
@@ -278,21 +294,14 @@ impl KeychainController {
                                     "keychain.page.agent_identities",
                                 ))),
                         )
-                        .child(if visible_agent_identities.is_empty() {
-                            keychain_empty_state(
-                                i18n::string("keychain.empty.no_agent_identities_title"),
-                                i18n::string("keychain.empty.no_agent_identities_copy"),
-                            )
-                            .into_any_element()
-                        } else {
+                        .child(
                             card_grid(available_width)
                                 .id("keychain-agent-grid")
                                 .test_support()
                                 .children(visible_agent_identities.into_iter().map(|identity| {
                                     agent_identity_card(identity).into_any_element()
-                                }))
-                                .into_any_element()
-                        }),
+                                })),
+                        ),
                 )
             });
 

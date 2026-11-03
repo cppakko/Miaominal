@@ -3112,6 +3112,131 @@ mod tests {
         }
     }
 
+    struct EmptyPageHarness {
+        controller: Entity<HostsController>,
+    }
+
+    impl Render for EmptyPageHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(self.controller.read(cx).render_hosts_page(
+                    self.controller.clone(),
+                    |_, _, _| {},
+                    |_, _, _| {},
+                    |_, _, _| {},
+                    window.viewport_size().width.as_f32(),
+                    20.0,
+                    cx,
+                ))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn host_empty_page_centers_only_icon_and_copy_without_catalog_controls(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let catalog = Rc::new(CatalogFixture::default());
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(900.0), px(720.0)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    cx.new(|cx| {
+                        let controller = cx.new(|cx| {
+                            HostsController::new(test_args(&catalog, vec![]), window, cx)
+                        });
+                        EmptyPageHarness { controller }
+                    })
+                },
+            )
+            .expect("open host empty-page window")
+        });
+        for height in [720.0, 480.0, 720.0] {
+            cx.simulate_window_resize(handle, size(px(900.0), px(height)));
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let region = window.find("hosts-empty-region").bounds();
+                let content = window.find("empty-state-content").bounds();
+                assert!(f32::from(content.center().x - region.center().x).abs() <= 1.0);
+                assert!(f32::from(content.center().y - region.center().y).abs() <= 1.0);
+                assert!(content.top() >= region.top());
+                assert!(content.bottom() <= region.bottom());
+                assert_eq!(region.size, window.viewport_size());
+                assert!(window.try_find("host-filter:").is_none());
+                assert!(window.try_find("hosts-view-mode").is_none());
+                assert!(window.try_find("hosts-empty-create").is_none());
+                assert!(window.try_find("hosts-library").is_none());
+            })
+            .unwrap();
+        }
+        let controller = cx.update(|cx| view.read(cx).controller.clone());
+        cx.simulate_window_resize(handle, size(px(900.0), px(360.0)));
+        cx.update_window(handle, |_, window, cx| {
+            controller.update(cx, |owner, cx| {
+                owner
+                    .profiles
+                    .replace(vec![SessionProfile::blank_local("local", 0)]);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let region = window.find("hosts-empty-region").bounds();
+            let content = window.find("empty-state-content").bounds();
+            assert!(region.size.height > px(0.0));
+            assert!(content.top() >= region.top());
+            assert!(window.find("quick-host-local:connect").visible());
+            assert!(window.try_find("host-filter:").is_none());
+            assert!(window.try_find("hosts-view-mode").is_none());
+            assert!(window.try_find("hosts-empty-create").is_none());
+            if content.size.height > region.size.height {
+                window.scroll(
+                    "hosts-empty-region",
+                    gpui_kit::ScrollDelta::Pixels(point(px(0.0), px(-1000.0))),
+                    cx,
+                );
+                assert!(window.find("empty-state-content").bounds().bottom() <= region.bottom());
+            } else {
+                assert!(f32::from(content.center().y - region.center().y).abs() <= 1.0);
+            }
+        })
+        .unwrap();
+        cx.simulate_window_resize(handle, size(px(900.0), px(720.0)));
+        cx.update_window(handle, |_, window, cx| {
+            controller.update(cx, |owner, cx| {
+                owner
+                    .profiles
+                    .replace(vec![SessionProfile::blank("remote", 0)]);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find("host-filter:").visible());
+            assert!(window.find("hosts-view-mode").visible());
+            assert!(window.try_find("empty-state-content").is_none());
+            window.click("hosts-view-mode-list", cx);
+            assert_eq!(
+                controller.read(cx).catalog_view().hosts_view_mode,
+                ProfileViewMode::List
+            );
+            controller.update(cx, |owner, cx| {
+                owner.profiles.replace(Vec::new());
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find("empty-state-content").visible());
+            assert!(window.try_find("host-filter:").is_none());
+            assert!(window.try_find("hosts-view-mode").is_none());
+            assert!(window.try_find("hosts-empty-create").is_none());
+        })
+        .unwrap();
+    }
+
     #[gpui_kit::test]
     fn failed_saves_keep_drafts_and_refreshes_do_not_publish(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);

@@ -1,5 +1,5 @@
 use crate::ui::assets::AppIcon;
-use crate::ui::components::empty_state::empty_state;
+use crate::ui::components::empty_state::empty_page;
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{SearchInputStyle, card_surface, icon_button, search_filter_input};
@@ -170,36 +170,19 @@ impl SnippetsController {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
-        let content = if snippets.is_empty() {
-            empty_state(
+        let empty_results = visible_snippets.is_empty();
+        let content = if empty_results {
+            empty_page(
                 AppIcon::Notebook,
-                i18n::string("workspace.panel.snippets.empty"),
+                i18n::string(if snippets.is_empty() {
+                    "workspace.panel.snippets.empty"
+                } else if search_matched_snippets.is_empty() {
+                    "workspace.panel.snippets.no_search_matches"
+                } else {
+                    "snippets.empty.no_package_matches"
+                }),
             )
             .into_any_element()
-        } else if search_matched_snippets.is_empty() {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("workspace.panel.snippets.no_search_matches")),
-                )
-                .into_any_element()
-        } else if visible_snippets.is_empty() {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("snippets.empty.no_package_matches")),
-                )
-                .into_any_element()
         } else {
             let mut list = v_flex().gap_2();
             for snippet in visible_snippets {
@@ -334,18 +317,28 @@ impl SnippetsController {
                     None,
                 ))
             })
-            .child(
-                div().flex_1().min_h(px(0.0)).child(
-                    div().size_full().overflow_y_scrollbar().child(
+            .child(div().flex_1().min_h_0().child(if empty_results {
+                div()
+                    .size_full()
+                    .when(has_floating_menu, |this| {
+                        this.pb(space(ShellMetrics::SESSION_PANEL_MENU_CLEARANCE))
+                    })
+                    .child(content)
+                    .into_any_element()
+            } else {
+                div()
+                    .size_full()
+                    .overflow_y_scrollbar()
+                    .child(
                         div()
                             .w_full()
                             .when(has_floating_menu, |this| {
                                 this.pb(space(ShellMetrics::SESSION_PANEL_MENU_CLEARANCE))
                             })
                             .child(content),
-                    ),
-                ),
-            )
+                    )
+                    .into_any_element()
+            }))
             .into_any_element()
     }
 }

@@ -623,29 +623,25 @@ impl ForwardingController {
                 v_flex()
                     .size_full()
                     .child(div().px_4().pt_4().pb_3().child(header))
-                    .child(
-                        div().flex_1().min_h_0().child(
-                            div().size_full().overflow_y_scrollbar().child(
-                                v_flex()
-                                    .w_full()
-                                    .px_4()
-                                    .pb_4()
-                                    .gap_3()
-                                    .when(profiles.is_empty(), |this| {
-                                        this.child(forwarding_empty_state(i18n::string(
-                                            "forwarding.empty.no_hosts_available",
-                                        )))
-                                    })
-                                    .when(!profiles.is_empty(), |this| {
-                                        this.child(self.render_port_forward_rule_composer(
-                                            controller.clone(),
-                                            selected_profile,
-                                            cx,
-                                        ))
-                                    }),
-                            ),
-                        ),
-                    )
+                    .child(div().flex_1().min_h_0().child(if profiles.is_empty() {
+                        empty_page(
+                            AppIcon::Forward,
+                            i18n::string("forwarding.empty.no_hosts_available"),
+                        )
+                        .into_any_element()
+                    } else {
+                        div()
+                            .size_full()
+                            .overflow_y_scrollbar()
+                            .child(v_flex().w_full().px_4().pb_4().gap_3().child(
+                                self.render_port_forward_rule_composer(
+                                    controller.clone(),
+                                    selected_profile,
+                                    cx,
+                                ),
+                            ))
+                            .into_any_element()
+                    }))
                     .child(div().px_4().pt_3().pb_4().child(footer)),
             )
     }

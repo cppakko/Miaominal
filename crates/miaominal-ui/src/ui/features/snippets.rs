@@ -1079,10 +1079,7 @@ mod tests {
         let forms = cx.update(|cx| controller.read(cx).snippets_forms());
         let description_id = ("input", forms.description_input.entity_id());
         let script_id = ("input", forms.script_input.entity_id());
-        let save_id = SharedString::from(format!(
-            "editor-button-{}",
-            i18n::string("snippets.editor.save")
-        ));
+        let save_id = SharedString::from("snippets-editor-save");
         cx.update_window(window_handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(save_id.clone(), cx);

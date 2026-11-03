@@ -3,7 +3,9 @@ use crate::ui::contracts::catalog::CatalogReader;
 use crate::ui::contracts::keychain::{ManagedKeyCommitOperation, ManagedKeyCommitter};
 use crate::ui::contracts::overlay::OverlaySnapshot;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{Render, TestAppContext};
+use gpui_kit::{
+    Bounds, Render, TestAppContext, TestSupportExt as _, WindowBounds, WindowOptions, size,
+};
 use miaominal_core::keychain::ManagedKeySource;
 use miaominal_core::proxy::ProxyProfile;
 use miaominal_secrets::CredentialStore;
@@ -88,6 +90,139 @@ fn key(id: &str) -> ManagedKeyRecord {
         public_key: format!("ssh-ed25519 public-{id}"),
         source: ManagedKeySource::Imported,
     }
+}
+
+struct EmptyPageGeometryHarness {
+    controller: Entity<KeychainController>,
+}
+
+impl Render for EmptyPageGeometryHarness {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("keychain-page-viewport")
+            .test_support()
+            .size_full()
+            .overflow_hidden()
+            .child(self.controller.read(cx).render_keychain_page(
+                self.controller.clone(),
+                window.viewport_size().width.as_f32(),
+                cx,
+            ))
+    }
+}
+
+fn assert_empty_keychain_page_geometry(cx: &mut TestAppContext, page_view: KeychainPageView) {
+    cx.update(gpui_kit::init);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = Rc::new(CatalogFixture::default());
+    let source = catalog.clone();
+    let runtime_handle = runtime.handle().clone();
+    let known_hosts = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+    let (handle, _view) = cx.update(|cx| {
+        gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Default::default(),
+                    size(px(900.0), px(720.0)),
+                ))),
+                ..Default::default()
+            },
+            cx,
+            move |window, cx| {
+                cx.new(|cx| {
+                    let query_source = source.clone();
+                    let controller = cx.new(|cx| {
+                        let mut controller = KeychainController::new(
+                            KeychainControllerArgs {
+                                managed_keys: Vec::new(),
+                                runtime: runtime_handle,
+                                keychain_store: None,
+                                secrets: SecretStore::with_credentials(
+                                    CredentialStore::with_backend(
+                                        "keychain-empty-geometry-tests",
+                                        EmptyCredentials,
+                                    ),
+                                ),
+                                known_hosts,
+                                local_vault_status: LocalVaultStatus::Disabled,
+                                managed_key_query: ManagedKeyQueryPort::new(move |_| {
+                                    query_source.keys.borrow().clone()
+                                }),
+                                managed_key_commit: ManagedKeyCommitPort::new(source.clone()),
+                            },
+                            CatalogQueryPort::new(source.clone()),
+                            window,
+                            cx,
+                        );
+                        controller.page_view = page_view;
+                        controller
+                    });
+                    EmptyPageGeometryHarness { controller }
+                })
+            },
+        )
+        .expect("open keychain empty-page geometry window")
+    });
+
+    for scale in [1.0, 2.0] {
+        cx.simulate_window_scale_factor_change(handle, scale);
+        // Restore the tall viewport too: the empty state's geometry must not
+        // retain a minimum or a stale center from the shorter frame.
+        for height in [720.0, 360.0, 720.0] {
+            cx.simulate_window_resize(handle, size(px(900.0), px(height)));
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let viewport = window.find("keychain-page-viewport").bounds();
+                let region = window.find("keychain-empty-region");
+                let content = window.find("empty-state-content");
+                let region_bounds = region.bounds();
+                let content_bounds = content.bounds();
+                let actual = content_bounds.center();
+                let expected = region_bounds.center();
+                let tolerance = px(1.0 / window.scale_factor());
+
+                assert!(region.visible() && content.visible());
+                assert!(region_bounds.size.height > px(0.0));
+                assert!(content_bounds.size.height > px(0.0));
+                assert!(
+                    (actual.x - expected.x).as_f32().abs() <= tolerance.as_f32()
+                        && (actual.y - expected.y).as_f32().abs() <= tolerance.as_f32(),
+                    "keychain empty content must center in the body below its tabs: \
+                     content={content_bounds:?}, region={region_bounds:?}"
+                );
+                assert!(
+                    region_bounds.top() > viewport.top()
+                        && region_bounds.bottom() <= viewport.bottom() + tolerance,
+                    "the tab header must retain its own height above the empty region"
+                );
+                assert!(
+                    content_bounds.left() >= region_bounds.left() - tolerance
+                        && content_bounds.right() <= region_bounds.right() + tolerance
+                        && content_bounds.top() >= region_bounds.top() - tolerance
+                        && content_bounds.bottom() <= region_bounds.bottom() + tolerance,
+                    "the complete empty-state group must remain inside its visible body"
+                );
+                if height == 360.0 {
+                    assert!(
+                        region_bounds.size.height < px(420.0),
+                        "the short viewport must exercise the former fixed minimum"
+                    );
+                }
+            })
+            .expect("measure keychain empty-page geometry");
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn managed_keys_empty_page_stays_centered_when_window_shrinks(cx: &mut TestAppContext) {
+    assert_empty_keychain_page_geometry(cx, KeychainPageView::ManagedKeys);
+}
+
+#[gpui_kit::test]
+fn agent_identities_empty_page_stays_centered_when_window_shrinks(cx: &mut TestAppContext) {
+    assert_empty_keychain_page_geometry(cx, KeychainPageView::AgentIdentities);
 }
 
 #[gpui_kit::test]

@@ -3,7 +3,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_content, catalog_card_icon, catalog_card_subtitle, catalog_card_surface,
     catalog_card_title,
 };
-use crate::ui::components::empty_state::{empty_page, empty_state};
+use crate::ui::components::empty_state::empty_page;
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
@@ -189,8 +189,11 @@ fn snippet_list_row(
     .when(editing, |row| row.bg(ShellColors::current().selected))
 }
 
-fn snippets_empty_state(message: impl Into<SharedString>) -> impl IntoElement {
-    empty_state(AppIcon::Notebook, message)
+fn snippets_empty_state(message: impl Into<SharedString>) -> gpui_kit::Div {
+    empty_page(AppIcon::Notebook, message)
+        .h_auto()
+        .flex_1()
+        .min_h_0()
 }
 
 impl SnippetsController {
@@ -239,6 +242,7 @@ impl SnippetsController {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
+        let empty_results = visible_snippets.is_empty();
         if snippets.is_empty() {
             return empty_page(
                 AppIcon::Notebook,
@@ -280,13 +284,15 @@ impl SnippetsController {
             .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
             .mx_auto()
             .gap_6()
-            .pb(space(112.0))
+            .when(empty_results, |content| content.h_full().min_h_0())
+            .when(!empty_results, |content| content.pb(space(112.0)))
             .when(!package_summaries.is_empty(), |this| {
                 this.child(
                     v_flex()
                         .w_full()
                         .min_w(px(0.0))
                         .gap_2()
+                        .flex_shrink_0()
                         .text_size(miaominal_settings::FontSize::Input.scaled())
                         .child(page_section_title(i18n::string("snippets.page.packages")))
                         .child(
@@ -320,10 +326,12 @@ impl SnippetsController {
                     .w_full()
                     .min_w(px(0.0))
                     .gap_4()
+                    .when(empty_results, |section| section.flex_1().min_h_0())
                     .child(
                         h_flex()
                             .w_full()
                             .min_w(px(0.0))
+                            .flex_shrink_0()
                             .items_center()
                             .gap_3()
                             .child(page_section_title(i18n::string("snippets.page.snippets"))),
@@ -380,9 +388,14 @@ impl SnippetsController {
                             .flex_1()
                             .min_w(px(0.0))
                             .min_h(px(0.0))
-                            .child(div().size_full().overflow_y_scrollbar().child(
-                                div().px(space(ShellMetrics::CATALOG_INSET)).child(content),
-                            )),
+                            .child(
+                                div().size_full().overflow_y_scrollbar().child(
+                                    div()
+                                        .px(space(ShellMetrics::CATALOG_INSET))
+                                        .when(empty_results, |body| body.h_full())
+                                        .child(content),
+                                ),
+                            ),
                     ),
             )
             .into_any_element()

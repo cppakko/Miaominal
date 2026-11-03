@@ -605,20 +605,15 @@ impl TrustedHostsController {
         let orphaned = views.iter().filter(|view| view.is_orphaned()).count();
         let duplicated = views.iter().filter(|view| view.duplicate_count > 1).count();
         if views.is_empty() {
-            return empty_page(AppIcon::FingerPrint, i18n::string("trusted.page.empty"))
-                .child(
-                    div()
-                        .max_w(px(460.0))
-                        .pt_3()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .line_height(miaominal_settings::scaled_line_height(20.0))
-                        .text_color(rgb(miaominal_settings::current_theme()
-                            .material
-                            .roles
-                            .on_surface_variant))
-                        .child(i18n::string("trusted.page.empty_detail")),
-                )
-                .into_any_element();
+            return empty_page(
+                AppIcon::FingerPrint,
+                format!(
+                    "{}\n{}",
+                    i18n::string("trusted.page.empty"),
+                    i18n::string("trusted.page.empty_detail"),
+                ),
+            )
+            .into_any_element();
         }
 
         let filter = self.filter;
@@ -714,31 +709,40 @@ impl TrustedHostsController {
                                     )),
                             ),
                     )
-                    .child(div().flex_1().min_w(px(0.0)).min_h(px(0.0)).child(
-                        div().size_full().overflow_y_scrollbar().child(
-                            div().px(space(ShellMetrics::CATALOG_INSET)).child(
-                                if filtered.is_empty() {
-                                    empty_page(
-                                        AppIcon::FingerPrint,
-                                        i18n::string("trusted.page.no_matches"),
+                    .child(
+                        div()
+                            .id("trusted-hosts-results")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .child(if filtered.is_empty() {
+                                empty_page(
+                                    AppIcon::FingerPrint,
+                                    i18n::string("trusted.page.no_matches"),
+                                )
+                                .into_any_element()
+                            } else {
+                                div()
+                                    .size_full()
+                                    .overflow_y_scrollbar()
+                                    .child(
+                                        div().px(space(ShellMetrics::CATALOG_INSET)).child(
+                                            card_grid(available_width)
+                                                .id("trusted-hosts-grid")
+                                                .test_support()
+                                                .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
+                                                .mx_auto()
+                                                .pb(space(112.0))
+                                                .children(filtered.into_iter().map(|view| {
+                                                    trusted_host_card(controller.clone(), view)
+                                                        .into_any_element()
+                                                })),
+                                        ),
                                     )
                                     .into_any_element()
-                                } else {
-                                    card_grid(available_width)
-                                        .id("trusted-hosts-grid")
-                                        .test_support()
-                                        .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
-                                        .mx_auto()
-                                        .pb(space(112.0))
-                                        .children(filtered.into_iter().map(|view| {
-                                            trusted_host_card(controller.clone(), view)
-                                                .into_any_element()
-                                        }))
-                                        .into_any_element()
-                                },
-                            ),
-                        ),
-                    )),
+                            }),
+                    ),
             )
             .into_any_element()
     }
