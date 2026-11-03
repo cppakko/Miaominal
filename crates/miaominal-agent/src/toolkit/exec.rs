@@ -1075,9 +1075,12 @@ fn posix_command(shell: ShellType, script: &str) -> String {
 /// the user command, otherwise a stale cwd could run that command in HOME.
 fn job_start_script(command: &str, dir: &str, cwd: Option<&str>) -> String {
     let quote = |value: &str| shell_quote(value, ShellType::Posix);
-    let cwd = cwd
-        .map(|cwd| format!("cd -- {} || exit $?; ", quote(cwd)))
-        .unwrap_or_default();
+    let cwd = match cwd {
+        // dash treats `cd -- ''` as a successful no-op, so reject it explicitly.
+        Some("") => "echo 'Working directory must not be empty' >&2; exit 1; ".to_string(),
+        Some(cwd) => format!("cd -- {} || exit $?; ", quote(cwd)),
+        None => String::new(),
+    };
     let inner_script = format!("{command}\necho $? > {}", quote(&format!("{dir}/exit")));
     format!(
         "mkdir -p {dir} || exit $?; cd -- \"$HOME\" || exit $?; {cwd}\
@@ -1280,11 +1283,24 @@ mod tests {
             let home = directory.path().join("home");
             std::fs::create_dir(&home).unwrap();
             std::fs::write(home.join("not-a-directory"), "fixture").unwrap();
-            for (index, cwd) in ["missing", "not-a-directory", "-P", ""].iter().enumerate() {
+            for (index, cwd) in ["missing", "not-a-directory", "-P"].iter().enumerate() {
                 let dir = directory.path().join(format!("job-{index}"));
                 let output = run_launcher(&dir, &home, Some(cwd), false);
                 assert_not_started(&output, &dir);
             }
+        }
+
+        #[test]
+        fn empty_cwd_never_starts_a_job_in_home() {
+            let directory = tempfile::tempdir().unwrap();
+            let dir = directory.path().join("job");
+            let output = run_launcher(&dir, directory.path(), Some(""), false);
+            assert_not_started(&output, &dir);
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("Working directory must not be empty"),
+                "{output:?}"
+            );
         }
 
         #[test]

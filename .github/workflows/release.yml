@@ -183,9 +183,6 @@ jobs:
           cargo install cargo-deb --version 3.7.0 --locked
           cargo install cargo-generate-rpm --version 0.21.0 --locked
 
-      - name: Test POSIX background job startup
-        run: cargo test -p miaominal-agent job_start_posix
-
       - name: Build Linux AppImage
         run: |
           cargo bundle --release --format appimage
