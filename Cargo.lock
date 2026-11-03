@@ -5504,7 +5504,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "alacritty_terminal",
@@ -5554,7 +5554,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-agent"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5578,7 +5578,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-android"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -5607,7 +5607,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-core"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5615,7 +5615,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-paths"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -5631,7 +5631,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-rdp"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "miaominal-paths",
@@ -5644,7 +5644,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-secrets"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "aes 0.9.0",
  "aes-gcm",
@@ -5664,7 +5664,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-services"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5694,7 +5694,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-settings"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "fontdb",
  "gpui-kit",
@@ -5709,7 +5709,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-sftp"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -5726,7 +5726,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-ssh"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5750,7 +5750,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-storage"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -5775,7 +5775,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-sync"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5802,7 +5802,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-terminal"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "miaominal-core",
@@ -5811,7 +5811,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-ui"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -5856,7 +5856,7 @@ dependencies = [
 
 [[package]]
 name = "miaominal-uniffi-bindgen"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "uniffi",
 ]
