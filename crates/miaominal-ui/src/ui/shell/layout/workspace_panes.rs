@@ -7,6 +7,26 @@ use super::super::*;
 use super::chrome::{status_indicator, tab_status_indicator_color};
 use super::workspace_terminal_menu::{build_terminal_context_menu, terminal_pane_surface_id};
 
+/// Whether a right click is handled by the terminal itself (copy selection or
+/// paste) instead of opening the context menu.
+fn right_click_copies_or_pastes(modifiers: &gpui_kit::Modifiers) -> bool {
+    let settings = miaominal_settings::current_settings();
+    let force_context_menu = settings.terminal_shift_right_click_context_menu && modifiers.shift;
+    !force_context_menu
+        && settings.terminal_right_click_behavior
+            == TerminalRightClickBehavior::CopySelectionOrPaste
+}
+
+/// The pane surface still carries a context-menu trigger for Shift+right
+/// click. A plain right click in copy/paste mode must not reach it: the
+/// trigger would build an empty, invisible menu and move focus into it,
+/// leaving the terminal unfocused after the paste.
+fn stop_plain_right_click_reaching_context_menu(event: &MouseDownEvent, cx: &mut App) {
+    if right_click_copies_or_pastes(&event.modifiers) {
+        cx.stop_propagation();
+    }
+}
+
 fn pane_drop_zone_style(
     style: gpui_kit::StyleRefinement,
     zone: super::super::panes::PaneTabDropZone,
@@ -635,8 +655,9 @@ impl WorkspacePanesAppViewExt for AppView {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.set_active_pane(pane_id, window, cx);
+                    stop_plain_right_click_reaching_context_menu(event, cx);
                 }),
             )
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
@@ -657,13 +678,7 @@ impl WorkspacePanesAppViewExt for AppView {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
-                    let settings = miaominal_settings::current_settings();
-                    let force_context_menu =
-                        settings.terminal_shift_right_click_context_menu && event.modifiers.shift;
-                    if force_context_menu
-                        || settings.terminal_right_click_behavior
-                            != TerminalRightClickBehavior::CopySelectionOrPaste
-                    {
+                    if !right_click_copies_or_pastes(&event.modifiers) {
                         return;
                     }
 
@@ -804,6 +819,9 @@ impl WorkspacePanesAppViewExt for AppView {
             }))
             .bg(rgb(roles.surface_container_highest))
             .overflow_hidden()
+            .on_mouse_down(MouseButton::Right, |event: &MouseDownEvent, _, cx| {
+                stop_plain_right_click_reaching_context_menu(event, cx);
+            })
             .when_some(active_index, |this, tab_id| {
                 let Some(tab) = self.workspace.tabs.state(tab_id) else {
                     return this;
