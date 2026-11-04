@@ -16,6 +16,7 @@ interface MiaominalRepository {
     val transferActions: SftpTransferActions
 
     val backendState: StateFlow<NativeBackendState>
+    /** Ready only after persisted settings and the initial snapshots have loaded. */
     val status: StateFlow<RepositoryStatus>
 
     val hosts: StateFlow<List<SessionProfile>>

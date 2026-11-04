@@ -4,6 +4,9 @@ mod session;
 #[path = "sftp/paths.rs"]
 mod paths;
 
+#[path = "sftp/clipboard.rs"]
+mod clipboard;
+
 #[path = "sftp/local.rs"]
 pub mod local;
 

@@ -24,4 +24,12 @@
     <string name="sftp_browser_directory_empty_hint">Upload files or create a folder to get started.</string>
     <string name="sftp_browser_filter_empty_hint">Try another keyword or clear the filter to see all files.</string>
     <string name="sftp_browser_local_empty_hint">Download remote files into this folder.</string>
+    <string name="sftp_browser_cut">Cut</string>
+    <string name="sftp_browser_copy">Copy</string>
+    <string name="sftp_browser_paste_here">Paste here (%1$d)</string>
+    <string name="sftp_browser_download_here">Download here (%1$d)</string>
+    <string name="sftp_browser_clear_clipboard">Cancel paste</string>
+    <string name="sftp_browser_clipboard_expired">The source connection changed. Select the files again.</string>
+    <string name="sftp_browser_paste_inside_self">A folder cannot be pasted inside itself.</string>
+    <string name="sftp_browser_paste_done">Pasted %1$d items</string>
 </resources>

@@ -1412,6 +1412,106 @@ fn directory_creation_and_rename_are_applied() {
     });
 }
 
+#[test]
+fn remote_clipboard_copies_files_and_trees_and_moves_without_overwriting() {
+    let _guard = shared_test_lock();
+    clear_test_root();
+    crate::runtime::runtime().block_on(async {
+        let root = tempfile::tempdir().expect("server root");
+        write_real_file(root.path(), "source/file.txt", b"copied contents");
+        write_real_file(root.path(), "source/nested/data.bin", &[3; 140_000]);
+        write_real_file(root.path(), "occupied.txt", b"original");
+        let server = TestSftpServer::start(SftpTestOptions::default(), root.path().into()).await;
+        trust_host(&server);
+        let (_host, backend) = backend_for_test();
+        backend.initialize().await.expect("initialize");
+        save_password_host(&backend, "host-1", server.port).await;
+        let session = open_ready_session(&backend, "host-1").await;
+        session
+            .paste_remote("/source/file.txt".into(), "/copy.txt".into(), false)
+            .await
+            .expect("copy file");
+        assert_eq!(read_real_file(root.path(), "copy.txt"), b"copied contents");
+        session
+            .paste_remote("/source".into(), "/tree-copy".into(), false)
+            .await
+            .expect("copy tree");
+        assert_eq!(
+            read_real_file(root.path(), "tree-copy/nested/data.bin"),
+            vec![3; 140_000]
+        );
+        assert!(root.path().join("source/file.txt").exists());
+        assert!(
+            session
+                .paste_remote("/source".into(), "/source/inside".into(), false)
+                .await
+                .is_err()
+        );
+        assert!(!root.path().join("source/inside").exists());
+        assert!(
+            session
+                .paste_remote("/copy.txt".into(), "/occupied.txt".into(), true)
+                .await
+                .is_err()
+        );
+        assert_eq!(read_real_file(root.path(), "occupied.txt"), b"original");
+        assert!(root.path().join("copy.txt").exists());
+        session
+            .paste_remote("/copy.txt".into(), "/moved.txt".into(), true)
+            .await
+            .expect("move file");
+        assert!(!root.path().join("copy.txt").exists());
+        assert_eq!(read_real_file(root.path(), "moved.txt"), b"copied contents");
+        assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".miaominal-copy-")
+        }));
+        backend.shutdown();
+    });
+}
+
+#[test]
+fn remote_clipboard_copy_failure_cleans_staging_and_keeps_source() {
+    let _guard = shared_test_lock();
+    clear_test_root();
+    crate::runtime::runtime().block_on(async {
+        let root = tempfile::tempdir().expect("server root");
+        write_real_file(root.path(), "source.txt", &[9; 100_000]);
+        let server = TestSftpServer::start(
+            SftpTestOptions {
+                drop_after_bytes: Some(32_000),
+                ..Default::default()
+            },
+            root.path().into(),
+        )
+        .await;
+        trust_host(&server);
+        let (_host, backend) = backend_for_test();
+        backend.initialize().await.expect("initialize");
+        save_password_host(&backend, "host-1", server.port).await;
+        let session = open_ready_session(&backend, "host-1").await;
+        assert!(
+            session
+                .paste_remote("/source.txt".into(), "/copy.txt".into(), false)
+                .await
+                .is_err()
+        );
+        assert!(!root.path().join("copy.txt").exists());
+        assert_eq!(read_real_file(root.path(), "source.txt"), vec![9; 100_000]);
+        assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".miaominal-copy-")
+        }));
+        backend.shutdown();
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Failures: permission, disk, provider, disconnects, invalid handles
 // ---------------------------------------------------------------------------

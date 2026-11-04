@@ -71,6 +71,12 @@ enum SftpCommand {
         from: String,
         to: String,
     },
+    PasteRemote {
+        from: String,
+        to: String,
+        moving: bool,
+        response: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+    },
     UploadSource {
         transfer_id: TransferId,
         source: super::transfer::LocalTransferSource,
@@ -436,6 +442,20 @@ impl SftpCommandSender {
             from: from.into(),
             to: to.into(),
         })
+    }
+
+    pub async fn paste_remote(&self, from: String, to: String, moving: bool) -> Result<()> {
+        let (response, receiver) = tokio::sync::oneshot::channel();
+        self.send_command(SftpCommand::PasteRemote {
+            from,
+            to,
+            moving,
+            response,
+        })?;
+        receiver
+            .await
+            .context("SFTP session closed during paste")?
+            .map_err(|message| anyhow!(message))
     }
 
     pub fn queue_upload(
@@ -824,6 +844,8 @@ async fn run_connected_session(
 ) -> Result<()> {
     let mut transfer_controls = HashMap::new();
     let mut transfer_tasks = HashMap::new();
+    let mut paste_tasks = tokio::task::JoinSet::new();
+    let (paste_cancellation, _) = tokio::sync::watch::channel(false);
     let transfer_semaphore = Arc::new(Semaphore::new(transfer_concurrency));
     let (transfer_completion_sender, mut transfer_completion_receiver) = unbounded_channel();
 
@@ -851,6 +873,7 @@ async fn run_connected_session(
 
         loop {
             let command = tokio::select! {
+                _ = paste_tasks.join_next(), if !paste_tasks.is_empty() => continue,
                 completed = transfer_completion_receiver.recv() => {
                     if let Some(transfer_id) = completed {
                         remove_completed_transfer(
@@ -868,6 +891,22 @@ async fn run_connected_session(
             };
 
             match command {
+                SftpCommand::PasteRemote {
+                    from,
+                    to,
+                    moving,
+                    response,
+                } => {
+                    let sftp = Arc::clone(&sftp);
+                    let cancelled = paste_cancellation.subscribe();
+                    paste_tasks.spawn(async move {
+                        let result =
+                            super::clipboard::paste_remote(&sftp, &from, &to, moving, cancelled)
+                                .await
+                                .map_err(|error| format!("{error:#}"));
+                        let _ = response.send(result);
+                    });
+                }
                 SftpCommand::ListDirectory { request_id, path } => {
                     let result: Result<_> = async {
                         let canonical_path =
@@ -1110,6 +1149,15 @@ async fn run_connected_session(
     .await;
 
     cancel_all_transfers(&mut transfer_tasks, &mut transfer_controls).await;
+    let _ = paste_cancellation.send(true);
+    if tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while paste_tasks.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        paste_tasks.abort_all();
+    }
     if let Err(error) = sftp.close().await {
         log::debug!("failed to close SFTP session cleanly: {error:?}");
     }

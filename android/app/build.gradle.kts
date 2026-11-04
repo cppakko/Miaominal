@@ -15,11 +15,14 @@ val requestedAbis = (findProperty("miaominalAbis") as String?)
 
 
 // `-PmiaominalTestBuildType=release` switches the instrumentation target to the
-// R8-optimized release variant so the release smoke test runs against it.
-// Regular runs keep testing the debug variant.
+// R8-optimized test variant. Both test variants use a separate application ID
+// so installation, test data resets and cleanup cannot touch the everyday app.
 val requestedTestBuildType = (findProperty("miaominalTestBuildType") as String?)
     ?.trim()
     ?.takeIf(String::isNotEmpty)
+require(requestedTestBuildType == null || requestedTestBuildType in listOf("debug", "release")) {
+    "miaominalTestBuildType must be 'debug' or 'release', got '$requestedTestBuildType'"
+}
 
 // Android releases have their own version and monotonic install code. Neither
 // depends on the bundled Rust workspace version.
@@ -80,6 +83,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.akko.miaominal"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
         minSdk = 31
         targetSdk = 37
         versionCode = mobileVersionCode
@@ -103,12 +107,7 @@ android {
         }
     }
 
-    if (requestedTestBuildType != null) {
-        require(requestedTestBuildType in listOf("debug", "release")) {
-            "miaominalTestBuildType must be 'debug' or 'release', got '$requestedTestBuildType'"
-        }
-        testBuildType = requestedTestBuildType
-    }
+    testBuildType = if (requestedTestBuildType == "release") "uiTestRelease" else "uiTest"
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release")
@@ -120,6 +119,20 @@ android {
                 // Keep a symbolized copy of the packaged native libraries.
                 debugSymbolLevel = "FULL"
             }
+        }
+        create("uiTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".uitest"
+            versionNameSuffix = "-uitest"
+            manifestPlaceholders["appLabel"] = "Miaominal UI Tests"
+            matchingFallbacks += "debug"
+        }
+        create("uiTestRelease") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".uitest"
+            versionNameSuffix = "-uitest"
+            manifestPlaceholders["appLabel"] = "Miaominal UI Tests (Release)"
+            matchingFallbacks += "release"
         }
     }
     compileOptions {
@@ -147,7 +160,7 @@ val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyRelea
 
 // `preReleaseBuild` runs for every release packaging/install task; wiring the
 // check to it makes unsigned release builds fail before packaging starts.
-tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+tasks.matching { it.name in listOf("preReleaseBuild", "preUiTestReleaseBuild") }.configureEach {
     dependsOn(verifyReleaseSigning)
 }
 
@@ -181,4 +194,5 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    add("uiTestImplementation", libs.androidx.compose.ui.test.manifest)
 }

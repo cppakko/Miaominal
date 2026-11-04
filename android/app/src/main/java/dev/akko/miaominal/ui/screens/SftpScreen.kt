@@ -18,22 +18,30 @@ import dev.akko.miaominal.ui.uiString
 import dev.akko.miaominal.ui.components.WorkspaceBackHandler as BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.foundation.layout.widthIn
+import dev.akko.miaominal.ui.theme.MiaominalMotion
+import dev.akko.miaominal.ui.model.SftpClipboard
+import dev.akko.miaominal.ui.model.uniqueSftpPasteName
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -46,9 +54,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -60,16 +66,17 @@ import androidx.compose.material.icons.outlined.FolderOff
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,7 +87,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -104,8 +110,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -246,6 +250,8 @@ fun SftpScreen(
     var pathEditVisible by remember { mutableStateOf(false) }
     var pathInput by remember { mutableStateOf("") }
     var transferSheetVisible by remember { mutableStateOf(false) }
+    var clipboard by rememberSaveable(profile.id, stateSaver = SftpClipboard.Saver) { mutableStateOf<SftpClipboard?>(null) }
+    var pasting by remember { mutableStateOf(false) }
     var pendingDownload by remember { mutableStateOf<List<SftpEntryModel>?>(null) }
     var overwritePrompt by remember { mutableStateOf<List<Pair<SftpEntryModel, String>>?>(null) }
     var overwriteTree by remember { mutableStateOf<String?>(null) }
@@ -602,199 +608,282 @@ fun SftpScreen(
     val twoPanes = LocalTwoPaneAvailable.current
     val localRootLabel = if (isSharedStorageTree(localTreeUri)) stringResource(R.string.sftp_storage_internal)
         else localTreeUri?.let(repository::safTreeLabel) ?: stringResource(R.string.fm_local)
-    val activePath = if (pane == FsPane.Local) localPath else remotePath.ifBlank { directory.path }
-    val folderTitle = activePath.trimEnd('/').substringAfterLast('/').takeIf { it.isNotBlank() && it != "." }
-        ?: if (pane == FsPane.Local) localRootLabel
-        else stringResource(R.string.sftp_browser_root)
+    fun uploadLocalEntries(entry: SafLocalEntry?) {
+        val targets = entry?.let { listOf(it) } ?: selectedLocalEntries()
+        val sessionHandle = handle
+        if (sessionHandle == null || targets.isEmpty()) return
+        val targetPath = remotePath.ifBlank { "." }
+        val tree = localTreeUri ?: return
+        val sourceDirectory = localPath
+        scope.launch {
+            targets.forEach { entry ->
+                val full = joinLocalPath(sourceDirectory, entry.name)
+                sessionHandle.uploadDirectory(
+                    treeUri = tree,
+                    relativePath = full,
+                    label = entry.name,
+                    remotePath = joinRemotePath(targetPath, entry.name)
+                ).onSuccess { repository.transferActions.record(it, TransferRequest.UploadTree(profile.id, tree, full, entry.name, joinRemotePath(targetPath, entry.name))) }
+                    .onFailure { snackbar.showSnackbar(describeSftpError(it)) }
+            }
+            selectedLocal = emptyList(); localSelecting = false
+            snackbar.showSnackbar(context.getString(R.string.sftp_queued_transfers, targets.size))
+        }
+    }
+
+    fun downloadRemoteEntries(entries: List<SftpEntryModel>) {
+        if (twoPanes) paneName = FsPane.Local.name
+        else scope.launch { pagerState.animateScrollToPage(0) }
+        if (localTreeUri == null) {
+            requestLocalTree(entries)
+        } else {
+            executeDownloads(entries)
+        }
+    }
+
+    val selecting = ready && if (pane == FsPane.Local) localSelecting else remoteSelecting
+    val selectionCount = if (pane == FsPane.Local) selectedLocal.size else selectedRemote.size
+    val clearSelection: () -> Unit = {
+        if (pane == FsPane.Local) { selectedLocal = emptyList(); localSelecting = false }
+        else { selectedRemote = emptyList(); remoteSelecting = false }
+    }
+    val selectAll: () -> Unit = {
+        if (pane == FsPane.Local) selectedLocal = visibleLocalEntries.map { it.relativePath }
+        else selectedRemote = visibleRemoteEntries.map { it.path }
+    }
+    fun captureClipboard(moving: Boolean) {
+        val selected = selectedRemoteEntries()
+        val connection = handle?.connectionId ?: return
+        if (selected.isEmpty()) return
+        clipboard = SftpClipboard(connection, moving, selected)
+        selectedRemote = emptyList(); remoteSelecting = false
+    }
+    fun pasteClipboard() {
+        val pending = clipboard ?: return
+        val sessionHandle = handle ?: return
+        if (pasting) return
+        if (pending.connectionId != sessionHandle.connectionId) {
+            scope.launch { snackbar.showSnackbar(context.getString(R.string.sftp_browser_clipboard_expired)) }
+            return
+        }
+        if (pane == FsPane.Local) {
+            if (localTreeUri == null) requestLocalTree(pending.entries) else executeDownloads(pending.entries)
+            return
+        }
+        if (directory.loading || directory.error != null || directory.path != remotePath) return
+        val targetDirectory = remotePath.ifBlank { "." }
+        if (pending.entries.any { it.isDirectory && (targetDirectory == it.path || targetDirectory.startsWith(it.path.trimEnd('/') + "/")) }) {
+            scope.launch { snackbar.showSnackbar(context.getString(R.string.sftp_browser_paste_inside_self)) }
+            return
+        }
+        pasting = true
+        scope.launch {
+            var message: String? = null
+            var changed = false
+            val remaining = pending.entries.toMutableList()
+            try {
+                val occupied = directory.entries.map { it.name }.toMutableSet()
+                for (entry in pending.entries) {
+                    if (pending.moving && parentRemotePath(entry.path) == targetDirectory) { remaining.remove(entry); continue }
+                    val name = uniqueSftpPasteName(entry.name, occupied)
+                    val target = joinRemotePath(targetDirectory, name)
+                    val result = sessionHandle.pasteRemote(entry.path, target, pending.moving)
+                    if (result.isFailure) {
+                        message = describeSftpError(result.exceptionOrNull()!!)
+                        break
+                    }
+                    changed = true
+                    occupied += name
+                    remaining.remove(entry)
+                }
+                if (pending.moving && clipboard === pending) {
+                    clipboard = if (remaining.isEmpty()) null else pending.copy(entries = remaining)
+                }
+                if (message == null) message = context.getString(R.string.sftp_browser_paste_done, pending.entries.size)
+            } finally {
+                pasting = false
+                if (changed && remotePath == targetDirectory) remoteListing()
+            }
+            snackbar.showSnackbar(message)
+        }
+    }
+    fun copySelectedPaths() {
+        val paths = if (pane == FsPane.Local) selectedLocalEntries().map { it.relativePath }
+            else selectedRemoteEntries().map { it.path }
+        if (paths.isNotEmpty()) (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("paths", paths.joinToString("\n")))
+    }
     Scaffold(
         modifier = modifier,
-        snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        bottomBar = {
-            SftpBrowserFooter(local = pane == FsPane.Local, showPaneSwitch = ready && !twoPanes,
-                onSelect = { local -> scope.launch { pagerState.animateScrollToPage(if (local) 0 else 1) } },
-                panePosition = { pagerState.currentPage + pagerState.currentPageOffsetFraction },
-                transfers = visibleTransfers, onTransfers = { transferSheetVisible = true })
+        snackbarHost = {
+            SnackbarHost(snackbar, Modifier.padding(bottom = if (ready && (selecting || clipboard != null)) 88.dp else 0.dp))
         },
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         floatingActionButton = {
-            if (ready && (pane == FsPane.Remote || twoPanes) && !remoteSelecting && !localSelecting) SftpCreateAction(
+            val canCreate = ready && (pane == FsPane.Remote || twoPanes) && !selecting && clipboard == null
+            if ((canCreate || visibleTransfers.isNotEmpty()) && !selecting && clipboard == null) SftpCreateAction(
                 onUploadFiles = { backgroundPolicy?.beginUserFlow(); uploadFilePicker.launch(arrayOf("*/*")) },
                 onUploadFolder = { requestLocalTree() },
-                onCreateFolder = { newFolderName = ""; createFolderVisible = true }
+                onCreateFolder = { newFolderName = ""; createFolderVisible = true },
+                createAvailable = canCreate, transferCount = visibleTransfers.size,
+                onTransfers = { transferSheetVisible = true }
             )
         }
     ) { contentPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-            SftpConnectionHeader(
-                profile = profile,
-                session = session,
-                title = if (ready && !twoPanes) folderTitle else "SFTP",
-                onMenu = onMenu,
-                searchAvailable = ready && !twoPanes && (pane == FsPane.Remote || localTreeUri != null),
-                onSearch = { if (pane == FsPane.Local) localSearchVisible = true else remoteSearchVisible = true },
-                onTransfers = { transferSheetVisible = true },
-                onRefresh = { if (pane == FsPane.Local) localRefresh += 1 else scope.launch { remoteListing() } },
-                onCancel = {
-                    if (onRequestClose != null && handle != null) onRequestClose(handle!!.connectionId)
-                    else if (transfers.any { !it.state.isTerminal }) confirmCloseTransfers = true
-                    else closeSftp()
-                }
-            )
-            val paneContent: @Composable (Int) -> Unit = { page ->
-                paneStates.SaveableStateProvider("files-$page") {
-                if (!ready) {
-                    SftpWaitingPane(session = session, error = openError, onEdit = onEditProfile, onRetry = {
-                        openError = null
-                        handle = null
-                        session = null
-                        openAttempt += 1
-                    })
-                } else {
-                when (page) {
-                    0 -> LocalPane(
-                        searchVisible = localSearchVisible,
-                        showSearchAction = twoPanes,
-                        onOpenSearch = { localSearchVisible = true },
-                        onCloseSearch = { localSearchVisible = false; localQuery = "" },
-                        selecting = localSelecting,
-                        onBeginSelection = { localSelecting = true },
-                        query = localQuery, onQuery = { localQuery = it; localListState.requestScrollToItem(0) },
-                        sort = FileSort.valueOf(localSort), sortAscending = localSortAscending,
-                        onSort = {
-                            localSortAscending = if (localSort == it.name) !localSortAscending else it == FileSort.Name
-                            localSort = it.name
+        Box(Modifier.fillMaxSize().padding(contentPadding)) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                SftpConnectionHeader(
+                    profile = profile,
+                    session = session,
+                    title = if (ready) stringResource(if (pane == FsPane.Local) R.string.fm_local else R.string.fm_remote) else "SFTP",
+                    selectionCount = selectionCount.takeIf { selecting }, onClearSelection = clearSelection, onSelectAll = selectAll,
+                    onMenu = onMenu,
+                    searchAvailable = ready && !twoPanes && (pane == FsPane.Remote || localTreeUri != null),
+                    onSearch = { if (pane == FsPane.Local) localSearchVisible = true else remoteSearchVisible = true },
+                    sort = FileSort.valueOf(if (pane == FsPane.Local) localSort else remoteSort),
+                    sortAscending = if (pane == FsPane.Local) localSortAscending else remoteSortAscending,
+                    onSort = { sort ->
+                        if (pane == FsPane.Local) {
+                            localSortAscending = if (localSort == sort.name) !localSortAscending else sort == FileSort.Name
+                            localSort = sort.name
                             localListState.requestScrollToItem(0)
-                        },
-                        listState = localListState,
-                        treeUri = localTreeUri,
-                        treeLabel = localRootLabel,
-                        path = localPath,
-                        onNavigatePath = ::navigateLocal,
-                        entries = visibleLocalEntries,
-                        loading = localLoading,
-                        error = localError,
-                        selected = selectedLocal.toSet(),
-                        onPickTree = { requestLocalTree() },
-                        onRequestAccess = { backgroundPolicy?.beginUserFlow(); requestLocalAccess() },
-                        onNavigateUp = {
-                            navigateLocal(parentLocalPath(localPath))
-                        },
-                        onRefresh = { localRefresh += 1 },
-                        onEnter = { entry ->
-                            navigateLocal(entry.relativePath)
-                        },
-                        onToggleSelection = { entry ->
-                            localSelecting = true
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            selectedLocal = (selectedLocal.toSet()).toggle(entry.relativePath).toList()
-                        },
-                        onSelectAll = {
-                            selectedLocal = visibleLocalEntries.map { it.relativePath }
-                        },
-                        onClearSelection = { selectedLocal = emptyList(); localSelecting = false },
-                        onUploadToRemote = { entry ->
-                            val targets = entry?.let { listOf(it) } ?: selectedLocalEntries()
-                            val sessionHandle = handle
-                            if (sessionHandle == null || targets.isEmpty()) return@LocalPane
-                            val targetPath = remotePath.ifBlank { "." }
-                            val tree = localTreeUri ?: return@LocalPane
-                            val sourceDirectory = localPath
-                            scope.launch {
-                                targets.forEach { entry ->
-                                    val full = joinLocalPath(sourceDirectory, entry.name)
-                                    sessionHandle.uploadDirectory(
-                                        treeUri = tree,
-                                        relativePath = full,
-                                        label = entry.name,
-                                        remotePath = joinRemotePath(targetPath, entry.name)
-                                    ).onSuccess { repository.transferActions.record(it, TransferRequest.UploadTree(profile.id, tree, full, entry.name, joinRemotePath(targetPath, entry.name))) }
-                                        .onFailure { snackbar.showSnackbar(describeSftpError(it)) }
-                                }
-                                selectedLocal = emptyList()
-                                snackbar.showSnackbar(context.getString(R.string.sftp_queued_transfers, targets.size))
-                            }
-                        }
-                    )
-
-                    else -> RemotePane(
-                        searchVisible = remoteSearchVisible,
-                        showSearchAction = twoPanes,
-                        onOpenSearch = { remoteSearchVisible = true },
-                        onCloseSearch = { remoteSearchVisible = false; remoteQuery = "" },
-                        selecting = remoteSelecting,
-                        onBeginSelection = { remoteSelecting = true },
-                        query = remoteQuery, onQuery = { remoteQuery = it; remoteListState.requestScrollToItem(0) },
-                        sort = FileSort.valueOf(remoteSort), sortAscending = remoteSortAscending,
-                        onSort = {
-                            remoteSortAscending = if (remoteSort == it.name) !remoteSortAscending else it == FileSort.Name
-                            remoteSort = it.name
+                        } else {
+                            remoteSortAscending = if (remoteSort == sort.name) !remoteSortAscending else sort == FileSort.Name
+                            remoteSort = sort.name
                             remoteListState.requestScrollToItem(0)
-                        },
-                        listState = remoteListState,
-                        onNavigatePath = ::navigateRemote,
-                        path = remotePath.ifBlank { directory.path },
-                        entries = visibleRemoteEntries,
-                        loading = directory.loading,
-                        error = directory.error,
-                        selected = selectedRemote.toSet(),
-                        onNavigateUp = {
-                            navigateRemote(parentRemotePath(remotePath))
-                        },
-                        onRefresh = { scope.launch { remoteListing() } },
-                        onEnter = { entry ->
-                            navigateRemote(entry.path)
-                        },
-                        onToggleSelection = { entry ->
-                            remoteSelecting = true
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                            selectedRemote = selectedRemote.toSet().toggle(entry.path).toList()
-                        },
-                        onSelectAll = {
-                            selectedRemote = visibleRemoteEntries.map { it.path }
-                        },
-                        onClearSelection = { selectedRemote = emptyList(); remoteSelecting = false },
-                        onEditPath = {
-                            pathInput = remotePath
-                            pathEditVisible = true
-                        },
-                        onRename = { entry ->
-                            renameTarget = entry
-                            renameInput = entry.name
-                        },
-                        onDelete = { deleteTargets = selectedRemoteEntries() },
-                        onDeleteEntry = { entry -> deleteTargets = listOf(entry) },
-                        onUploadFiles = {
-                            backgroundPolicy?.beginUserFlow()
-                            uploadFilePicker.launch(arrayOf("*/*"))
-                        },
-                        onDownload = { entries ->
-                            if (twoPanes) paneName = FsPane.Local.name
-                            else scope.launch { pagerState.animateScrollToPage(0) }
-                            if (localTreeUri == null) {
-                                requestLocalTree(entries)
-                            } else {
-                                executeDownloads(entries)
+                        }
+                    },
+                    refreshing = if (pane == FsPane.Local) localLoading else directory.loading,
+                    onRefresh = { if (pane == FsPane.Local) localRefresh += 1 else scope.launch { remoteListing() } },
+                    onCancel = {
+                        if (onRequestClose != null && handle != null) onRequestClose(handle!!.connectionId)
+                        else if (transfers.any { !it.state.isTerminal }) confirmCloseTransfers = true
+                        else closeSftp()
+                    }
+                )
+                val paneContent: @Composable (Int) -> Unit = { page ->
+                    paneStates.SaveableStateProvider("files-$page") {
+                        if (!ready) {
+                            SftpWaitingPane(session = session, error = openError, onEdit = onEditProfile, onRetry = {
+                                openError = null
+                                handle = null
+                                session = null
+                                openAttempt += 1
+                            })
+                        } else {
+                            when (page) {
+                                0 -> LocalPane(
+                                    searchVisible = localSearchVisible,
+                                    showSearchAction = twoPanes,
+                                    onOpenSearch = { localSearchVisible = true },
+                                    onCloseSearch = { localSearchVisible = false; localQuery = "" },
+                                    selecting = localSelecting,
+                                    query = localQuery, onQuery = { localQuery = it; localListState.requestScrollToItem(0) },
+                                    listState = localListState,
+                                    treeUri = localTreeUri,
+                                    treeLabel = localRootLabel,
+                                    path = localPath,
+                                    onNavigatePath = ::navigateLocal,
+                                    entries = visibleLocalEntries,
+                                    loading = localLoading,
+                                    error = localError,
+                                    selected = selectedLocal.toSet(),
+                                    onPickTree = { requestLocalTree() },
+                                    onRequestAccess = { backgroundPolicy?.beginUserFlow(); requestLocalAccess() },
+                                    onNavigateUp = {
+                                        navigateLocal(parentLocalPath(localPath))
+                                    },
+                                    onRefresh = { localRefresh += 1 },
+                                    onEnter = { entry ->
+                                        navigateLocal(entry.relativePath)
+                                    },
+                                    onToggleSelection = { entry ->
+                                        localSelecting = true
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        selectedLocal = (selectedLocal.toSet()).toggle(entry.relativePath).toList()
+                                    },
+                                    onUploadToRemote = ::uploadLocalEntries
+                                )
+
+                                else -> RemotePane(
+                                    searchVisible = remoteSearchVisible,
+                                    showSearchAction = twoPanes,
+                                    onOpenSearch = { remoteSearchVisible = true },
+                                    onCloseSearch = { remoteSearchVisible = false; remoteQuery = "" },
+                                    selecting = remoteSelecting,
+                                    query = remoteQuery, onQuery = { remoteQuery = it; remoteListState.requestScrollToItem(0) },
+                                    listState = remoteListState,
+                                    onNavigatePath = ::navigateRemote,
+                                    path = remotePath.ifBlank { directory.path },
+                                    entries = visibleRemoteEntries,
+                                    loading = directory.loading,
+                                    error = directory.error,
+                                    selected = selectedRemote.toSet(),
+                                    onNavigateUp = {
+                                        navigateRemote(parentRemotePath(remotePath))
+                                    },
+                                    onRefresh = { scope.launch { remoteListing() } },
+                                    onEnter = { entry ->
+                                        navigateRemote(entry.path)
+                                    },
+                                    onToggleSelection = { entry ->
+                                        remoteSelecting = true
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        selectedRemote = selectedRemote.toSet().toggle(entry.path).toList()
+                                    },
+                                    onEditPath = {
+                                        pathInput = remotePath
+                                        pathEditVisible = true
+                                    },
+                                    onRename = { entry ->
+                                        renameTarget = entry
+                                        renameInput = entry.name
+                                    },
+                                    onDeleteEntry = { entry -> deleteTargets = listOf(entry) },
+                                    onUploadFiles = {
+                                        backgroundPolicy?.beginUserFlow()
+                                        uploadFilePicker.launch(arrayOf("*/*"))
+                                    },
+                                    onDownload = ::downloadRemoteEntries
+                                )
                             }
                         }
-                    )
+                    }
                 }
-                }
-                }
+                if (twoPanes && ready) {
+                    Row(
+                        Modifier.weight(1f).fillMaxWidth().padding(horizontal = UiSpacing.sm),
+                        horizontalArrangement = Arrangement.spacedBy(UiSpacing.sm)
+                    ) {
+                        SftpPaneSurface(Modifier.weight(1f).testTag("sftp-local-pane"), rounded = true,
+                            onActivate = { paneName = FsPane.Local.name }) { paneContent(0) }
+                        SftpPaneSurface(Modifier.weight(1f).testTag("sftp-remote-pane"), rounded = true,
+                            onActivate = { paneName = FsPane.Remote.name }) { paneContent(1) }
+                    }
+                } else HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("sftp-pane-pager"),
+                    pageSpacing = UiSpacing.xs,
+                    userScrollEnabled = ready
+                ) { page -> SftpPaneSurface(Modifier.testTag(if (page == 0) "sftp-local-pane" else "sftp-remote-pane")) { paneContent(page) } }
             }
-            if (twoPanes && ready) {
-                Row(
-                    Modifier.weight(1f).fillMaxWidth().padding(horizontal = UiSpacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(UiSpacing.sm)
-                ) {
-                    SftpPaneSurface(Modifier.weight(1f), rounded = true) { paneContent(0) }
-                    SftpPaneSurface(Modifier.weight(1f), rounded = true) { paneContent(1) }
-                }
-            } else HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.weight(1f).fillMaxWidth().testTag("sftp-pane-pager"),
-                pageSpacing = UiSpacing.xs,
-                userScrollEnabled = ready
-            ) { page -> SftpPaneSurface { paneContent(page) } }
+            AnimatedVisibility(visible = ready && (selecting || clipboard != null),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = UiSpacing.xs, vertical = UiSpacing.sm)
+                    .widthIn(max = 480.dp).fillMaxWidth(),
+                enter = fadeIn(tween(MiaominalMotion.DurationShort4)) + slideInVertically(tween(MiaominalMotion.DurationMedium2)) { it / 2 },
+                exit = fadeOut(tween(MiaominalMotion.DurationShort2)) + slideOutVertically(tween(MiaominalMotion.DurationShort4)) { it / 2 }) {
+                if (selecting) SftpSelectionToolbar(local = pane == FsPane.Local, count = selectionCount,
+                    transferCount = visibleTransfers.size, onCut = { captureClipboard(true) }, onCopy = { captureClipboard(false) },
+                    onDelete = { deleteTargets = selectedRemoteEntries() },
+                    onRename = { selectedRemoteEntries().singleOrNull()?.let { renameTarget = it; renameInput = it.name } },
+                    onCopyPaths = ::copySelectedPaths,
+                    onTransfer = { if (pane == FsPane.Local) uploadLocalEntries(null) else downloadRemoteEntries(selectedRemoteEntries()) },
+                    onTransfers = { transferSheetVisible = true }, modifier = Modifier.fillMaxWidth())
+                else clipboard?.let { pending -> SftpPasteToolbar(local = pane == FsPane.Local, count = pending.entries.size,
+                    busy = pasting || (pane == FsPane.Remote && directory.loading), onPaste = ::pasteClipboard,
+                    transferCount = visibleTransfers.size, onTransfers = { transferSheetVisible = true },
+                    onClear = { clipboard = null }, modifier = Modifier.fillMaxWidth()) }
+            }
         }
     }
 
@@ -1071,52 +1160,71 @@ fun SftpScreen(
 
 @Composable
 private fun SftpConnectionHeader(
-    profile: HostProfileUi,
-    session: SftpSessionModel?,
-    title: String,
-    searchAvailable: Boolean,
-    onMenu: () -> Unit,
-    onSearch: () -> Unit,
-    onTransfers: () -> Unit,
-    onRefresh: () -> Unit,
-    onCancel: () -> Unit
+    profile: HostProfileUi, session: SftpSessionModel?, title: String,
+    selectionCount: Int?, onClearSelection: () -> Unit, onSelectAll: () -> Unit,
+    searchAvailable: Boolean, onMenu: () -> Unit, onSearch: () -> Unit,
+    sort: FileSort, sortAscending: Boolean, onSort: (FileSort) -> Unit,
+    refreshing: Boolean, onRefresh: () -> Unit, onCancel: () -> Unit
 ) {
     val connected = session?.phase == SftpPhase.Ready
     var actionsVisible by remember { mutableStateOf(false) }
+    var optionsVisible by remember { mutableStateOf(false) }
     val statusLabel = stringResource(if (connected) R.string.ux_connected else R.string.ux_waiting)
+    val selectedLabel = stringResource(R.string.fm_selected_count, selectionCount ?: 0)
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         SessionTopBarCapsule {
-            IconButton(onClick = onMenu) {
-                Icon(Icons.Outlined.Menu, stringResource(R.string.links_sidebar_toggle),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(Modifier.weight(1f).padding(horizontal = UiSpacing.xs).semantics { stateDescription = statusLabel },
-                verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
-                    Box(Modifier.size(6.dp).background(
-                        if (connected) successColor else MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
-                    Text(profile.name + " · SFTP", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            if (searchAvailable) IconButton(onClick = onSearch, modifier = Modifier.testTag("sftp-search-action")) {
-                Icon(Icons.Outlined.Search, stringResource(R.string.ux_filter_directory),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Box {
-                IconButton(onClick = { actionsVisible = true }) {
-                    Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(expanded = actionsVisible, onDismissRequest = { actionsVisible = false }) {
-                    if (connected) DropdownMenuItem(text = { Text(stringResource(R.string.fm_refresh)) },
-                        onClick = { actionsVisible = false; onRefresh() }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.sftp_transfers_title)) },
-                        onClick = { actionsVisible = false; onTransfers() }, leadingIcon = { Icon(Icons.Outlined.SwapVert, null) })
-                    if (connected) DropdownMenuItem(text = { Text(stringResource(R.string.terminal_close_session)) },
-                        onClick = { actionsVisible = false; onCancel() }, leadingIcon = { Icon(Icons.Outlined.Close, null) })
+            AnimatedContent(targetState = selectionCount != null, modifier = Modifier.weight(1f),
+                transitionSpec = { fadeIn(tween(MiaominalMotion.DurationShort4)) togetherWith fadeOut(tween(MiaominalMotion.DurationShort2)) },
+                label = "sftp-contextual-topbar") { selecting ->
+                Row(Modifier.fillMaxWidth().testTag(if (selecting) "sftp-selection-topbar" else "sftp-normal-topbar"),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = if (selecting) onClearSelection else onMenu,
+                        modifier = if (selecting) Modifier.testTag("sftp-selection-close") else Modifier) {
+                        Icon(if (selecting) Icons.Outlined.Close else Icons.Outlined.Menu,
+                            stringResource(if (selecting) R.string.fm_clear_selection else R.string.links_sidebar_toggle),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (selecting) {
+                        Text(selectedLabel, Modifier.weight(1f).padding(horizontal = UiSpacing.xs),
+                            style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = onSelectAll, modifier = Modifier.testTag("sftp-selection-all")) {
+                            Icon(Icons.Outlined.SelectAll, stringResource(R.string.fm_select_all))
+                        }
+                    } else {
+                        Column(Modifier.weight(1f).padding(horizontal = UiSpacing.xs).heightIn(min = 48.dp)
+                            .testTag("sftp-pane-title").semantics(mergeDescendants = true) { stateDescription = statusLabel },
+                            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
+                                Box(Modifier.size(6.dp).background(if (connected) successColor else MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
+                                Text(profile.name + " · SFTP", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        if (searchAvailable) IconButton(onClick = onSearch, modifier = Modifier.testTag("sftp-search-action")) {
+                            Icon(Icons.Outlined.Search, stringResource(R.string.ux_filter_directory), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (connected) Box {
+                            IconButton(onClick = { actionsVisible = true }, modifier = Modifier.testTag("sftp-browser-actions")) {
+                                Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            DropdownMenu(actionsVisible, { actionsVisible = false }, shape = MaterialTheme.shapes.large) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.sftp_browser_sort_by)) },
+                                    modifier = Modifier.testTag("sftp-directory-options"),
+                                    onClick = { actionsVisible = false; optionsVisible = true },
+                                    leadingIcon = { Icon(Icons.Outlined.Tune, null) }, trailingIcon = { Icon(Icons.Outlined.ChevronRight, null) })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.fm_refresh)) }, enabled = !refreshing,
+                                    modifier = Modifier.testTag("sftp-directory-refresh"),
+                                    onClick = { actionsVisible = false; onRefresh() }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.terminal_close_session)) },
+                                    onClick = { actionsVisible = false; onCancel() }, leadingIcon = { Icon(Icons.Outlined.Close, null) })
+                            }
+                            SftpDirectoryOptionsMenu(expanded = optionsVisible, onDismissRequest = { optionsVisible = false },
+                                sort = sort, ascending = sortAscending, onSort = onSort,
+                                onBack = { optionsVisible = false; actionsVisible = true })
+                        }
+                    }
                 }
             }
         }
@@ -1157,9 +1265,8 @@ private fun SftpWaitingPane(session: SftpSessionModel?, error: String?, onEdit: 
 private fun RemotePane(
     searchVisible: Boolean, showSearchAction: Boolean,
     onOpenSearch: () -> Unit, onCloseSearch: () -> Unit,
-    selecting: Boolean, onBeginSelection: () -> Unit,
+    selecting: Boolean,
     query: String, onQuery: (String) -> Unit,
-    sort: FileSort, sortAscending: Boolean, onSort: (FileSort) -> Unit,
     listState: LazyListState,
     onNavigatePath: (String) -> Unit,
     path: String,
@@ -1171,11 +1278,8 @@ private fun RemotePane(
     onRefresh: () -> Unit,
     onEnter: (SftpEntryModel) -> Unit,
     onToggleSelection: (SftpEntryModel) -> Unit,
-    onSelectAll: () -> Unit,
-    onClearSelection: () -> Unit,
     onEditPath: () -> Unit,
     onRename: (SftpEntryModel) -> Unit,
-    onDelete: () -> Unit,
     onDeleteEntry: (SftpEntryModel) -> Unit,
     onUploadFiles: () -> Unit,
     onDownload: (List<SftpEntryModel>) -> Unit
@@ -1199,75 +1303,58 @@ private fun RemotePane(
             }
         }
     }
-    Column(modifier = Modifier.fillMaxSize()) {
-        SftpDirectoryBar(
-            local = false, path = path.ifBlank { "." }, count = entries.size,
-            onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
-            onPathAction = onEditPath, onRefresh = onRefresh, refreshing = loading,
-            searchVisible = searchVisible, showSearchAction = showSearchAction,
-            onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
-            query = query, onQuery = onQuery, sort = sort, sortAscending = sortAscending,
-            onSort = onSort, onSelect = onBeginSelection
-        )
-        if (selecting || selected.isNotEmpty()) {
-            SelectionBar(
-                count = selected.size,
-                onSelectAll = onSelectAll,
-                onClear = onClearSelection,
-                actionLabel = stringResource(R.string.fm_download),
-                actionIcon = Icons.Outlined.Download,
-                onAction = { onDownload(entries.filter { it.path in selected }) },
-                extraActions = {
-                    var selectionMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { selectionMenu = true }) { Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions)) }
-                        DropdownMenu(selectionMenu, { selectionMenu = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(R.string.fm_delete_selected)) }, enabled = selected.isNotEmpty(), onClick = { selectionMenu = false; onDelete() })
-                        }
-                    }
-                }
+    Box(Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            SftpDirectoryBar(
+                local = false, path = path.ifBlank { "." }, count = entries.size,
+                onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
+                onPathAction = onEditPath, refreshing = loading,
+                searchVisible = searchVisible, showSearchAction = showSearchAction,
+                onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
+                query = query, onQuery = onQuery
             )
-        }
-        SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
-            modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (error != null) {
-                SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
-                    description = error,
-                    modifier = Modifier.fillMaxSize(),
-                    action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
-            } else if (entries.isEmpty()) {
-                SftpBrowserEmptyState(
-                    if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
-                    stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.sftp_no_entries),
-                    stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_directory_empty_hint),
-                    modifier = Modifier.fillMaxSize(),
-                    action = {
-                        if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) }
-                        else FilledTonalButton(onClick = onUploadFiles) { Text(stringResource(R.string.sftp_upload_files)) }
-                    }
-                )
-            } else {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-remote-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = 88.dp)) {
-                    items(entries, key = { it.path }) { entry ->
-                        RemoteEntryRow(
-                            entry = entry,
-                            selected = entry.path in selected,
-                            onClick = {
-                                when (dev.akko.miaominal.ui.model.fileTapAction(selecting || selected.isNotEmpty(), entry.isDirectory)) {
-                                    dev.akko.miaominal.ui.model.FileTapAction.ToggleSelection -> onToggleSelection(entry)
-                                    dev.akko.miaominal.ui.model.FileTapAction.OpenDirectory -> onEnter(entry)
-                                    dev.akko.miaominal.ui.model.FileTapAction.OpenDetails -> detail = entry
-                                }
-                            },
-                            onLongClick = { onToggleSelection(entry) },
-                            onRename = { onRename(entry) },
-                            onDelete = { onDeleteEntry(entry) },
-                            onDownload = { onDownload(listOf(entry)) }
-                        )
+            SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
+                modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (error != null) {
+                    SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
+                        description = error,
+                        modifier = Modifier.fillMaxSize(),
+                        action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
+                } else if (entries.isEmpty()) {
+                    SftpBrowserEmptyState(
+                        if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
+                        stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.sftp_no_entries),
+                        stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_directory_empty_hint),
+                        modifier = Modifier.fillMaxSize(),
+                        action = {
+                            if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) }
+                            else FilledTonalButton(onClick = onUploadFiles) { Text(stringResource(R.string.sftp_upload_files)) }
+                        }
+                    )
+                } else {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-remote-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = 88.dp)) {
+                        items(entries, key = { it.path }) { entry ->
+                            RemoteEntryRow(
+                                entry = entry,
+                                selected = entry.path in selected,
+                                onClick = {
+                                    when (dev.akko.miaominal.ui.model.fileTapAction(selecting || selected.isNotEmpty(), entry.isDirectory)) {
+                                        dev.akko.miaominal.ui.model.FileTapAction.ToggleSelection -> onToggleSelection(entry)
+                                        dev.akko.miaominal.ui.model.FileTapAction.OpenDirectory -> onEnter(entry)
+                                        dev.akko.miaominal.ui.model.FileTapAction.OpenDetails -> detail = entry
+                                    }
+                                },
+                                onLongClick = { onToggleSelection(entry) },
+                                onRename = { onRename(entry) },
+                                onDelete = { onDeleteEntry(entry) },
+                                onDownload = { onDownload(listOf(entry)) }
+                            )
+                        }
                     }
                 }
             }
         }
+
     }
 }
 
@@ -1323,9 +1410,8 @@ private fun RemoteEntryRow(
 private fun LocalPane(
     searchVisible: Boolean, showSearchAction: Boolean,
     onOpenSearch: () -> Unit, onCloseSearch: () -> Unit,
-    selecting: Boolean, onBeginSelection: () -> Unit,
+    selecting: Boolean,
     query: String, onQuery: (String) -> Unit,
-    sort: FileSort, sortAscending: Boolean, onSort: (FileSort) -> Unit,
     listState: LazyListState,
     treeUri: String?,
     treeLabel: String?,
@@ -1341,8 +1427,6 @@ private fun LocalPane(
     onRefresh: () -> Unit,
     onEnter: (SafLocalEntry) -> Unit,
     onToggleSelection: (SafLocalEntry) -> Unit,
-    onSelectAll: () -> Unit,
-    onClearSelection: () -> Unit,
     onUploadToRemote: (SafLocalEntry?) -> Unit
 ) {
     var detail by remember { mutableStateOf<SafLocalEntry?>(null) }
@@ -1361,155 +1445,65 @@ private fun LocalPane(
                 .setPrimaryClip(ClipData.newPlainText("path", entry.relativePath)) }) { Text(stringResource(R.string.ux_copy_path)) }
         }
     } }
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (treeUri == null) {
-            SftpBrowserEmptyState(
-                icon = Icons.Outlined.FolderOpen,
-                title = stringResource(R.string.sftp_browser_local_title),
-                description = stringResource(R.string.sftp_storage_local_hint),
-                modifier = Modifier.fillMaxSize(),
-                action = { Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Button(onClick = onRequestAccess) { Text(stringResource(R.string.sftp_storage_allow)) }
-                    TextButton(onClick = onPickTree) { Text(stringResource(R.string.sftp_local_pick)) }
-                } }
-            )
-            return@Column
-        }
-        SftpDirectoryBar(
-            local = true, path = path, rootLabel = treeLabel, count = entries.size,
-            onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
-            onPathAction = onPickTree, onRefresh = onRefresh, refreshing = loading,
-            searchVisible = searchVisible, showSearchAction = showSearchAction,
-            onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
-            query = query, onQuery = onQuery, sort = sort, sortAscending = sortAscending,
-            onSort = onSort, onSelect = onBeginSelection
-        )
-        if (selecting || selected.isNotEmpty()) {
-            SelectionBar(
-                count = selected.size,
-                onSelectAll = onSelectAll,
-                onClear = onClearSelection,
-                actionLabel = stringResource(R.string.fm_upload_to_remote),
-                actionIcon = Icons.Outlined.Upload,
-                onAction = { onUploadToRemote(null) }
-            )
-        }
-        SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
-            modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (error != null) {
-                SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
-                    description = error, modifier = Modifier.fillMaxSize(),
-                    action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
-            } else if (entries.isEmpty()) {
+    Box(Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (treeUri == null) {
                 SftpBrowserEmptyState(
-                    if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
-                    stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.fm_local_empty),
-                    stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_local_empty_hint),
+                    icon = Icons.Outlined.FolderOpen,
+                    title = stringResource(R.string.sftp_browser_local_title),
+                    description = stringResource(R.string.sftp_storage_local_hint),
                     modifier = Modifier.fillMaxSize(),
-                    action = { if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) } }
+                    action = { Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Button(onClick = onRequestAccess) { Text(stringResource(R.string.sftp_storage_allow)) }
+                        TextButton(onClick = onPickTree) { Text(stringResource(R.string.sftp_local_pick)) }
+                    } }
                 )
-            } else {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-local-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = UiSpacing.sm)) {
-                    items(entries, key = { it.relativePath }) { entry ->
-                        SftpFileRow(
-                            name = entry.name,
-                            metadata = if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size),
-                            directory = entry.isDirectory, selected = entry.relativePath in selected,
-                            onClick = { if (selecting || selected.isNotEmpty()) onToggleSelection(entry)
-                                    else if (entry.isDirectory) onEnter(entry) else detail = entry },
-                            onLongClick = { onToggleSelection(entry) },
-                            trailing = {
-                                if (entry.isDirectory && entry.relativePath !in selected) Icon(Icons.Outlined.ChevronRight, null,
-                                    Modifier.padding(end = UiSpacing.sm), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        )
-                    }
-                }
+                return@Column
             }
-        }
-    }
-}
-
-@Composable
-private fun SelectionBar(
-    count: Int,
-    onSelectAll: () -> Unit,
-    onClear: () -> Unit,
-    actionLabel: String,
-    actionIcon: ImageVector,
-    onAction: () -> Unit,
-    extraActions: @Composable () -> Unit = {}
-) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = UiSpacing.xs, vertical = UiSpacing.xxs)
-            .testTag("sftp-selection-bar"),
-        shape = MaterialTheme.shapes.extraLarge,
-        color = colors.secondaryContainer,
-        contentColor = colors.onSecondaryContainer
-    ) {
-        Column(Modifier.padding(start = UiSpacing.sm, end = UiSpacing.xs, bottom = UiSpacing.xs)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.CheckCircle, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(UiSpacing.xs))
-                Text(
-                    text = stringResource(R.string.fm_selected_count, count),
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                extraActions()
-                IconButton(onClick = onClear, modifier = Modifier.testTag("sftp-selection-close")) {
-                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.fm_clear_selection))
-                }
-            }
-            val selectAllLabel = stringResource(R.string.fm_select_all)
-            val labelStyle = MaterialTheme.typography.labelLarge
-            val measurer = rememberTextMeasurer()
-            val density = LocalDensity.current
-            val iconSize = with(density) { maxOf(18.dp, labelStyle.fontSize.toDp()) }
-            val labelWidth = with(density) {
-                maxOf(measurer.measure(selectAllLabel, labelStyle, maxLines = 1).size.width,
-                    measurer.measure(actionLabel, labelStyle, maxLines = 1).size.width).toDp()
-            }
-            val minButtonWidth = labelWidth + iconSize + UiSpacing.xs * 3
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(end = UiSpacing.xs)) {
-                if (maxWidth < minButtonWidth * 2 + UiSpacing.xs) {
-                    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
-                        SelectionActionButton(selectAllLabel, Icons.Outlined.SelectAll, iconSize, onSelectAll,
-                            Modifier.fillMaxWidth(), primary = false)
-                        SelectionActionButton(actionLabel, actionIcon, iconSize, onAction,
-                            Modifier.fillMaxWidth().testTag("sftp-selection-action"), enabled = count > 0)
-                    }
+            SftpDirectoryBar(
+                local = true, path = path, rootLabel = treeLabel, count = entries.size,
+                onNavigateUp = onNavigateUp, onNavigate = onNavigatePath,
+                onPathAction = onPickTree, refreshing = loading,
+                searchVisible = searchVisible, showSearchAction = showSearchAction,
+                onOpenSearch = onOpenSearch, onCloseSearch = onCloseSearch,
+                query = query, onQuery = onQuery
+            )
+            SftpDirectoryContent(loading = loading, hasEntries = entries.isNotEmpty(), error = error,
+                modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (error != null) {
+                    SftpBrowserEmptyState(Icons.Outlined.FolderOff, stringResource(R.string.ui_could_not_open_directory),
+                        description = error, modifier = Modifier.fillMaxSize(),
+                        action = { Button(onClick = onRefresh, enabled = !loading) { Text(stringResource(R.string.sftp_retry)) } })
+                } else if (entries.isEmpty()) {
+                    SftpBrowserEmptyState(
+                        if (query.isNotBlank()) Icons.Outlined.Search else Icons.Outlined.FolderOpen,
+                        stringResource(if (query.isNotBlank()) R.string.ux_empty_filter else R.string.fm_local_empty),
+                        stringResource(if (query.isNotBlank()) R.string.sftp_browser_filter_empty_hint else R.string.sftp_browser_local_empty_hint),
+                        modifier = Modifier.fillMaxSize(),
+                        action = { if (query.isNotBlank()) TextButton(onClick = { onQuery("") }) { Text(stringResource(R.string.sftp_browser_clear_search)) } }
+                    )
                 } else {
-                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                        horizontalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
-                        SelectionActionButton(selectAllLabel, Icons.Outlined.SelectAll, iconSize, onSelectAll,
-                            Modifier.weight(1f).fillMaxHeight(), primary = false)
-                        SelectionActionButton(actionLabel, actionIcon, iconSize, onAction,
-                            Modifier.weight(1f).fillMaxHeight().testTag("sftp-selection-action"), enabled = count > 0)
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("sftp-local-files"), contentPadding = PaddingValues(top = UiSpacing.xxs, bottom = 88.dp)) {
+                        items(entries, key = { it.relativePath }) { entry ->
+                            SftpFileRow(
+                                name = entry.name,
+                                metadata = if (entry.isDirectory) uiString(R.string.ui_folder) else formatBytes(entry.size),
+                                directory = entry.isDirectory, selected = entry.relativePath in selected,
+                                onClick = { if (selecting || selected.isNotEmpty()) onToggleSelection(entry)
+                                        else if (entry.isDirectory) onEnter(entry) else detail = entry },
+                                onLongClick = { onToggleSelection(entry) },
+                                trailing = {
+                                    if (entry.isDirectory && entry.relativePath !in selected) Icon(Icons.Outlined.ChevronRight, null,
+                                        Modifier.padding(end = UiSpacing.sm), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun SelectionActionButton(label: String, icon: ImageVector, iconSize: androidx.compose.ui.unit.Dp,
-    onClick: () -> Unit, modifier: Modifier, enabled: Boolean = true, primary: Boolean = true) {
-    val content: @Composable RowScope.() -> Unit = {
-        Icon(icon, null, Modifier.size(iconSize))
-        Spacer(Modifier.width(UiSpacing.xs))
-        Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 1)
     }
-    val padding = PaddingValues(horizontal = UiSpacing.xs, vertical = UiSpacing.xs)
-    if (primary) Button(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp),
-        contentPadding = padding, content = content)
-    else OutlinedButton(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 48.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), contentPadding = padding,
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
-        content = content)
 }
 
 @Composable

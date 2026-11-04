@@ -91,6 +91,7 @@ import dev.akko.miaominal.R
 import dev.akko.miaominal.data.CredentialUpdate
 import dev.akko.miaominal.data.HostRuntimeStatus
 import dev.akko.miaominal.data.MiaominalRepository
+import dev.akko.miaominal.data.RepositoryStatus
 import dev.akko.miaominal.data.SessionPhase
 import dev.akko.miaominal.data.ForwardPhaseModel
 import dev.akko.miaominal.data.SftpPhase
@@ -270,6 +271,7 @@ private fun MiaominalAppContent(
         }
     }
     val preferences by repository.settings.collectAsState()
+    val repositoryStatus by repository.status.collectAsState()
     val devicePreferences by repository.devicePreferences.collectAsState()
     val managedKeys by repository.managedKeys.collectAsState()
     val scope = rememberCoroutineScope()
@@ -1261,7 +1263,9 @@ private fun MiaominalAppContent(
             }
         }
 
-        if (!preferences.onboardingCompleted) {
+        // The default settings describe a new install until the persisted
+        // snapshot arrives; never show onboarding based on that placeholder.
+        if (repositoryStatus == RepositoryStatus.Ready && !preferences.onboardingCompleted) {
             OnboardingScreen(
                 onAddHost = { editorForNewHost = true },
                 onImportHosts = { selectedName = MainDestination.Settings.name; selectedSettingName = SettingsDestination.Connections.name; settingFocusAnchor = "connections-import" },
