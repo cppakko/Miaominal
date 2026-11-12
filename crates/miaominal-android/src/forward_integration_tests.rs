@@ -121,22 +121,24 @@ impl server::Handler for ForwardServerHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         let Ok(port) = u16::try_from(port_to_connect) else {
-            return Ok(false);
+            return Ok(());
         };
         let target = format!("{host_to_connect}:{port}");
         let stream = match TcpStream::connect(&target).await {
             Ok(stream) => stream,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(()),
         };
         crate::runtime::runtime().spawn(async move {
             let mut stream = stream;
             let mut forwarded = channel.into_stream();
             let _ = copy_bidirectional(&mut forwarded, &mut stream).await;
         });
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn tcpip_forward(

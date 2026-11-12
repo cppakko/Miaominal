@@ -140,14 +140,14 @@ impl server::Handler for TestServerHandler {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        public_key: &russh::keys::PublicKey,
+        public_key: russh::server::VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         let accepted = self
             .state
             .options
             .authorized_key
             .as_ref()
-            .is_some_and(|authorized| authorized.key_data() == public_key.key_data());
+            .is_some_and(|authorized| authorized.key_data() == public_key.public_key.key_data());
         Ok(if user == "tester" && accepted {
             Auth::Accept
         } else {
@@ -226,9 +226,11 @@ impl server::Handler for TestServerHandler {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn pty_request(

@@ -39,7 +39,7 @@ futures.workspace = true
 thiserror.workspace = true
 # Deliberately not inheriting the workspace feature set: the mobile runtime must
 # not pull in process spawning.
-tokio = { version = "1", features = [
+tokio = { version = "1.53.3", features = [
     "fs",
     "io-util",
     "macros",

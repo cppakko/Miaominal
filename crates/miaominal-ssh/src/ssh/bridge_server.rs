@@ -141,7 +141,22 @@ where
     while tasks.join_next().await.is_some() {}
     drop(tasks);
     route.disconnect().await;
-    result
+    match result {
+        // The local client may close its pipe while russh flushes the final
+        // channel-close reply. Relays and the upstream route are stopped above.
+        Err(error)
+            if error.chain().any(|cause| {
+                matches!(
+                    cause.downcast_ref::<russh::Error>(),
+                    Some(russh::Error::IO(error))
+                        if error.kind() == std::io::ErrorKind::BrokenPipe
+                )
+            }) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 fn server_config(identity: &SshBridgeServerIdentity) -> server::Config {
@@ -240,21 +255,27 @@ impl server::Handler for SshBridgeServerHandler {
     async fn channel_open_session(
         &mut self,
         channel: Channel<server::Msg>,
+        reply: server::ChannelOpenHandle,
         session: &mut server::Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         let Ok(permit) = self.channel_slots.clone().try_acquire_owned() else {
-            return Ok(false);
+            reply
+                .reject(russh::ChannelOpenFailure::ResourceShortage)
+                .await;
+            return Ok(());
         };
         let upstream = match self.route.open_session().await {
             Ok(channel) => channel,
             Err(error) => {
                 log::warn!("SSH Bridge could not open upstream session channel: {error:#}");
-                return Ok(false);
+                reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
+                return Ok(());
             }
         };
+        reply.accept().await;
         self.register_channel(channel, upstream, permit, session.handle())
             .await;
-        Ok(true)
+        Ok(())
     }
 
     async fn channel_open_direct_tcpip(
@@ -264,10 +285,14 @@ impl server::Handler for SshBridgeServerHandler {
         port_to_connect: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: server::ChannelOpenHandle,
         session: &mut server::Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         let Ok(permit) = self.channel_slots.clone().try_acquire_owned() else {
-            return Ok(false);
+            reply
+                .reject(russh::ChannelOpenFailure::ResourceShortage)
+                .await;
+            return Ok(());
         };
         let upstream = match self
             .route
@@ -282,12 +307,14 @@ impl server::Handler for SshBridgeServerHandler {
             Ok(channel) => channel,
             Err(error) => {
                 log::warn!("SSH Bridge upstream direct-tcpip request failed: {error:#}");
-                return Ok(false);
+                reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
+                return Ok(());
             }
         };
+        reply.accept().await;
         self.register_channel(channel, upstream, permit, session.handle())
             .await;
-        Ok(true)
+        Ok(())
     }
 
     async fn channel_eof(
@@ -650,7 +677,7 @@ mod tests {
 
         async fn check_server_key(
             &mut self,
-            _server_public_key: &russh::keys::PublicKey,
+            _server_public_key: &russh::keys::PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
             Ok(true)
         }
@@ -682,9 +709,11 @@ mod tests {
         async fn channel_open_session(
             &mut self,
             _channel: Channel<server::Msg>,
+            reply: russh::server::ChannelOpenHandle,
             _session: &mut server::Session,
-        ) -> Result<bool> {
-            Ok(true)
+        ) -> Result<()> {
+            reply.accept().await;
+            Ok(())
         }
 
         async fn channel_open_direct_tcpip(
@@ -694,8 +723,9 @@ mod tests {
             port_to_connect: u32,
             _originator_address: &str,
             _originator_port: u32,
+            reply: russh::server::ChannelOpenHandle,
             _session: &mut server::Session,
-        ) -> Result<bool> {
+        ) -> Result<()> {
             let target = format!("{host_to_connect}:{port_to_connect}");
             tokio::spawn(async move {
                 match TcpStream::connect(target).await {
@@ -708,7 +738,8 @@ mod tests {
                     }
                 }
             });
-            Ok(true)
+            reply.accept().await;
+            Ok(())
         }
 
         async fn pty_request(

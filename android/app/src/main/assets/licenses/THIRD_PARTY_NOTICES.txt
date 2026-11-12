@@ -113,16 +113,16 @@ Origin: https://crates.io/api/v1/crates/android_system_properties/0.1.5/download
 Full text SHA-256: 80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e
 
 ==============================================================================
-anyhow@1.0.102
+anyhow@1.0.104
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/anyhow/1.0.102/download
+Source: https://crates.io/api/v1/crates/anyhow/1.0.104/download
 Upstream: https://github.com/dtolnay/anyhow
 Upstream authors/developers: David Tolnay <dtolnay@gmail.com>
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/anyhow/1.0.102/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/anyhow/1.0.104/download!/LICENSE-APACHE
 Full text SHA-256: b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/anyhow/1.0.102/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/anyhow/1.0.104/download!/LICENSE-MIT
 Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
 ==============================================================================
@@ -208,9 +208,9 @@ Origin: https://crates.io/api/v1/crates/atomic-waker/1.1.2/download!/LICENSE-THI
 Full text SHA-256: 6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5
 
 ==============================================================================
-aws-lc-rs@1.16.3
+aws-lc-rs@1.19.0
 License: ISC AND (Apache-2.0 OR ISC)
-Source: https://crates.io/api/v1/crates/aws-lc-rs/1.16.3/download
+Source: https://crates.io/api/v1/crates/aws-lc-rs/1.19.0/download
 Upstream: https://github.com/aws/aws-lc-rs
 Upstream authors/developers: AWS-LibCrypto
 Copyright (c) 2016, Google Inc.
@@ -225,23 +225,23 @@ Copyright 2017 Brian Smith.
 Copyright 2018 Brian Smith.
 Copyright 2018 Trent Clarke.
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/aws-lc-rs/1.16.3/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/aws-lc-rs/1.19.0/download!/LICENSE
 Full text SHA-256: b50b376e7d24a0598488b730c3034ffcd0b58dd36c0913a24b9903a3cfd04bf7
 
 ==============================================================================
-aws-lc-sys@0.40.0
+aws-lc-sys@0.47.0
 License: ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)
-Source: https://crates.io/api/v1/crates/aws-lc-sys/0.40.0/download
+Source: https://crates.io/api/v1/crates/aws-lc-sys/0.47.0/download
 Upstream: https://github.com/aws/aws-lc-rs
 Upstream authors/developers: AWS-LC
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.40.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.47.0/download!/LICENSE
 Full text SHA-256: 728536b4160e051f86d7c9c388f704866b3d512cd7df97ac3516c65279523c4e
 Document: aws-lc/LICENSE
-Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.40.0/download!/aws-lc/LICENSE
+Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.47.0/download!/aws-lc/LICENSE
 Full text SHA-256: 728536b4160e051f86d7c9c388f704866b3d512cd7df97ac3516c65279523c4e
 Document: aws-lc/third_party/fiat/LICENSE
-Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.40.0/download!/aws-lc/third_party/fiat/LICENSE
+Origin: https://crates.io/api/v1/crates/aws-lc-sys/0.47.0/download!/aws-lc/third_party/fiat/LICENSE
 Full text SHA-256: 43e358d7b6eb109d0f51f7b3a090fd82607965767c25fadee39e922475de2061
 
 ==============================================================================
@@ -298,17 +298,17 @@ Origin: https://crates.io/api/v1/crates/bcrypt-pbkdf/0.11.0/download!/LICENSE-MI
 Full text SHA-256: 36ce5478ce77743cf9be5b0967b2508b593880d9987fd29f6bd814672f95795b
 
 ==============================================================================
-bitflags@2.11.1
+bitflags@2.13.2
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/bitflags/2.11.1/download
+Source: https://crates.io/api/v1/crates/bitflags/2.13.2/download
 Upstream: https://github.com/bitflags/bitflags
 Upstream authors/developers: The Rust Project Developers
 Copyright 2014 The Rust Project Developers. See the COPYRIGHT
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/bitflags/2.11.1/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/bitflags/2.13.2/download!/LICENSE-APACHE
 Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/bitflags/2.11.1/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/bitflags/2.13.2/download!/LICENSE-MIT
 Full text SHA-256: 6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb
 
 ==============================================================================
@@ -355,16 +355,16 @@ Origin: https://crates.io/api/v1/crates/block-buffer/0.10.4/download!/LICENSE-MI
 Full text SHA-256: d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef
 
 ==============================================================================
-block-buffer@0.12.0
+block-buffer@0.12.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/block-buffer/0.12.0/download
+Source: https://crates.io/api/v1/crates/block-buffer/0.12.1/download
 Upstream: https://github.com/RustCrypto/utils
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/block-buffer/0.12.0/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/block-buffer/0.12.1/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/block-buffer/0.12.0/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/block-buffer/0.12.1/download!/LICENSE-MIT
 Full text SHA-256: 98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01
 
 ==============================================================================
@@ -516,16 +516,16 @@ Origin: https://crates.io/api/v1/crates/cipher/0.5.1/download!/LICENSE-MIT
 Full text SHA-256: 950d712c518a02fcb7cff96950aee304a1cc5283361712c980ea21e8d6d669a5
 
 ==============================================================================
-cmov@0.5.3
+cmov@0.5.4
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/cmov/0.5.3/download
+Source: https://crates.io/api/v1/crates/cmov/0.5.4/download
 Upstream: https://github.com/RustCrypto/utils
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/cmov/0.5.3/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/cmov/0.5.4/download!/LICENSE-APACHE
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/cmov/0.5.3/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/cmov/0.5.4/download!/LICENSE-MIT
 Full text SHA-256: 70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9
 
 ==============================================================================
@@ -642,17 +642,17 @@ Origin: https://crates.io/api/v1/crates/crossbeam-utils/0.8.21/download!/LICENSE
 Full text SHA-256: 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab
 
 ==============================================================================
-crypto-bigint@0.7.3
+crypto-bigint@0.7.11
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/crypto-bigint/0.7.3/download
+Source: https://crates.io/api/v1/crates/crypto-bigint/0.7.11/download
 Upstream: https://github.com/RustCrypto/crypto-bigint
 Upstream authors/developers: RustCrypto Developers
 Copyright (c) 2023 Privacy Scaling Explorations Team
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/crypto-bigint/0.7.3/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/crypto-bigint/0.7.11/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/crypto-bigint/0.7.3/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/crypto-bigint/0.7.11/download!/LICENSE-MIT
 Full text SHA-256: 57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88
 
 ==============================================================================
@@ -707,16 +707,16 @@ Origin: https://crates.io/api/v1/crates/ctr/0.10.0/download!/LICENSE-MIT
 Full text SHA-256: 63af4bea227c94d021e99427f6ca3a4b8efddadcca93ab6130f708cf6138cf68
 
 ==============================================================================
-ctutils@0.4.2
+ctutils@0.4.8
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/ctutils/0.4.2/download
+Source: https://crates.io/api/v1/crates/ctutils/0.4.8/download
 Upstream: https://github.com/RustCrypto/utils
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/ctutils/0.4.2/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/ctutils/0.4.8/download!/LICENSE-APACHE
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/ctutils/0.4.2/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/ctutils/0.4.8/download!/LICENSE-MIT
 Full text SHA-256: 91585c36e4fb9ab4ca0d3dfac5d66d3c0c62cc51f640a0e1196542daf2267eae
 
 ==============================================================================
@@ -751,9 +751,9 @@ Origin: https://crates.io/api/v1/crates/curve25519-dalek-derive/0.1.1/download!/
 Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
 ==============================================================================
-curve25519-dalek@5.0.0-rc.0
+curve25519-dalek@5.0.0
 License: BSD-3-Clause
-Source: https://crates.io/api/v1/crates/curve25519-dalek/5.0.0-rc.0/download
+Source: https://crates.io/api/v1/crates/curve25519-dalek/5.0.0/download
 Upstream: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek
 Upstream authors/developers: Isis Lovecruft <isis@patternsinthevoid.net>; Henry de Valence <hdevalence@hdevalence.ca>
 Copyright (c) 2016-2018 Henry de Valence
@@ -767,7 +767,7 @@ Copyright (c) 2019 Henry de Valence.
 Copyright (c) 2019 Oleg Andreev
 Copyright 2017 Brian Smith
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/curve25519-dalek/5.0.0-rc.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/curve25519-dalek/5.0.0/download!/LICENSE
 Full text SHA-256: 403c53069750101aeb9df7e15f127056ceaf7e4e92d0b919a1f4c084afd5f1d4
 
 ==============================================================================
@@ -896,27 +896,27 @@ Origin: https://crates.io/api/v1/crates/displaydoc/0.2.5/download!/LICENSE-MIT
 Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
 ==============================================================================
-ecdsa@0.17.0-rc.18
+ecdsa@0.17.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/ecdsa/0.17.0-rc.18/download
+Source: https://crates.io/api/v1/crates/ecdsa/0.17.0/download
 Upstream: https://github.com/RustCrypto/signatures
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/ecdsa/0.17.0-rc.18/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/ecdsa/0.17.0/download!/LICENSE-APACHE
 Full text SHA-256: c55cb43f2497b2c0f6debf561c58c90e51b5cde7de0c76bf3c1a927e6ce60bec
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/ecdsa/0.17.0-rc.18/download!/LICENSE-MIT
-Full text SHA-256: bdebaf9156a298f8fdab56dd26cb5144673de522d80f4c0d88e0039145f147f9
+Origin: https://crates.io/api/v1/crates/ecdsa/0.17.0/download!/LICENSE-MIT
+Full text SHA-256: 9aa4f92bfcde293ebeca9e2379fa18d1d61f000977da144c7b74c2986c9b6466
 
 ==============================================================================
-ed25519-dalek@3.0.0-rc.0
+ed25519-dalek@3.0.0
 License: BSD-3-Clause
-Source: https://crates.io/api/v1/crates/ed25519-dalek/3.0.0-rc.0/download
+Source: https://crates.io/api/v1/crates/ed25519-dalek/3.0.0/download
 Upstream: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek
 Upstream authors/developers: isis lovecruft <isis@patternsinthevoid.net>; Tony Arcieri <bascule@gmail.com>; Michael Rosenberg <michael@mrosenberg.pub>
 Copyright (c) 2017-2019 isis lovecruft
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/ed25519-dalek/3.0.0-rc.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/ed25519-dalek/3.0.0/download!/LICENSE
 Full text SHA-256: 7b6a19666b1304f2dec9202b0dd2d92ca220558aa23f07d4c5e86dbd271050b9
 
 ==============================================================================
@@ -946,17 +946,17 @@ Origin: https://crates.io/api/v1/crates/either/1.15.0/download!/LICENSE-MIT
 Full text SHA-256: 7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545
 
 ==============================================================================
-elliptic-curve@0.14.0-rc.33
+elliptic-curve@0.14.3
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/elliptic-curve/0.14.0-rc.33/download
+Source: https://crates.io/api/v1/crates/elliptic-curve/0.14.3/download
 Upstream: https://github.com/RustCrypto/traits
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/elliptic-curve/0.14.0-rc.33/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/elliptic-curve/0.14.3/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/elliptic-curve/0.14.0-rc.33/download!/LICENSE-MIT
-Full text SHA-256: 4ee4d666c383ff92656dc17bae67a76714b5e121dffdf20b804118a750599dd8
+Origin: https://crates.io/api/v1/crates/elliptic-curve/0.14.3/download!/LICENSE-MIT
+Full text SHA-256: d8c4ab431f20da8452c9a217084163822e5fd9d134e1343903c929f2859fc8fd
 
 ==============================================================================
 enum_dispatch@0.3.13
@@ -1022,25 +1022,6 @@ Origin: https://crates.io/api/v1/crates/ff/0.14.0/download!/LICENSE-MIT
 Full text SHA-256: 8d0c1d1d4b2bebf5b9211f0e883d5a482b7808f3ed31320da14ddee95811f4ef
 
 ==============================================================================
-fiat-crypto@0.3.0
-License: MIT OR Apache-2.0 OR BSD-1-Clause
-Source: https://crates.io/api/v1/crates/fiat-crypto/0.3.0/download
-Upstream: https://github.com/mit-plv/fiat-crypto
-Upstream authors/developers: Fiat Crypto library authors <jgross@mit.edu>
-Document: COPYRIGHT
-Origin: https://crates.io/api/v1/crates/fiat-crypto/0.3.0/download!/COPYRIGHT
-Full text SHA-256: 6c935d087a2992d0f092665400a2fa99c98db58d96fbe29368f8f48182bed9aa
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/fiat-crypto/0.3.0/download!/LICENSE-APACHE
-Full text SHA-256: 9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f
-Document: LICENSE-BSD-1
-Origin: https://crates.io/api/v1/crates/fiat-crypto/0.3.0/download!/LICENSE-BSD-1
-Full text SHA-256: 0c1240e29b4a2c528bcc3ccc38a98b1dba5e3e6b465da910208935f082e2ced6
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/fiat-crypto/0.3.0/download!/LICENSE-MIT
-Full text SHA-256: 0034712d5e97a4f5b900a160a5c19d582b740d8e0638b4e44fd07e7b492dcd13
-
-==============================================================================
 flate2@1.1.9
 License: MIT OR Apache-2.0
 Source: https://crates.io/api/v1/crates/flate2/1.1.9/download
@@ -1095,112 +1076,112 @@ Origin: https://crates.io/api/v1/crates/fs2/0.4.3/download!/LICENSE-MIT
 Full text SHA-256: 7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0
 
 ==============================================================================
-futures-channel@0.3.32
+futures-channel@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-channel/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-channel/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Copyright (c) 2010-2011 Dmitry Vyukov. All rights reserved.
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-channel/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-channel/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-channel/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-channel/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-core@0.3.32
+futures-core@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-core/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-core/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-core/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-core/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-core/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-core/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-executor@0.3.32
+futures-executor@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-executor/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-executor/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-executor/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-executor/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-executor/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-executor/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-io@0.3.32
+futures-io@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-io/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-io/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-io/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-io/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-io/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-io/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-macro@0.3.32
+futures-macro@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-macro/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-macro/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-macro/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-macro/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-macro/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-macro/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-sink@0.3.32
+futures-sink@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-sink/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-sink/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-sink/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-sink/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-sink/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-sink/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-task@0.3.32
+futures-task@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-task/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-task/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-task/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-task/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-task/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-task/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures-util@0.3.32
+futures-util@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures-util/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures-util/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures-util/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures-util/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures-util/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures-util/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
-futures@0.3.32
+futures@0.3.34
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/futures/0.3.32/download
+Source: https://crates.io/api/v1/crates/futures/0.3.34/download
 Upstream: https://github.com/rust-lang/futures-rs
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/futures/0.3.32/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/futures/0.3.34/download!/LICENSE-APACHE
 Full text SHA-256: 8337133fbd3cd6b5de6ca9fd048a242a01045f3257add148a03c29f91e51e2b2
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/futures/0.3.32/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/futures/0.3.34/download!/LICENSE-MIT
 Full text SHA-256: 6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd
 
 ==============================================================================
@@ -1430,16 +1411,16 @@ Origin: https://crates.io/api/v1/crates/httparse/1.10.1/download!/LICENSE-MIT
 Full text SHA-256: 1626f2c950cee975b5809748e288468141d09aa420314c7c9b35e6e62b772b2d
 
 ==============================================================================
-hybrid-array@0.4.10
+hybrid-array@0.4.15
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/hybrid-array/0.4.10/download
+Source: https://crates.io/api/v1/crates/hybrid-array/0.4.15/download
 Upstream: https://github.com/RustCrypto/hybrid-array
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/hybrid-array/0.4.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/hybrid-array/0.4.15/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/hybrid-array/0.4.10/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/hybrid-array/0.4.15/download!/LICENSE-MIT
 Full text SHA-256: 70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9
 
 ==============================================================================
@@ -1613,20 +1594,6 @@ Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/inout/0.2.2/download!/LICENSE-MIT
 Full text SHA-256: a07fcacc3c60de4dc0fab10ac9d6aaba7379974e28451c99da7f7df09c25b28c
-
-==============================================================================
-internal-russh-num-bigint@0.5.0
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/internal-russh-num-bigint/0.5.0/download
-Upstream: https://github.com/rust-num/num-bigint
-Upstream authors/developers: The Rust Project Developers
-Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/internal-russh-num-bigint/0.5.0/download!/LICENSE-APACHE
-Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/internal-russh-num-bigint/0.5.0/download!/LICENSE-MIT
-Full text SHA-256: 6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb
 
 ==============================================================================
 ipnet@2.12.0
@@ -1940,17 +1907,16 @@ Origin: https://crates.io/api/v1/crates/nix/0.31.2/download!/LICENSE
 Full text SHA-256: 66e3ee1fa7f909ad3c612d556f2a0cdabcd809ad6e66f3b0605015ac64841b70
 
 ==============================================================================
-num-bigint@0.4.6
+num-bigint@0.5.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/num-bigint/0.4.6/download
+Source: https://crates.io/api/v1/crates/num-bigint/0.5.1/download
 Upstream: https://github.com/rust-num/num-bigint
-Upstream authors/developers: The Rust Project Developers
 Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/num-bigint/0.4.6/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/num-bigint/0.5.1/download!/LICENSE-APACHE
 Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/num-bigint/0.4.6/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/num-bigint/0.5.1/download!/LICENSE-MIT
 Full text SHA-256: 6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb
 
 ==============================================================================
@@ -2031,45 +1997,45 @@ Origin: https://crates.io/api/v1/crates/option-ext/0.2.0/download!/LICENSE.txt
 Full text SHA-256: 3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04
 
 ==============================================================================
-p256@0.14.0-rc.10
+p256@0.14.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/p256/0.14.0-rc.10/download
+Source: https://crates.io/api/v1/crates/p256/0.14.0/download
 Upstream: https://github.com/RustCrypto/elliptic-curves
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/p256/0.14.0-rc.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/p256/0.14.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/p256/0.14.0-rc.10/download!/LICENSE-MIT
-Full text SHA-256: 233b95ccbf90dc67e32f3e8995c489f6312d9191ebd141a931c3b684f1e3be6d
+Origin: https://crates.io/api/v1/crates/p256/0.14.0/download!/LICENSE-MIT
+Full text SHA-256: d8c4ab431f20da8452c9a217084163822e5fd9d134e1343903c929f2859fc8fd
 
 ==============================================================================
-p384@0.14.0-rc.10
+p384@0.14.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/p384/0.14.0-rc.10/download
+Source: https://crates.io/api/v1/crates/p384/0.14.0/download
 Upstream: https://github.com/RustCrypto/elliptic-curves
 Upstream authors/developers: RustCrypto Developers; Frank Denis <github@pureftpd.org>
 Copyright (c) 2015-2020 the fiat-crypto authors
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/p384/0.14.0-rc.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/p384/0.14.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/p384/0.14.0-rc.10/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/p384/0.14.0/download!/LICENSE-MIT
 Full text SHA-256: 02168781a5b59970e3da1784d2eb69f432598a3757f283dbffdafd9d483a9113
 
 ==============================================================================
-p521@0.14.0-rc.10
+p521@0.14.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/p521/0.14.0-rc.10/download
+Source: https://crates.io/api/v1/crates/p521/0.14.0/download
 Upstream: https://github.com/RustCrypto/elliptic-curves
 Upstream authors/developers: RustCrypto Developers
 Copyright (c) 2015-2020 the fiat-crypto authors
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/p521/0.14.0-rc.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/p521/0.14.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/p521/0.14.0-rc.10/download!/LICENSE-MIT
-Full text SHA-256: d27687b51f2874822c1530976b7e837eac4f308d94bf3dd42047011b7d437b47
+Origin: https://crates.io/api/v1/crates/p521/0.14.0/download!/LICENSE-MIT
+Full text SHA-256: d8c4ab431f20da8452c9a217084163822e5fd9d134e1343903c929f2859fc8fd
 
 ==============================================================================
 parking_lot@0.12.5
@@ -2268,29 +2234,29 @@ Origin: https://crates.io/api/v1/crates/powerfmt/0.2.0/download!/LICENSE-MIT
 Full text SHA-256: 070dbc7dda03a29296f2d58bdb9b7331af90f2abc9f31df22875d1eabaf29852
 
 ==============================================================================
-primefield@0.14.0-rc.11
+primefield@0.14.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/primefield/0.14.0-rc.11/download
+Source: https://crates.io/api/v1/crates/primefield/0.14.0/download
 Upstream: https://github.com/RustCrypto/elliptic-curves
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/primefield/0.14.0-rc.11/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/primefield/0.14.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/primefield/0.14.0-rc.11/download!/LICENSE-MIT
-Full text SHA-256: 232a60e61d7d4f3022705d2ebf472478b579ce0e54ba62ff2fbfd9559cb0fe4e
+Origin: https://crates.io/api/v1/crates/primefield/0.14.0/download!/LICENSE-MIT
+Full text SHA-256: 4621bda86773a67b5645bbd25cf1bf8b6820d4fcec3885b23b9ceec612007f63
 
 ==============================================================================
-primeorder@0.14.0-rc.10
+primeorder@0.14.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/primeorder/0.14.0-rc.10/download
+Source: https://crates.io/api/v1/crates/primeorder/0.14.0/download
 Upstream: https://github.com/RustCrypto/elliptic-curves
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/primeorder/0.14.0-rc.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/primeorder/0.14.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/primeorder/0.14.0-rc.10/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/primeorder/0.14.0/download!/LICENSE-MIT
 Full text SHA-256: 233b95ccbf90dc67e32f3e8995c489f6312d9191ebd141a931c3b684f1e3be6d
 
 ==============================================================================
@@ -2420,17 +2386,17 @@ Origin: https://crates.io/api/v1/crates/reqwest/0.13.4/download!/LICENSE-MIT
 Full text SHA-256: 917c0fe02296eec634820b2758519e39278716bb0104f055cfee771bd7a4c534
 
 ==============================================================================
-rfc6979@0.5.0-rc.5
+rfc6979@0.6.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/rfc6979/0.5.0-rc.5/download
+Source: https://crates.io/api/v1/crates/rfc6979/0.6.0/download
 Upstream: https://github.com/RustCrypto/signatures
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/rfc6979/0.5.0-rc.5/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/rfc6979/0.6.0/download!/LICENSE-APACHE
 Full text SHA-256: c55cb43f2497b2c0f6debf561c58c90e51b5cde7de0c76bf3c1a927e6ce60bec
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/rfc6979/0.5.0-rc.5/download!/LICENSE-MIT
-Full text SHA-256: bdebaf9156a298f8fdab56dd26cb5144673de522d80f4c0d88e0039145f147f9
+Origin: https://crates.io/api/v1/crates/rfc6979/0.6.0/download!/LICENSE-MIT
+Full text SHA-256: 9aa4f92bfcde293ebeca9e2379fa18d1d61f000977da144c7b74c2986c9b6466
 
 ==============================================================================
 roxmltree@0.21.1
@@ -2459,14 +2425,14 @@ Origin: https://crates.io/api/v1/crates/rsa/0.10.0-rc.18/download!/LICENSE-MIT
 Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
 ==============================================================================
-russh-cryptovec@0.61.0
+russh-cryptovec@0.62.0
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/russh-cryptovec/0.61.0/download
+Source: https://crates.io/api/v1/crates/russh-cryptovec/0.62.0/download
 Upstream: https://github.com/warp-tech/russh
 Upstream authors/developers: Pierre-Étienne Meunier <pe@pijul.org>; Eugeny <e@ajenti.org
 Copyright 2016 Pierre-Étienne Meunier
 Document: LICENSE.txt
-Origin: https://raw.githubusercontent.com/warp-tech/russh/1947d6b1bb3a9d79840b5adf7eb9b33df2c6e4a7/LICENSE.txt
+Origin: https://raw.githubusercontent.com/warp-tech/russh/907c732562c5732aad6c140dba958eafddc41ba0/LICENSE.txt
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 
 ==============================================================================
@@ -2488,14 +2454,14 @@ Origin: https://raw.githubusercontent.com/warp-tech/russh/3d09c20c52a542ffa32772
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 
 ==============================================================================
-russh@0.61.2
+russh@0.65.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/russh/0.61.2/download
+Source: https://crates.io/api/v1/crates/russh/0.65.1/download
 Upstream: https://github.com/warp-tech/russh
 Upstream authors/developers: Pierre-Étienne Meunier <pe@pijul.org>
 Copyright 2016 Pierre-Étienne Meunier
 Document: LICENSE.txt
-Origin: https://raw.githubusercontent.com/warp-tech/russh/ff74d7332b717fe6caf56f63aa4decdcdfab8645/LICENSE.txt
+Origin: https://raw.githubusercontent.com/warp-tech/russh/b33092aad1e51c66258a12e8b83fc473a68d9d34/LICENSE.txt
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 
 ==============================================================================
@@ -2573,9 +2539,9 @@ Origin: https://crates.io/api/v1/crates/rustls-platform-verifier/0.7.0/download!
 Full text SHA-256: 1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c
 
 ==============================================================================
-rustls-webpki@0.103.13
+rustls-webpki@0.103.16
 License: ISC
-Source: https://crates.io/api/v1/crates/rustls-webpki/0.103.13/download
+Source: https://crates.io/api/v1/crates/rustls-webpki/0.103.16/download
 Upstream: https://github.com/rustls/webpki
 Copyright 2015 Brian Smith.
 Copyright 2015-2016 Brian Smith.
@@ -2584,22 +2550,22 @@ Copyright 2015-2021 Brian Smith.
 Copyright 2022 Rafael Fernández López.
 Copyright 2023 Daniel McCarney.
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/rustls-webpki/0.103.13/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/rustls-webpki/0.103.16/download!/LICENSE
 Full text SHA-256: 5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a
 
 ==============================================================================
-rustls@0.23.38
+rustls@0.23.46
 License: Apache-2.0 OR ISC OR MIT
-Source: https://crates.io/api/v1/crates/rustls/0.23.38/download
+Source: https://crates.io/api/v1/crates/rustls/0.23.46/download
 Upstream: https://github.com/rustls/rustls
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/rustls/0.23.38/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/rustls/0.23.46/download!/LICENSE-APACHE
 Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
 Document: LICENSE-ISC
-Origin: https://crates.io/api/v1/crates/rustls/0.23.38/download!/LICENSE-ISC
+Origin: https://crates.io/api/v1/crates/rustls/0.23.46/download!/LICENSE-ISC
 Full text SHA-256: 7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/rustls/0.23.38/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/rustls/0.23.46/download!/LICENSE-MIT
 Full text SHA-256: 709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c
 
 ==============================================================================
@@ -2824,6 +2790,19 @@ Origin: https://crates.io/api/v1/crates/sha3/0.11.0/download!/LICENSE-MIT
 Full text SHA-256: 6462612d92b861384dcd378168a7a0ef3ef28876d3d380d382cb5a3091e360b8
 
 ==============================================================================
+sha3@0.12.0
+License: MIT OR Apache-2.0
+Source: https://crates.io/api/v1/crates/sha3/0.12.0/download
+Upstream: https://github.com/RustCrypto/hashes
+Upstream authors/developers: RustCrypto Developers
+Document: LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/sha3/0.12.0/download!/LICENSE-APACHE
+Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
+Document: LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/sha3/0.12.0/download!/LICENSE-MIT
+Full text SHA-256: 6462612d92b861384dcd378168a7a0ef3ef28876d3d380d382cb5a3091e360b8
+
+==============================================================================
 signal-hook-registry@1.4.8
 License: MIT OR Apache-2.0
 Source: https://crates.io/api/v1/crates/signal-hook-registry/1.4.8/download
@@ -2961,42 +2940,55 @@ Origin: https://crates.io/api/v1/crates/spki/0.8.0/download!/LICENSE-MIT
 Full text SHA-256: 57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88
 
 ==============================================================================
-ssh-cipher@0.3.0-rc.9
+sponge-cursor@0.1.0
+License: MIT OR Apache-2.0
+Source: https://crates.io/api/v1/crates/sponge-cursor/0.1.0/download
+Upstream: https://github.com/RustCrypto/utils
+Upstream authors/developers: RustCrypto Developers
+Document: LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/sponge-cursor/0.1.0/download!/LICENSE-APACHE
+Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
+Document: LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/sponge-cursor/0.1.0/download!/LICENSE-MIT
+Full text SHA-256: 083cb05a34eb9c78faf69aa49674ec30d1eadbdc2042473644992786e6c8249b
+
+==============================================================================
+ssh-cipher@0.3.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/ssh-cipher/0.3.0-rc.9/download
+Source: https://crates.io/api/v1/crates/ssh-cipher/0.3.0/download
 Upstream: https://github.com/RustCrypto/SSH
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/ssh-cipher/0.3.0-rc.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/ssh-cipher/0.3.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/ssh-cipher/0.3.0-rc.9/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/ssh-cipher/0.3.0/download!/LICENSE-MIT
 Full text SHA-256: 003736bc98408b53511b9cc8ff5d1af3bf0a8f17d53841cc39d8ab1b96a195b0
 
 ==============================================================================
-ssh-encoding@0.3.0-rc.9
+ssh-encoding@0.3.0
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/ssh-encoding/0.3.0-rc.9/download
+Source: https://crates.io/api/v1/crates/ssh-encoding/0.3.0/download
 Upstream: https://github.com/RustCrypto/SSH
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/ssh-encoding/0.3.0-rc.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/ssh-encoding/0.3.0/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/ssh-encoding/0.3.0-rc.9/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/ssh-encoding/0.3.0/download!/LICENSE-MIT
 Full text SHA-256: 57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88
 
 ==============================================================================
-ssh-key@0.7.0-rc.10
+ssh-key@0.7.0-rc.11
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.10/download
+Source: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.11/download
 Upstream: https://github.com/RustCrypto/SSH
 Upstream authors/developers: RustCrypto Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.10/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.11/download!/LICENSE-APACHE
 Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.10/download!/LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/ssh-key/0.7.0-rc.11/download!/LICENSE-MIT
 Full text SHA-256: 57a4d75c1d095bb94754a478f3cd15e60ac66a5c5627d844be01a918eea5fe88
 
 ==============================================================================
@@ -3048,6 +3040,19 @@ Origin: https://crates.io/api/v1/crates/syn/2.0.117/download!/LICENSE-APACHE
 Full text SHA-256: b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/syn/2.0.117/download!/LICENSE-MIT
+Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
+
+==============================================================================
+syn@3.0.5
+License: MIT OR Apache-2.0
+Source: https://crates.io/api/v1/crates/syn/3.0.5/download
+Upstream: https://github.com/dtolnay/syn
+Upstream authors/developers: David Tolnay <dtolnay@gmail.com>
+Document: LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/syn/3.0.5/download!/LICENSE-APACHE
+Full text SHA-256: b30df9a48463d1c99c6a66cdee623b1b0832c3811d58a80b338268d71cea190e
+Document: LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/syn/3.0.5/download!/LICENSE-MIT
 Full text SHA-256: 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3
 
 ==============================================================================
@@ -3229,13 +3234,13 @@ Origin: https://crates.io/api/v1/crates/tokio-util/0.7.18/download!/LICENSE
 Full text SHA-256: 253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552
 
 ==============================================================================
-tokio@1.52.3
+tokio@1.54.1
 License: MIT
-Source: https://crates.io/api/v1/crates/tokio/1.52.3/download
+Source: https://crates.io/api/v1/crates/tokio/1.54.1/download
 Upstream: https://github.com/tokio-rs/tokio
 Upstream authors/developers: Tokio Contributors <team@tokio.rs>
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/tokio/1.52.3/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/tokio/1.54.1/download!/LICENSE
 Full text SHA-256: 253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552
 
 ==============================================================================
@@ -3478,17 +3483,6 @@ Origin: https://crates.io/api/v1/crates/universal-hash/0.6.1/download!/LICENSE-M
 Full text SHA-256: efa52eb70a774b62c50cf50f5e57e2625c29d375d09b91132f4f020e47b9944e
 
 ==============================================================================
-untrusted@0.7.1
-License: ISC
-Source: https://crates.io/api/v1/crates/untrusted/0.7.1/download
-Upstream: https://github.com/briansmith/untrusted
-Upstream authors/developers: Brian Smith <brian@briansmith.org>
-Copyright 2015-2016 Brian Smith.
-Document: LICENSE.txt
-Origin: https://crates.io/api/v1/crates/untrusted/0.7.1/download!/LICENSE.txt
-Full text SHA-256: 7abd9b6960dcf7d4d0a48606a5b71bfe37d472db68d70637f3a58a56785f1621
-
-==============================================================================
 untrusted@0.9.0
 License: ISC
 Source: https://crates.io/api/v1/crates/untrusted/0.9.0/download
@@ -3570,21 +3564,12 @@ Origin: https://crates.io/api/v1/crates/want/0.3.1/download!/LICENSE
 Full text SHA-256: 96d741569b18c61043e5ad2b8505b5e4891a27994b732b1da9f86f46be67f59a
 
 ==============================================================================
-webpki-roots@0.26.11
+webpki-roots@1.0.12
 License: CDLA-Permissive-2.0
-Source: https://crates.io/api/v1/crates/webpki-roots/0.26.11/download
+Source: https://crates.io/api/v1/crates/webpki-roots/1.0.12/download
 Upstream: https://github.com/rustls/webpki-roots
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/webpki-roots/0.26.11/download!/LICENSE
-Full text SHA-256: e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8
-
-==============================================================================
-webpki-roots@1.0.9
-License: CDLA-Permissive-2.0
-Source: https://crates.io/api/v1/crates/webpki-roots/1.0.9/download
-Upstream: https://github.com/rustls/webpki-roots
-Document: LICENSE
-Origin: https://crates.io/api/v1/crates/webpki-roots/1.0.9/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/webpki-roots/1.0.12/download!/LICENSE
 Full text SHA-256: e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8
 
 ==============================================================================
@@ -3619,6 +3604,19 @@ Upstream: https://github.com/winnow-rs/winnow
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/winnow/1.0.2/download!/LICENSE-MIT
 Full text SHA-256: cb5aedb296c5246d1f22e9099f925a65146f9f0d6b4eebba97fd27a6cdbbab2d
+
+==============================================================================
+wnaf@0.14.1
+License: Apache-2.0 OR MIT
+Source: https://crates.io/api/v1/crates/wnaf/0.14.1/download
+Upstream: https://github.com/RustCrypto/elliptic-curves
+Upstream authors/developers: RustCrypto Developers
+Document: LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/wnaf/0.14.1/download!/LICENSE-APACHE
+Full text SHA-256: 6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f
+Document: LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/wnaf/0.14.1/download!/LICENSE-MIT
+Full text SHA-256: c1c9d5ca65122bab96e368709f8cfe9b92b443a3c21306c3260fc98eaac7e5fc
 
 ==============================================================================
 writeable@0.6.3
@@ -3693,17 +3691,17 @@ Origin: https://crates.io/api/v1/crates/zerofrom/0.1.7/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-zeroize@1.8.2
+zeroize@1.9.1
 License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/zeroize/1.8.2/download
+Source: https://crates.io/api/v1/crates/zeroize/1.9.1/download
 Upstream: https://github.com/RustCrypto/utils
 Upstream authors/developers: The RustCrypto Project Developers
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/zeroize/1.8.2/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/zeroize/1.9.1/download!/LICENSE-APACHE
 Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a
 Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/zeroize/1.8.2/download!/LICENSE-MIT
-Full text SHA-256: 0b04ee3ce0021a922f43f37a17fee09a5a1ee6d1f4e149d5bf75b72395a49c72
+Origin: https://crates.io/api/v1/crates/zeroize/1.9.1/download!/LICENSE-MIT
+Full text SHA-256: 8c7516d4b27b1e495be5e38b612298b63de48d05f49cdac94f70f3cd70f8864b
 
 ==============================================================================
 zerotrie@0.2.4
@@ -6571,31 +6569,6 @@ FULL LICENSE AND NOTICE TEXTS
 Shared identical texts appear once; SHA-256 references above identify them.
 
 ==============================================================================
-SHA-256: 0034712d5e97a4f5b900a160a5c19d582b740d8e0638b4e44fd07e7b492dcd13
-
-The MIT License (MIT)
-
-Copyright (c) 2015-2020 the fiat-crypto authors (see the AUTHORS file).
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-==============================================================================
 SHA-256: 003736bc98408b53511b9cc8ff5d1af3bf0a8f17d53841cc39d8ab1b96a195b0
 
 Copyright (c) 2023-2026 The RustCrypto Project Developers
@@ -6840,6 +6813,35 @@ Commercial support may be available, please e-mail
 twall[at]users[dot]sf[dot]net.
 
 ==============================================================================
+SHA-256: 083cb05a34eb9c78faf69aa49674ec30d1eadbdc2042473644992786e6c8249b
+
+Copyright (c) 2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+==============================================================================
 SHA-256: 09f1f9643769494262b9cacec3852201242b9c819f7d5316c7530be1c9855f75
 
 The MIT License (MIT)
@@ -6881,31 +6883,6 @@ Permission is granted to anyone to use this software for any purpose, including 
 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
 
 3. This notice may not be removed or altered from any source distribution.
-
-==============================================================================
-SHA-256: 0b04ee3ce0021a922f43f37a17fee09a5a1ee6d1f4e149d5bf75b72395a49c72
-
-MIT License
-
-Copyright (c) 2018-2021 The RustCrypto Project Developers
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 ==============================================================================
 SHA-256: 0b28172679e0009b655da42797c03fd163a3379d5cfa67ba1f1655e974a2a1a9
@@ -6961,33 +6938,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-==============================================================================
-SHA-256: 0c1240e29b4a2c528bcc3ccc38a98b1dba5e3e6b465da910208935f082e2ced6
-
-The BSD 1-Clause License (BSD-1-Clause)
-
-Copyright (c) 2015-2020 the fiat-crypto authors (see the AUTHORS file)
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
-
-    1. Redistributions of source code must retain the above copyright
-       notice, this list of conditions and the following disclaimer.
-
-THIS SOFTWARE IS PROVIDED BY the fiat-crypto authors "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL Berkeley Software Design,
-Inc. BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
 SHA-256: 0c4ea5fbb371f1f2ace88fb43ff1c50cc26954129a459ce160e4fd0d99881a39
@@ -8911,35 +8861,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-==============================================================================
-SHA-256: 232a60e61d7d4f3022705d2ebf472478b579ce0e54ba62ff2fbfd9559cb0fe4e
-
-Copyright (c) 2024 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
 SHA-256: 233b95ccbf90dc67e32f3e8995c489f6312d9191ebd141a931c3b684f1e3be6d
@@ -11099,20 +11020,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
-SHA-256: 47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865
+SHA-256: 4621bda86773a67b5645bbd25cf1bf8b6820d4fcec3885b23b9ceec612007f63
 
-Copyright 2017 Juniper Networks, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-==============================================================================
-SHA-256: 4da95ec4ecb65b738d470b7d762894ad9c97da93e6cbfb18b570fc2c96f4b871
-
-Copyright (c) Ulrik Sverdrup "bluss" 2015-2023
+Copyright (c) 2024-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -11139,9 +11049,20 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
-SHA-256: 4ee4d666c383ff92656dc17bae67a76714b5e121dffdf20b804118a750599dd8
+SHA-256: 47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865
 
-Copyright (c) 2020-2025 RustCrypto Developers
+Copyright 2017 Juniper Networks, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+SHA-256: 4da95ec4ecb65b738d470b7d762894ad9c97da93e6cbfb18b570fc2c96f4b871
+
+Copyright (c) Ulrik Sverdrup "bluss" 2015-2023
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -12563,17 +12484,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-==============================================================================
-SHA-256: 6c935d087a2992d0f092665400a2fa99c98db58d96fbe29368f8f48182bed9aa
-
-SPDX-License-Identifier: MIT OR Apache-2.0 OR BSD-1-Clause
-
-Fiat Cryptography is licensed under the MIT License <LICENSE-MIT> or
-<http://opensource.org/licenses/MIT>, the Apache License, Version 2.0
-<LICENSE-APACHE> or <http://www.apache.org/licenses/LICENSE-2.0>, or
-the BSD 1-Clause License <LICENSE-BSD-1> or
-<https://spdx.org/licenses/BSD-1-Clause.html>, at your option.
 
 ==============================================================================
 SHA-256: 6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6
@@ -14754,6 +14664,35 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
+SHA-256: 8c7516d4b27b1e495be5e38b612298b63de48d05f49cdac94f70f3cd70f8864b
+
+Copyright (c) 2018-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+==============================================================================
 SHA-256: 8ce0830173fdac609dfb4ea603fdc002c2f4af0dc9b1a005653f5da9cf534b18
 
 Copyright (c) 2019 Carl Lerche
@@ -15138,25 +15077,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-==============================================================================
-SHA-256: 9eacbcb81be660840c714a560a9d65ba07913db98dd4baf969f78dd499fdd60f
-
-The Apache License, Version 2.0 (Apache-2.0)
-
-Copyright 2015-2020 the fiat-crypto authors (see the AUTHORS file)
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 
 ==============================================================================
 SHA-256: a07fcacc3c60de4dc0fab10ac9d6aaba7379974e28451c99da7f7df09c25b28c
@@ -17271,6 +17191,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==============================================================================
+SHA-256: c1c9d5ca65122bab96e368709f8cfe9b92b443a3c21306c3260fc98eaac7e5fc
+
+Copyright (c) 2026 RustCrypto Developers
+Copyright (c) 2018-2025 `group` crate developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+==============================================================================
 SHA-256: c30152c94a6d75e021adbc52b3a52470366a46edb917e17deae3259251af244c
 
 Copyright Mozilla Foundation
@@ -18135,35 +18085,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==============================================================================
-SHA-256: d27687b51f2874822c1530976b7e837eac4f308d94bf3dd42047011b7d437b47
-
-Copyright (c) 2020-2022 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-==============================================================================
 SHA-256: d288f9c9b4590446ec18c22ead8f8b5a12a3d4025b68f62dc9015063eb9cca69
 
 Copyright (c) 2015-2018 Vlad Filippov
@@ -18226,6 +18147,35 @@ DEALINGS IN THE SOFTWARE.
 SHA-256: d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef
 
 Copyright (c) 2018-2019 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+SHA-256: d8c4ab431f20da8452c9a217084163822e5fd9d134e1343903c929f2859fc8fd
+
+Copyright (c) 2020-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated

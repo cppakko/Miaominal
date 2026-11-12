@@ -73,9 +73,11 @@ impl server::Handler for UpstreamHandler {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<server::Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut server::Session,
-    ) -> Result<bool> {
-        Ok(true)
+    ) -> Result<()> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn channel_open_direct_tcpip(
@@ -85,8 +87,9 @@ impl server::Handler for UpstreamHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut server::Session,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         self.record(format!("direct:{host_to_connect}:{port_to_connect}"));
         let target = format!("{host_to_connect}:{port_to_connect}");
         tokio::spawn(async move {
@@ -100,7 +103,8 @@ impl server::Handler for UpstreamHandler {
                 }
             }
         });
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn pty_request(

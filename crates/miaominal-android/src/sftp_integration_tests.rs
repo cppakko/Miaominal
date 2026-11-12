@@ -208,14 +208,16 @@ impl server::Handler for SftpServerHandler {
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         self.state
             .channels
             .lock()
             .expect("channel lock")
             .insert(channel.id(), channel);
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn subsystem_request(

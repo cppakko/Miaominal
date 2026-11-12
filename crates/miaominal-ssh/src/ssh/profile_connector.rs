@@ -863,6 +863,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_host_key_policy_rejects_certificates_for_known_raw_keys() {
+        let directory = tempfile::tempdir().expect("known-hosts directory");
+        let store = KnownHostsStore::with_path(directory.path().join("known_hosts"));
+        let profile = SessionProfile {
+            host: "bridge-target.example".into(),
+            ..SessionProfile::blank("target", 1)
+        };
+        let key =
+            PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("generate host key");
+        store
+            .learn(&profile.host, profile.port, key.public_key())
+            .expect("learn raw host key");
+        let mut builder = russh::keys::ssh_key::certificate::Builder::new_with_random_nonce(
+            &mut rand::rng(),
+            key.public_key(),
+            0,
+            u64::MAX,
+        )
+        .expect("build host certificate");
+        builder
+            .cert_type(russh::keys::ssh_key::certificate::CertType::Host)
+            .expect("set host certificate type");
+        builder
+            .valid_principal(&profile.host)
+            .expect("set host principal");
+        let certificate = builder.sign(&key).expect("sign host certificate");
+        let (mut handler, _) = build_strict_client_handler(&profile, store);
+        let error = handler
+            .check_server_key(&certificate.into())
+            .await
+            .expect_err("a pinned raw key must not implicitly trust a host certificate");
+        assert!(
+            error
+                .to_string()
+                .contains("host certificates are not supported")
+        );
+    }
+
+    #[tokio::test]
     async fn strict_host_key_policy_accepts_only_known_matches() {
         let directory = tempfile::tempdir().expect("known-hosts directory");
         let store = KnownHostsStore::with_path(directory.path().join("known_hosts"));
@@ -881,7 +920,7 @@ mod tests {
 
         let (mut unknown, _) = build_strict_client_handler(&profile, store.clone());
         let error = unknown
-            .check_server_key(&first)
+            .check_server_key(&first.clone().into())
             .await
             .expect_err("unknown key should fail");
         assert!(error.to_string().contains("not trusted"));
@@ -892,14 +931,14 @@ mod tests {
         let (mut known, _) = build_strict_client_handler(&profile, store.clone());
         assert!(
             known
-                .check_server_key(&first)
+                .check_server_key(&first.clone().into())
                 .await
                 .expect("known key check")
         );
 
         let (mut mismatch, _) = build_strict_client_handler(&profile, store);
         let error = mismatch
-            .check_server_key(&second)
+            .check_server_key(&second.clone().into())
             .await
             .expect_err("mismatched key should fail");
         assert!(error.to_string().contains("has changed"));

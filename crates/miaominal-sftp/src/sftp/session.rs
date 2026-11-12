@@ -1427,8 +1427,16 @@ impl client::Handler for SftpClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // Certificates need a separate trust policy, beyond pinning their key.
+        let russh::keys::PublicKeyOrCertificate::PublicKey {
+            key: server_public_key,
+            ..
+        } = server_public_key
+        else {
+            bail!("SSH host certificates are not supported");
+        };
         let check = self
             .known_hosts
             .check(&self.host, self.port, server_public_key)?;
@@ -1854,7 +1862,8 @@ mod tests {
         let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
 
         runtime.block_on(async {
-            let check = handler.check_server_key(&key);
+            let server_key = key.clone().into();
+            let check = handler.check_server_key(&server_key);
             let respond = async {
                 match event_receiver.next().await {
                     Some(SftpEvent::HostKeyPrompt(prompt)) => {
@@ -1902,7 +1911,8 @@ mod tests {
         let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
 
         runtime.block_on(async {
-            let check = handler.check_server_key(&key);
+            let server_key = key.clone().into();
+            let check = handler.check_server_key(&server_key);
             let respond = async {
                 assert!(matches!(
                     event_receiver.next().await,
@@ -1921,6 +1931,40 @@ mod tests {
     }
 
     #[test]
+    fn handler_rejects_certificates_for_known_raw_keys() {
+        use russh::keys::ssh_key::{PrivateKey, certificate, private::Ed25519Keypair};
+
+        let temp = tempfile::tempdir().expect("create temporary directory");
+        let known_hosts = KnownHostsStore::with_path(temp.path().join("known_hosts"));
+        let key = PrivateKey::from(Ed25519Keypair::from_seed(&[42; 32]));
+        known_hosts
+            .learn("example.test", 22, key.public_key())
+            .expect("learn raw host key");
+        let mut builder = certificate::Builder::new(vec![0; 32], key.public_key(), 0, u64::MAX)
+            .expect("build host certificate");
+        builder
+            .cert_type(certificate::CertType::Host)
+            .expect("set host certificate type");
+        builder
+            .valid_principal("example.test")
+            .expect("set host principal");
+        let certificate = builder.sign(&key).expect("sign host certificate");
+        let mut handler = SftpClientHandler {
+            known_hosts,
+            host: "example.test".into(),
+            port: 22,
+            host_key_prompts: None,
+        };
+        let error = futures::executor::block_on(handler.check_server_key(&certificate.into()))
+            .expect_err("a pinned raw key must not implicitly trust a host certificate");
+        assert!(
+            error
+                .to_string()
+                .contains("host certificates are not supported")
+        );
+    }
+
+    #[test]
     fn non_interactive_handler_fails_closed_without_prompting() {
         let temp = tempfile::tempdir().expect("create temporary directory");
         let known_hosts = KnownHostsStore::with_path(temp.path().join("known_hosts"));
@@ -1933,7 +1977,7 @@ mod tests {
         };
         let key = PublicKey::from_openssh(TEST_PUBLIC_KEY).expect("parse test public key");
 
-        let error = futures::executor::block_on(handler.check_server_key(&key))
+        let error = futures::executor::block_on(handler.check_server_key(&key.clone().into()))
             .expect_err("strict handler must reject unknown host keys");
         assert!(
             error.to_string().contains("requires a saved host key"),

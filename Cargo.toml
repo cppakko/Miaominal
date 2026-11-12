@@ -40,7 +40,7 @@ license = "GPL-3.0-only"
 aes = { version = "0.9.0", features = ["zeroize"] }
 aes-gcm = { version = "0.11.0", features = ["zeroize"] }
 alacritty_terminal = "0.26"
-anyhow = "1"
+anyhow = "1.0.103"
 argon2 = "0.5"
 base64 = "0.22"
 directories = "6.0.0"
@@ -74,10 +74,10 @@ schemars = "1"
 resvg = "0.47.0"
 rfd = "0.17.2"
 roxmltree = "0.21.1"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
-russh = "0.61.2"
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
-webpki-roots = "0.26"
+rusqlite = { version = "0.41", features = ["bundled"] }
+russh = "0.65.1"
+rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs"] }
+webpki-roots = "1.0.10"
 russh-sftp = "2.3.0"
 rust-embed = "8.11.0"
 serde = { version = "1", features = ["derive"] }
@@ -87,7 +87,7 @@ sys-locale = "0.3"
 tempfile = "3.27.0"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "local-offset"] }
-tokio = { version = "1", features = [
+tokio = { version = "1.53.3", features = [
     "fs",
     "process",
     "rt-multi-thread",
@@ -101,7 +101,7 @@ tray-icon = { version = "0.24.2", default-features = false }
 unicode-segmentation = "1.13.3"
 uniffi = "0.32.1"
 uuid = { version = "1.23.4", features = ["v4"] }
-zeroize = "=1.8.2"
+zeroize = "1.9.1"
 winresource = "0.1"
 
 [dependencies]

@@ -63,6 +63,7 @@ impl AgentTestServer {
                         stream,
                         AgentTestHandler {
                             echo_channels: HashSet::new(),
+                            idle_channels: HashSet::new(),
                         },
                     )
                     .await;
@@ -82,6 +83,7 @@ impl AgentTestServer {
 
 struct AgentTestHandler {
     echo_channels: HashSet<ChannelId>,
+    idle_channels: HashSet<ChannelId>,
 }
 
 impl server::Handler for AgentTestHandler {
@@ -98,9 +100,11 @@ impl server::Handler for AgentTestHandler {
     async fn channel_open_session(
         &mut self,
         _channel: Channel<Msg>,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn exec_request(
@@ -138,6 +142,9 @@ impl server::Handler for AgentTestHandler {
                     let _ = session.data(channel, vec![b'x'; 1024]);
                 }
             }
+            "ignore-eof" => {
+                self.idle_channels.insert(channel);
+            }
             _ => {
                 self.echo_channels.insert(channel);
             }
@@ -162,6 +169,9 @@ impl server::Handler for AgentTestHandler {
         channel: ChannelId,
         session: &mut ServerSession,
     ) -> Result<(), Self::Error> {
+        if self.idle_channels.contains(&channel) {
+            return Ok(());
+        }
         if self.echo_channels.remove(&channel) {
             let _ = session.exit_status_request(channel, 0);
         }
@@ -175,6 +185,7 @@ impl server::Handler for AgentTestHandler {
         session: &mut ServerSession,
     ) -> Result<(), Self::Error> {
         self.echo_channels.remove(&channel);
+        self.idle_channels.remove(&channel);
         let _ = session.close(channel);
         Ok(())
     }
@@ -186,8 +197,9 @@ impl server::Handler for AgentTestHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         let target = format!("{host_to_connect}:{port_to_connect}");
         crate::runtime::runtime().spawn(async move {
             match TcpStream::connect(&target).await {
@@ -200,7 +212,8 @@ impl server::Handler for AgentTestHandler {
                 }
             }
         });
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 }
 
@@ -434,6 +447,67 @@ fn exec_stdin_reaches_the_remote_program() {
             }
         )));
 
+        backend
+            .close_agent_session(session.connection_id())
+            .await
+            .expect("close session");
+    });
+}
+
+#[test]
+fn closing_an_exec_that_ignores_eof_is_bounded() {
+    let _guard = shared_test_lock();
+    clear_test_root();
+    crate::runtime::runtime().block_on(async {
+        let server = AgentTestServer::start().await;
+        trust_host(&server);
+        let backend = backend_for_test();
+        backend.initialize().await.expect("initialize");
+        save_host(&backend, "host-1", server.port).await;
+        set_password(&backend, "host-1").await;
+
+        let session = open_agent(&backend, "host-1").await;
+        wait_events(&session, Duration::from_secs(10), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentChannelEvent::Ready))
+        })
+        .await;
+        session
+            .open_exec(8, "ignore-eof".to_string(), Vec::new())
+            .expect("open exec");
+        wait_events(&session, Duration::from_secs(10), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentChannelEvent::ExecOpened { channel_id: 8 }))
+        })
+        .await;
+        session.close_channel(8).expect("close channel");
+        wait_events(&session, Duration::from_secs(10), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentChannelEvent::ChannelClosed { channel_id: 8 }))
+        })
+        .await;
+
+        // The connection must still accept a new channel after forced closure.
+        session
+            .open_exec(9, "emit".to_string(), Vec::new())
+            .expect("open another exec");
+        let events = wait_events(&session, Duration::from_secs(10), |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    AgentChannelEvent::ExecExited {
+                        channel_id: 9,
+                        exit_code: Some(0),
+                        ..
+                    }
+                )
+            })
+        })
+        .await;
+        assert_eq!(stdout_text(&events), "stdout-payload\n");
         backend
             .close_agent_session(session.connection_id())
             .await

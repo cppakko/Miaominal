@@ -551,7 +551,11 @@ async fn apply_channel_command(
             command,
             environment,
         } => {
-            if writers.contains_key(&channel_id) {
+            if writers.contains_key(&channel_id)
+                || readers
+                    .get(&channel_id)
+                    .is_some_and(|reader| !reader.0.is_finished())
+            {
                 let _ = send_event(
                     event_sender,
                     ChannelEvent::ExecFailed {
@@ -636,11 +640,27 @@ async fn apply_channel_command(
         ChannelCommand::CloseChannel { channel_id } => {
             if let Some(writer) = writers.remove(&channel_id) {
                 let _ = writer.eof().await;
-                let _ = writer.close().await;
+                if let Some(mut reader) = readers.remove(&channel_id) {
+                    let sender = event_sender.clone();
+                    let closer = tokio::spawn(async move {
+                        // CLOSE removes russh's channel state. First allow the
+                        // peer to finish output and send its exit status.
+                        let timed_out = tokio::time::timeout(Duration::from_secs(2), &mut reader.0)
+                            .await
+                            .is_err();
+                        let _ = writer.close().await;
+                        if timed_out {
+                            reader.0.abort();
+                            let _ = (&mut reader.0).await;
+                            let _ = send_event(&sender, ChannelEvent::ChannelClosed { channel_id })
+                                .await;
+                        }
+                    });
+                    readers.insert(channel_id, AbortTaskOnDrop(closer));
+                } else {
+                    let _ = writer.close().await;
+                }
             }
-            // Keep the reader alive: the server still sends its exit status
-            // before the channel closes. The reader ends on Eof/Close and is
-            // aborted with the rest of the session during teardown.
         }
         ChannelCommand::OpenTunnel {
             tunnel_id,

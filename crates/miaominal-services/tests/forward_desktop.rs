@@ -173,20 +173,22 @@ impl server::Handler for ForwardServerHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
         _session: &mut ServerSession,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         let Ok(port) = u16::try_from(port_to_connect) else {
-            return Ok(false);
+            return Ok(());
         };
         let target = format!("{host_to_connect}:{port}");
         let Ok(mut stream) = TcpStream::connect(&target).await else {
-            return Ok(false);
+            return Ok(());
         };
         tokio::spawn(async move {
             let mut forwarded = channel.into_stream();
             let _ = copy_bidirectional(&mut forwarded, &mut stream).await;
         });
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn tcpip_forward(

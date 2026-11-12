@@ -2460,7 +2460,7 @@ mod tests {
 
         async fn check_server_key(
             &mut self,
-            _server_public_key: &russh::keys::PublicKey,
+            _server_public_key: &russh::keys::PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
             Ok(true)
         }
@@ -2497,9 +2497,11 @@ mod tests {
         async fn channel_open_session(
             &mut self,
             _channel: Channel<server::Msg>,
+            reply: russh::server::ChannelOpenHandle,
             _session: &mut server::Session,
-        ) -> Result<bool> {
-            Ok(true)
+        ) -> Result<()> {
+            reply.accept().await;
+            Ok(())
         }
 
         async fn shell_request(

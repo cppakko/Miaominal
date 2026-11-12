@@ -968,8 +968,17 @@ impl client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // Host certificates require a separate CA, validity and principal policy.
+        // A pinned raw key must not implicitly trust a certificate containing it.
+        let russh::keys::PublicKeyOrCertificate::PublicKey {
+            key: server_public_key,
+            ..
+        } = server_public_key
+        else {
+            bail!("SSH host certificates are not supported");
+        };
         let check = self
             .known_hosts
             .check(&self.host, self.port, server_public_key)?;
@@ -1099,6 +1108,7 @@ impl client::Handler for ClientHandler {
     fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<client::Msg>,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let event_sender = self.event_sender.clone();
@@ -1108,6 +1118,7 @@ impl client::Handler for ClientHandler {
                 .await
             {
                 Ok(Some(mut agent_stream)) => {
+                    reply.accept().await;
                     let mut forwarded = channel.into_stream();
                     if let Err(error) = copy_bidirectional(&mut forwarded, &mut agent_stream).await
                     {
@@ -1118,11 +1129,9 @@ impl client::Handler for ClientHandler {
                     log::warn!(
                         "server attempted to open an unauthorized SSH agent forwarding channel"
                     );
-                    if let Err(error) = channel.close().await {
-                        log::debug!(
-                            "failed to close unauthorized agent forwarding channel: {error:?}"
-                        );
-                    }
+                    reply
+                        .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                        .await;
                 }
                 Err(error) => {
                     let _ = event_sender
@@ -1130,9 +1139,7 @@ impl client::Handler for ClientHandler {
                             "Agent forwarding unavailable: {error}"
                         )))
                         .await;
-                    if let Err(close_error) = channel.close().await {
-                        log::debug!("failed to close forwarded agent channel: {close_error:?}");
-                    }
+                    reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
                 }
             }
         })
@@ -1145,6 +1152,7 @@ impl client::Handler for ClientHandler {
         connected_port: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let event_sender = self.event_sender.clone();
@@ -1164,9 +1172,9 @@ impl client::Handler for ClientHandler {
                         ),
                     )
                     .await;
-                    if let Err(error) = channel.close().await {
-                        log::debug!("failed to close forwarded tcpip channel: {error:?}");
-                    }
+                    reply
+                        .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                        .await;
                     return;
                 }
             };
@@ -1199,15 +1207,16 @@ impl client::Handler for ClientHandler {
                     ),
                 )
                 .await;
-                if let Err(error) = channel.close().await {
-                    log::debug!("failed to close forwarded tcpip channel: {error:?}");
-                }
+                reply
+                    .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
                 return;
             };
 
             let local_target = format!("{}:{}", target.target_host, target.target_port);
             match TcpStream::connect(&local_target).await {
                 Ok(mut stream) => {
+                    reply.accept().await;
                     let mut forwarded = channel.into_stream();
                     if let Err(error) = copy_bidirectional(&mut forwarded, &mut stream).await {
                         let message = format!(
@@ -1243,11 +1252,7 @@ impl client::Handler for ClientHandler {
                     )
                     .await;
                     emit_port_forward_notice(&event_sender, message).await;
-                    if let Err(close_error) = channel.close().await {
-                        log::debug!(
-                            "failed to close forwarded tcpip channel after connect error: {close_error:?}"
-                        );
-                    }
+                    reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
                 }
             }
         })
