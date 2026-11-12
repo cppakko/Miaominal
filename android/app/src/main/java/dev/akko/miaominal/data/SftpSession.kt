@@ -205,6 +205,7 @@ interface SftpSessionHandle {
     fun removeFile(path: String): Result<Unit>
     fun removeDirectory(path: String): Result<Unit>
     fun rename(from: String, to: String): Result<Unit>
+    suspend fun pasteRemote(from: String, to: String, moving: Boolean): Result<Unit>
 
     fun answerHostKey(requestId: Long, decision: HostKeyDecision): Result<Unit>
     fun answerKeyboardInteractive(requestId: Long, answers: List<String>): Result<Unit>
@@ -260,6 +261,9 @@ class NativeSftpSessionHandle(private val session: SftpSession) : SftpSessionHan
 
     override fun rename(from: String, to: String): Result<Unit> =
         runCatching { session.rename(from, to) }
+
+    override suspend fun pasteRemote(from: String, to: String, moving: Boolean): Result<Unit> =
+        runCatching { session.pasteRemote(from, to, moving) }
 
     override fun answerHostKey(requestId: Long, decision: HostKeyDecision): Result<Unit> =
         runCatching { session.answerHostKey(requestId.toULong(), decision.toNative()) }

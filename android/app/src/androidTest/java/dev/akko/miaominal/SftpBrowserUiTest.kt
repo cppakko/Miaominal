@@ -124,13 +124,10 @@ class SftpBrowserUiTest {
         open()
         compose.onNodeWithTag("sftp-search-action").performClick()
         compose.onNodeWithTag("sftp-directory-search").performTextInput("compose")
-        compose.onNodeWithTag("sftp-directory-options").performClick()
-        compose.onNodeWithText(context.getString(R.string.ux_choose)).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_select_all)).performClick()
+        compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
+        selectAllRemote()
         compose.onNodeWithText(context.getString(R.string.fm_selected_count, 1)).assertIsDisplayed()
-        compose.onNode(hasContentDescription(context.getString(R.string.fm_more_actions)) and
-            hasAnyAncestor(hasTestTag("sftp-selection-bar"))).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_delete_selected)).performClick()
+        compose.onNodeWithTag("sftp-selection-delete").performClick()
         compose.onNodeWithTag("sftp-delete-targets").assertTextEquals(
             context.getString(R.string.fm_delete_multi_message, context.getString(R.string.fm_remote), 1) + "\n\ncompose.yaml")
         compose.onNodeWithText(context.getString(android.R.string.cancel)).performClick()
@@ -173,15 +170,14 @@ class SftpBrowserUiTest {
         compose.onNodeWithTag("sftp-search-action").performClick()
         compose.onNodeWithTag("sftp-directory-search").performTextInput("report")
         compose.onNodeWithText("report-000.txt").assertIsDisplayed()
-        compose.onNodeWithTag("sftp-directory-options").performClick()
-        compose.onNodeWithText(context.getString(R.string.ux_choose)).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_select_all)).performClick()
+        compose.onNodeWithText("report-000.txt").performTouchInput { longClick() }
+        selectAllRemote()
         compose.onNodeWithText(context.getString(R.string.fm_selected_count, 80)).assertIsDisplayed()
         compose.onNodeWithContentDescription(context.getString(R.string.sftp_browser_close_search)).performClick()
         compose.onNodeWithText("home").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("parent-000.txt").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("parent-000.txt").assertIsDisplayed()
-        compose.onNodeWithTag("sftp-selection-bar").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-selection-topbar").assertDoesNotExist()
         compose.onNodeWithTag("sftp-directory-search").assertDoesNotExist()
     }
 
@@ -207,49 +203,36 @@ class SftpBrowserUiTest {
         assertEquals(remoteLeft, compose.onNodeWithText("Backups").fetchSemanticsNode().boundsInRoot.left, 1f)
     }
 
-    @Test fun paneIndicatorTracksDragAndReturnsWhenCancelled() {
+    @Test fun titleKeepsTheSettledPaneWhenADragIsCancelled() {
         open()
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_remote))
         val remoteLeft = compose.onNodeWithText("Backups").fetchSemanticsNode().boundsInRoot.left
         val pager = compose.onNodeWithTag("sftp-pane-pager")
-        val indicator = compose.onNodeWithTag("sftp-pane-indicator")
-        val restingLeft = indicator.fetchSemanticsNode().boundsInRoot.left
-        assertIndicatorAlignedWith("sftp-pane-remote")
         pager.performTouchInput {
             down(Offset(width * 0.15f, height * 0.75f))
             for (step in 1..10) moveTo(Offset(width * (0.15f + 0.035f * step), height * 0.75f), delayMillis = 40)
         }
-        assertIndicatorTracksRemotePane(remoteLeft)
-        compose.onNodeWithTag("sftp-pane-remote").assertIsSelected()
-        val draggedLeft = indicator.fetchSemanticsNode().boundsInRoot.left
-        screenshot("sftp-indicator-mid-drag")
-        pager.performTouchInput {
-            for (step in 1..5) moveTo(Offset(width * (0.5f - 0.035f * step), height * 0.75f), delayMillis = 40)
-        }
-        assertIndicatorTracksRemotePane(remoteLeft)
-        assertTrue(indicator.fetchSemanticsNode().boundsInRoot.left > draggedLeft + 10f)
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_remote))
         pager.performTouchInput { cancel() }
         compose.waitForIdle()
-        assertEquals(restingLeft, indicator.fetchSemanticsNode().boundsInRoot.left, 1f)
-        assertIndicatorAlignedWith("sftp-pane-remote")
+        assertEquals(remoteLeft, compose.onNodeWithText("Backups").fetchSemanticsNode().boundsInRoot.left, 1f)
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_remote))
     }
 
-    @Test fun paneIndicatorTracksTabClickAnimation() {
-        open()
-        val remoteLeft = compose.onNodeWithText("Backups").fetchSemanticsNode().boundsInRoot.left
-        compose.mainClock.autoAdvance = false
-        try {
-            compose.onNodeWithTag("sftp-pane-local").performClick()
-            compose.mainClock.advanceTimeBy(96)
-            assertIndicatorTracksRemotePane(remoteLeft)
-        } finally {
-            compose.mainClock.autoAdvance = true
-        }
+    @Test fun titleStaysPlainAndSwipeSelectionSurvivesRestore() {
+        val restoration = StateRestorationTester(compose)
+        open(restoration = restoration)
+        selectPane(local = true)
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_local))
+        compose.onNodeWithText(context.getString(R.string.sftp_local_pick)).assertIsDisplayed()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_local))
+        compose.onNodeWithTag("sftp-pane-title").assertHasNoClickAction()
+        compose.onNodeWithTag("sftp-pane-menu").assertDoesNotExist()
+        selectPane(local = false)
         compose.waitForIdle()
-        compose.onNodeWithTag("sftp-pane-local").assertIsSelected()
-        assertIndicatorAlignedWith("sftp-pane-local")
-        compose.onNodeWithTag("sftp-pane-remote").performClick()
-        compose.waitForIdle()
-        assertIndicatorAlignedWith("sftp-pane-remote")
+        compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_remote))
+        compose.onNodeWithText("Backups").assertIsDisplayed()
     }
 
     @Test fun cancelledSwipeReturnsToACompletePane() {
@@ -311,12 +294,12 @@ class SftpBrowserUiTest {
 
     @Test fun sortingAndSelectionRemainAvailableFromTheCompactToolbar() {
         open()
-        compose.onNodeWithTag("sftp-directory-options").performClick()
+        openDirectoryOptions()
         compose.onNodeWithTag("sftp-directory-options-menu").assertIsDisplayed()
         compose.onNodeWithTag("sftp-sort-name").assertIsSelected()
         screenshot("sftp-filter-panel-light")
         compose.onNodeWithTag("sftp-sort-size").performClick()
-        compose.onNodeWithTag("sftp-directory-options").assertTextContains(context.getString(R.string.sftp_browser_sort_size))
+        compose.onNodeWithTag("sftp-sort-size").assertIsSelected()
         compose.onNodeWithTag("sftp-directory-options-menu").assertIsDisplayed()
         assertSortDirection("size", ascending = false)
         screenshot("sftp-sort-size-descending")
@@ -326,8 +309,11 @@ class SftpBrowserUiTest {
         compose.onNodeWithTag("sftp-sort-modified").performClick()
         assertSortDirection("modified", ascending = false)
         screenshot("sftp-sort-modified-descending")
-        compose.onNodeWithText(context.getString(R.string.ux_choose)).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_selected_count, 0)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.ux_choose)).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.ux_filter_directory)).assertDoesNotExist()
+        compose.onNodeWithTag("sftp-directory-refresh").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-options-back").performClick()
+        compose.onNodeWithTag("sftp-directory-refresh").assertIsDisplayed()
     }
 
     @Test fun repeatedSortClicksReverseFilesAndRestoreTheSelectedDirection() {
@@ -342,7 +328,7 @@ class SftpBrowserUiTest {
             })
         }
         compose.runOnIdle { session.seedDirectory("/home/ubuntu", entries) }
-        compose.onNodeWithTag("sftp-directory-options").performClick()
+        openDirectoryOptions()
         assertSortDirection("name", ascending = true)
         compose.onNodeWithTag("sftp-sort-name").performClick()
         assertSortDirection("name", ascending = false)
@@ -364,8 +350,8 @@ class SftpBrowserUiTest {
         assertFilesInOrder("Backups", "Documents", "Projects", "compose.yaml", "release.tar.gz", "README.md")
         androidx.test.espresso.Espresso.pressBack()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("sftp-directory-options").assertTextContains(context.getString(R.string.sftp_browser_sort_modified))
-        compose.onNodeWithTag("sftp-directory-options").performClick()
+        compose.onNodeWithTag("sftp-directory-options-menu").assertDoesNotExist()
+        openDirectoryOptions()
         assertSortDirection("modified", ascending = true)
         assertFilesInOrder("Backups", "Documents", "Projects", "compose.yaml", "release.tar.gz", "README.md")
         compose.onNodeWithTag("sftp-sort-modified").performClick()
@@ -375,25 +361,25 @@ class SftpBrowserUiTest {
 
     @Test fun optionsPanelCanOpenAndClearTheDirectoryFilter() {
         open()
-        compose.onNodeWithTag("sftp-directory-options").performClick()
+        openDirectoryOptions()
         compose.runOnIdle { dark.value = true }
         screenshot("sftp-filter-panel-dark")
-        compose.onNodeWithText(context.getString(R.string.ux_filter_directory)).performClick()
+        androidx.test.espresso.Espresso.pressBack()
+        compose.onNodeWithTag("sftp-search-action").performClick()
         compose.onNodeWithTag("sftp-directory-search").performTextInput("compose")
         compose.onNodeWithText("Backups").assertDoesNotExist()
         compose.onNodeWithText("compose.yaml").assertIsDisplayed()
-        compose.onNodeWithTag("sftp-directory-options").performClick()
-        compose.onNodeWithText(context.getString(R.string.sftp_browser_clear_search)).performClick()
+        compose.onNodeWithContentDescription(context.getString(R.string.sftp_browser_clear_search)).performClick()
         compose.onNodeWithText("Backups").assertIsDisplayed()
     }
 
-    @Test fun localFolderPickerAndEmptyQueueStayAccessible() {
+    @Test fun localFolderPickerStaysAccessibleWithoutAnEmptyTransferFab() {
         open()
-        compose.onNodeWithText(context.getString(R.string.fm_local)).performClick()
+        selectPane(local = true)
         compose.onNodeWithText(context.getString(R.string.sftp_local_pick)).assertIsDisplayed()
         screenshot("sftp-local")
-        compose.onNodeWithTag("sftp-transfer-dock").performClick()
-        compose.onNodeWithText(context.getString(R.string.sftp_browser_transfer_empty)).assertIsDisplayed()
+        compose.onNodeWithTag("sftp-transfer-dock").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-create-action").assertDoesNotExist()
     }
 
     @Test fun authorizedStorageOpensLocalWithoutAskingForAFolder() {
@@ -401,9 +387,9 @@ class SftpBrowserUiTest {
         repository.localStorageRoot = "file:///storage/emulated/0"
         repository.safLocalEntries = listOf(SafLocalEntry("Download", "Download", true, null, null))
         open(restoration = restoration)
-        compose.onNodeWithTag("sftp-pane-local").performClick()
+        selectPane(local = true)
         compose.onNodeWithText("Download").assertIsDisplayed()
-        compose.onAllNodesWithText(context.getString(R.string.sftp_storage_internal)).assertCountEquals(2)
+        compose.onAllNodesWithText(context.getString(R.string.sftp_storage_internal)).assertCountEquals(1)
         compose.onNodeWithText(context.getString(R.string.sftp_storage_allow)).assertDoesNotExist()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Download").assertIsDisplayed()
@@ -427,23 +413,66 @@ class SftpBrowserUiTest {
     }
 
     @Test fun selectedFilesLeaveTransferDockReachable() {
-        open()
+        open(withTransfer = true)
         compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
         compose.onNodeWithText(context.getString(R.string.fm_selected_count, 1)).assertIsDisplayed()
-        compose.onNodeWithText(context.getString(R.string.fm_download)).assertIsDisplayed()
-        compose.onNodeWithTag("sftp-transfer-dock").assertIsDisplayed()
+        compose.onNodeWithTag("sftp-selection-action").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("sftp-create-action").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-transfer-dock").assertDoesNotExist()
         screenshot("sftp-selection")
         compose.runOnIdle { dark.value = true }
         screenshot("sftp-selection-dark")
-        compose.onNodeWithText(context.getString(R.string.fm_select_all)).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_selected_count, 6)).assertIsDisplayed()
-        compose.onNode(hasContentDescription(context.getString(R.string.fm_more_actions)) and
-            hasAnyAncestor(hasTestTag("sftp-selection-bar"))).performClick()
-        compose.onNodeWithText(context.getString(R.string.fm_delete_selected)).assertIsDisplayed()
+        compose.onNodeWithTag("sftp-selection-more").performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").assertIsDisplayed()
+        screenshot("sftp-selection-transfer-menu")
+        compose.onNodeWithTag("sftp-transfer-dock").performClick()
+        compose.onNode(hasText("release.tar.gz") and
+            hasAnyAncestor(hasTestTag("sftp-transfer-list"))).assertIsDisplayed()
         androidx.test.espresso.Espresso.pressBack()
+        selectAllRemote()
+        compose.onNodeWithText(context.getString(R.string.fm_selected_count, 6)).assertIsDisplayed()
+        compose.onNodeWithTag("sftp-selection-delete").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("sftp-selection-rename").assertIsNotEnabled()
         compose.onNodeWithTag("sftp-selection-close").performClick()
-        compose.onNodeWithTag("sftp-selection-bar").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-selection-topbar").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-selection-action").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-create-action").assertIsDisplayed()
         compose.onNodeWithText("Backups").assertIsDisplayed()
+    }
+
+    @Test fun selectionFabDownloadsOnlyTheSelectedRemoteFiles() {
+        val root = "file:///storage/emulated/0"
+        repository.localStorageRoot = root
+        val session = open()
+        compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-action").performClick()
+        compose.waitUntil(10_000) { session.transfersSnapshot().isNotEmpty() }
+        val transfer = session.transfersSnapshot().single()
+        assertEquals(TransferRequest.Download(profile.id, "/home/ubuntu/compose.yaml", root, "compose.yaml"),
+            repository.transferActions.request(TransferKey(transfer.connectionId, transfer.transferId)))
+    }
+
+    @Test fun localSelectionFabQueuesOnlySelectedFilesForUpload() {
+        val root = "file:///storage/emulated/0"
+        repository.localStorageRoot = root
+        repository.safLocalEntries = listOf(
+            SafLocalEntry("notes.txt", "notes.txt", false, 12, null),
+            SafLocalEntry("photo.jpg", "photo.jpg", false, 512, null)
+        )
+        val session = open()
+        selectPane(local = true)
+        compose.onNodeWithTag("sftp-selection-action").assertDoesNotExist()
+        compose.onNodeWithText("notes.txt").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-action").assertIsDisplayed()
+        compose.onNodeWithTag("sftp-selection-all").assertIsDisplayed()
+        compose.onNodeWithTag("sftp-transfer-dock").assertDoesNotExist()
+        screenshot("sftp-local-selection-fab")
+        compose.onNodeWithTag("sftp-selection-action").performClick()
+        compose.waitUntil(10_000) { session.transfersSnapshot().isNotEmpty() }
+        val transfer = session.transfersSnapshot().single()
+        assertEquals(TransferRequest.UploadTree(profile.id, root, "notes.txt", "notes.txt", "/home/ubuntu/notes.txt"),
+            repository.transferActions.request(TransferKey(transfer.connectionId, transfer.transferId)))
+        compose.onNodeWithTag("sftp-selection-action").assertDoesNotExist()
     }
 
     @Test fun lightAndDarkThemesKeepFilesAndTransfersAccessible() {
@@ -454,9 +483,181 @@ class SftpBrowserUiTest {
         compose.waitForIdle()
         compose.onNodeWithText("Backups").assertIsDisplayed()
         screenshot("sftp-dark")
+        compose.onNodeWithTag("sftp-create-action").performClick()
+        screenshot("sftp-create-menu-tasks")
         compose.onNodeWithTag("sftp-transfer-dock").performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.ui_pause)).assertIsDisplayed()
         screenshot("sftp-transfers")
+    }
+
+    @Test fun transfersAppearInTheFabOnlyWhenThereAreTaskRecords() {
+        val session = open()
+        compose.onNodeWithTag("sftp-create-action").performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-create-menu-close").performClick()
+        compose.runOnIdle {
+            session.seedTransfer("queued.zip", SftpTransferStateModel.Running)
+            repository.refreshSftpSnapshots()
+        }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,
+                context.getString(R.string.sftp_browser_transfer_records, 1))).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("sftp-create-action").performClick()
+        compose.onNodeWithTag("sftp-transfer-dock").assertIsDisplayed()
+        compose.onNodeWithTag("sftp-create-menu-close").performClick()
+        selectPane(local = true)
+        compose.onNodeWithTag("sftp-create-action").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-transfer-dock").assertIsDisplayed().performClick()
+        compose.onNodeWithText("queued.zip").assertIsDisplayed()
+    }
+
+    @Test fun nestedOptionsKeepLocalAndRemoteSortsIndependent() {
+        repository.localStorageRoot = "file:///storage/emulated/0"
+        repository.safLocalEntries = listOf(SafLocalEntry("notes.txt", "notes.txt", false, 12, null))
+        open()
+        openDirectoryOptions()
+        compose.onNodeWithTag("sftp-sort-size").performClick()
+        assertSortDirection("size", ascending = false)
+        compose.onNodeWithTag("sftp-options-back").performClick()
+        compose.onNodeWithTag("sftp-directory-options-menu").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-directory-options").performClick()
+        assertSortDirection("size", ascending = false)
+        androidx.test.espresso.Espresso.pressBack()
+        val twoPanes = context.resources.configuration.screenWidthDp >= 840
+        if (twoPanes) {
+            compose.onNodeWithTag("sftp-local-files").performTouchInput { down(center); cancel() }
+            compose.onNodeWithTag("sftp-pane-title").assertTextContains(context.getString(R.string.fm_local))
+        } else selectPane(local = true)
+        openDirectoryOptions()
+        assertSortDirection("name", ascending = true)
+        compose.onNodeWithTag("sftp-sort-modified").performClick()
+        assertSortDirection("modified", ascending = false)
+        androidx.test.espresso.Espresso.pressBack()
+        selectPane(local = false)
+        if (twoPanes) screenshot("sftp-tablet")
+        openDirectoryOptions()
+        assertSortDirection("size", ascending = false)
+        if (twoPanes) screenshot("sftp-tablet-options")
+    }
+
+    @Test fun selectedCountSharesTheTopbarAndToolbarFitsItsActions() {
+        open()
+        compose.onNodeWithTag("sftp-remote-files").performScrollToNode(hasText("compose.yaml"))
+        compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-remote-files").performScrollToIndex(4)
+        compose.onNodeWithText("README.md").performClick()
+        screenshot("sftp-selection-two")
+        compose.onNode(hasText(context.getString(R.string.fm_selected_count, 2)) and
+            hasAnyAncestor(hasTestTag("sftp-selection-topbar"))).assertIsDisplayed()
+        compose.onNodeWithTag("sftp-selection-bar").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-selection-rename").assertIsNotEnabled()
+        listOf("cut", "copy", "delete", "action", "rename", "more").forEach {
+            compose.onNodeWithTag("sftp-selection-$it").assertIsDisplayed()
+        }
+        compose.onNodeWithTag("sftp-selection-close").performClick()
+        compose.onNodeWithTag("sftp-selection-toolbar").assertDoesNotExist()
+        compose.onNodeWithTag("sftp-pane-title").assertHasNoClickAction()
+    }
+
+    @Test fun filterEntersAndLeavesWithATransition() {
+        open()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("sftp-search-action").performClick()
+        compose.mainClock.advanceTimeBy(48)
+        compose.onNodeWithTag("sftp-directory-search").assertExists()
+        compose.onNodeWithText("ubuntu").assertExists()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithText("ubuntu").assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.sftp_browser_close_search)).performClick()
+        compose.mainClock.advanceTimeBy(48)
+        compose.onNodeWithTag("sftp-directory-search").assertExists()
+        compose.onNodeWithText("ubuntu").assertExists()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("sftp-directory-search").assertDoesNotExist()
+        compose.onNodeWithText("ubuntu").assertIsDisplayed()
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test fun clipboardCopiesAndMovesBetweenRemoteDirectoriesAndSurvivesRestore() {
+        val restoration = StateRestorationTester(compose)
+        val session = open(restoration = restoration)
+        compose.runOnIdle { session.seedTree("/home/ubuntu/Backups", emptyList()) }
+        compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-copy").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("sftp-paste-toolbar").assertIsDisplayed()
+        compose.onNodeWithText("Backups").performClick()
+        compose.onNodeWithTag("sftp-paste-action").performClick()
+        compose.waitUntil(10_000) { session.pastedRemoteEntries.size == 1 }
+        assertEquals(Triple("/home/ubuntu/compose.yaml", "/home/ubuntu/Backups/compose.yaml", false), session.pastedRemoteEntries.single())
+        compose.onNodeWithText("compose.yaml").assertIsDisplayed()
+        compose.onNodeWithText("ubuntu").performClick()
+        compose.onNodeWithText("compose.yaml").assertIsDisplayed()
+        compose.onNodeWithText("README.md").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-cut").performClick()
+        compose.onNodeWithText("Backups").performClick()
+        compose.onNodeWithTag("sftp-paste-action").performClick()
+        compose.waitUntil(10_000) { session.pastedRemoteEntries.size == 2 }
+        assertEquals(Triple("/home/ubuntu/README.md", "/home/ubuntu/Backups/README.md", true), session.pastedRemoteEntries.last())
+        compose.onNodeWithTag("sftp-paste-toolbar").assertDoesNotExist()
+        compose.onNodeWithText("ubuntu").performClick()
+        compose.onNodeWithText("README.md").assertDoesNotExist()
+    }
+
+    @Test fun remoteClipboardDownloadsWhenPastedIntoLocal() {
+        val root = "file:///storage/emulated/0"
+        repository.localStorageRoot = root
+        val session = open()
+        compose.onNodeWithText("compose.yaml").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-cut").performClick()
+        selectPane(local = true)
+        screenshot("sftp-local-paste")
+        compose.onNodeWithTag("sftp-paste-action").performClick()
+        compose.waitUntil(10_000) { session.transfersSnapshot().isNotEmpty() }
+        val transfer = session.transfersSnapshot().single()
+        assertEquals(TransferRequest.Download(profile.id, "/home/ubuntu/compose.yaml", root, "compose.yaml"),
+            repository.transferActions.request(TransferKey(transfer.connectionId, transfer.transferId)))
+        assertTrue(session.pastedRemoteEntries.isEmpty())
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("sftp-transfer-dock").assertIsDisplayed()
+    }
+
+    @Test fun clipboardRejectsItsOwnSubdirectoryAndCopiesWithoutReplacingTheSource() {
+        val session = open()
+        compose.runOnIdle { session.seedTree("/home/ubuntu/Backups", emptyList()) }
+        compose.onNodeWithText("Backups").performTouchInput { longClick() }
+        compose.onNodeWithTag("sftp-selection-copy").performClick()
+        compose.onNodeWithText("Backups").performClick()
+        compose.onNodeWithTag("sftp-paste-action").performClick()
+        compose.onNodeWithText(context.getString(R.string.sftp_browser_paste_inside_self)).assertIsDisplayed()
+        assertTrue(session.pastedRemoteEntries.isEmpty())
+        compose.onNodeWithText("ubuntu").performClick()
+        compose.onNodeWithTag("sftp-paste-action").performClick()
+        compose.waitUntil(10_000) { session.pastedRemoteEntries.isNotEmpty() }
+        compose.onNodeWithText("Backups (1)").assertIsDisplayed()
+        compose.onNodeWithText("Backups").assertIsDisplayed()
+        screenshot("sftp-remote-paste")
+    }
+
+    private fun selectPane(local: Boolean) {
+        if (compose.onAllNodesWithTag("sftp-pane-pager").fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag(if (local) "sftp-local-pane" else "sftp-remote-pane")
+                .performTouchInput { down(center); cancel() }
+        } else compose.onNodeWithTag("sftp-pane-pager").performTouchInput {
+            if (local) swipeRight() else swipeLeft()
+        }
+        compose.waitForIdle()
+    }
+
+    private fun openDirectoryOptions() {
+        compose.onNodeWithTag("sftp-browser-actions").performClick()
+        compose.onNodeWithTag("sftp-directory-options").performClick()
+        compose.onNodeWithTag("sftp-directory-options-menu").assertIsDisplayed()
+    }
+
+    private fun selectAllRemote() {
+        compose.onNodeWithTag("sftp-selection-all").performClick()
     }
 
     private fun assertSortDirection(sort: String, ascending: Boolean) {
@@ -469,25 +670,6 @@ class SftpBrowserUiTest {
     private fun assertFilesInOrder(vararg names: String) {
         val positions = names.map { name -> name to compose.onNodeWithText(name).fetchSemanticsNode().boundsInRoot.top }
         assertEquals(names.toList(), positions.sortedBy { it.second }.map { it.first })
-    }
-
-    private fun assertIndicatorAlignedWith(tabTag: String) {
-        val tab = compose.onNodeWithTag(tabTag).fetchSemanticsNode().boundsInRoot
-        val indicator = compose.onNodeWithTag("sftp-pane-indicator").fetchSemanticsNode().boundsInRoot
-        assertEquals(tab.left, indicator.left, 1f)
-        assertEquals(tab.width, indicator.width, 1f)
-    }
-
-    private fun assertIndicatorTracksRemotePane(restingRemoteLeft: Float) {
-        val localTab = compose.onNodeWithTag("sftp-pane-local").fetchSemanticsNode().boundsInRoot
-        val remoteTab = compose.onNodeWithTag("sftp-pane-remote").fetchSemanticsNode().boundsInRoot
-        val indicatorLeft = compose.onNodeWithTag("sftp-pane-indicator").fetchSemanticsNode().boundsInRoot.left
-        val pagerWidth = compose.onNodeWithTag("sftp-pane-pager").fetchSemanticsNode().boundsInRoot.width
-        val fileLeft = compose.onNodeWithText("Backups").fetchSemanticsNode().boundsInRoot.left
-        val pageProgress = (fileLeft - restingRemoteLeft) / pagerWidth
-        val indicatorProgress = (remoteTab.left - indicatorLeft) / (remoteTab.left - localTab.left)
-        assertTrue("The gesture or animation must move the file pane", pageProgress in 0.05f..0.95f)
-        assertEquals("The indicator must move with the file pane", pageProgress, indicatorProgress, 0.04f)
     }
 
     private fun screenshot(name: String) {

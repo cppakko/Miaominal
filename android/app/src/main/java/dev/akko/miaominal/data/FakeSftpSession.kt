@@ -238,6 +238,29 @@ class FakeSftpSession(
         return Result.success(Unit)
     }
 
+    val pastedRemoteEntries = mutableListOf<Triple<String, String, Boolean>>()
+    override suspend fun pasteRemote(from: String, to: String, moving: Boolean): Result<Unit> = runCatching {
+        trees[directory.path] = directory.entries
+        val entry = trees.values.flatten().firstOrNull { it.path == from }
+            ?: error("source does not exist")
+        require(to != from && (!entry.isDirectory || !to.startsWith("$from/"))) { "cannot paste inside itself" }
+        val targetParent = to.substringBeforeLast('/').ifBlank { "/" }
+        require(trees[targetParent].orEmpty().none { it.path == to }) { "destination already exists" }
+        val nested = trees.filterKeys { it == from || it.startsWith("$from/") }
+        trees[targetParent] = trees[targetParent].orEmpty() + entry.copy(path = to, name = to.substringAfterLast('/'))
+        nested.forEach { (path, entries) ->
+            trees[to + path.removePrefix(from)] = entries.map { child -> child.copy(path = to + child.path.removePrefix(from)) }
+        }
+        if (moving) {
+            val sourceParent = from.substringBeforeLast('/').ifBlank { "/" }
+            trees[sourceParent] = trees[sourceParent].orEmpty().filterNot { it.path == from }
+            nested.keys.forEach(trees::remove)
+        }
+        directory = directory.copy(entries = trees[directory.path].orEmpty())
+        pastedRemoteEntries += Triple(from, to, moving)
+        revision += 1
+    }
+
     override fun answerKeyboardInteractive(requestId: Long, answers: List<String>): Result<Unit> {
         val pending = pendingRequest ?: return Result.failure(IllegalStateException("no request"))
         if (pending.requestId != requestId) {

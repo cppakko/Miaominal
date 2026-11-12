@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -32,87 +34,102 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.Constraints
 import dev.akko.miaominal.R
-import dev.akko.miaominal.data.SftpTransferModel
-import dev.akko.miaominal.data.SftpTransferStateModel
 import dev.akko.miaominal.ui.components.SessionStatusMessage
 import dev.akko.miaominal.ui.model.FileSort
 import dev.akko.miaominal.ui.theme.UiSpacing
 import dev.akko.miaominal.ui.theme.MiaominalMotion
 import kotlinx.coroutines.currentCoroutineContext
-import kotlin.math.roundToInt
 
 /** Presentation shared by the local and remote browsers. All file actions stay in SftpScreen. */
 @Composable
-internal fun SftpPaneSwitch(local: Boolean, onSelect: (Boolean) -> Unit, panePosition: () -> Float,
-    modifier: Modifier = Modifier) {
-    val labels = listOf(stringResource(R.string.fm_local), stringResource(R.string.fm_remote))
-    val labelStyle = MaterialTheme.typography.labelLarge
-    val measurer = rememberTextMeasurer()
-    val labelWidth = with(LocalDensity.current) {
-        labels.maxOf { measurer.measure(it, labelStyle, maxLines = 1).size.width }.toDp()
-    }
-    BoxWithConstraints(modifier.selectableGroup()) {
-        val stackLabels = labelWidth + 20.dp + UiSpacing.xs * 3 > (maxWidth - UiSpacing.xxs) / 2
-        Layout(
-            modifier = Modifier.matchParentSize(),
-            content = {
-                Box(Modifier.testTag("sftp-pane-indicator")
-                    .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape))
-            }
-        ) { measurables, constraints ->
-            val gap = UiSpacing.xxs.roundToPx()
-            val tabWidth = (constraints.maxWidth - gap) / 2
-            val indicator = measurables.single().measure(Constraints.fixed(tabWidth, constraints.maxHeight))
-            layout(constraints.maxWidth, constraints.maxHeight) {
-                // Read the same progress as the pager during placement, without adding another animation.
-                indicator.placeRelative(((tabWidth + gap) * panePosition().coerceIn(0f, 1f)).roundToInt(), 0)
+internal fun SftpPaneSurface(modifier: Modifier = Modifier, rounded: Boolean = false,
+    onActivate: (() -> Unit)? = null, content: @Composable () -> Unit) {
+    val activate by rememberUpdatedState(onActivate)
+    val paneModifier = if (onActivate == null) modifier else modifier.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { it.changedToDown() }) activate?.invoke()
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
-            listOf(true, false).forEach { isLocal ->
-                val position = panePosition().coerceIn(0f, 1f)
-                Surface(
-                    onClick = { onSelect(isLocal) },
-                    modifier = Modifier.weight(1f).testTag(if (isLocal) "sftp-pane-local" else "sftp-pane-remote")
-                        .semantics { selected = local == isLocal; role = Role.Tab },
-                    shape = CircleShape,
-                    color = Color.Transparent,
-                    contentColor = lerp(MaterialTheme.colorScheme.onSurfaceVariant,
-                        MaterialTheme.colorScheme.onSecondaryContainer, if (isLocal) 1f - position else position)
-                ) {
-                    val label = labels[if (isLocal) 0 else 1]
-                    val icon = if (isLocal) Icons.Outlined.PhoneAndroid else Icons.Outlined.Dns
-                    if (stackLabels) Column(
-                        Modifier.heightIn(min = 48.dp).padding(UiSpacing.xxs),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(UiSpacing.xxs, Alignment.CenterVertically)) {
-                        Icon(icon, null, Modifier.size(20.dp))
-                        Text(label, style = labelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } else Row(Modifier.heightIn(min = 48.dp).padding(horizontal = UiSpacing.xs),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(UiSpacing.xs, Alignment.CenterHorizontally)) {
-                        Icon(icon, null, Modifier.size(20.dp))
-                        Text(label, style = labelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    Surface(
+        modifier = paneModifier.fillMaxSize(),
+        color = if (rounded) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer,
+        shape = if (rounded) MaterialTheme.shapes.extraLarge else RectangleShape,
+        content = content
+    )
+}
+
+@Composable
+internal fun SftpTransferBadge(count: Int, modifier: Modifier = Modifier) {
+    if (count > 0) Box(modifier.background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+        .padding(2.dp).clearAndSetSemantics {}) {
+        Badge { Text(count.toString()) }
+    }
+}
+
+@Composable
+internal fun SftpSelectionToolbar(local: Boolean, count: Int, transferCount: Int,
+    onCut: () -> Unit, onCopy: () -> Unit, onDelete: () -> Unit, onRename: () -> Unit,
+    onCopyPaths: () -> Unit, onTransfer: () -> Unit, onTransfers: () -> Unit, modifier: Modifier = Modifier) {
+    var moreVisible by remember { mutableStateOf(false) }
+    Surface(modifier.testTag("sftp-selection-toolbar"), shape = CircleShape,
+        color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shadowElevation = 3.dp) {
+        BoxWithConstraints {
+            Row(Modifier.horizontalScroll(rememberScrollState()).widthIn(min = maxWidth)
+                .heightIn(min = 64.dp).padding(horizontal = UiSpacing.xs), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly) {
+                if (!local) {
+                    IconButton(onClick = onCut, enabled = count > 0, modifier = Modifier.testTag("sftp-selection-cut")) {
+                        Icon(Icons.Outlined.ContentCut, stringResource(R.string.sftp_browser_cut))
+                    }
+                }
+                IconButton(onClick = if (local) onCopyPaths else onCopy, enabled = count > 0,
+                    modifier = Modifier.testTag("sftp-selection-copy")) {
+                    Icon(Icons.Outlined.ContentCopy, stringResource(if (local) R.string.ux_copy_path else R.string.sftp_browser_copy))
+                }
+                if (!local) IconButton(onClick = onDelete, enabled = count > 0, modifier = Modifier.testTag("sftp-selection-delete")) {
+                    Icon(Icons.Outlined.Delete, stringResource(R.string.fm_delete_selected))
+                }
+                IconButton(onClick = onTransfer, enabled = count > 0, modifier = Modifier.testTag("sftp-selection-action")) {
+                    Icon(if (local) Icons.Outlined.Upload else Icons.Outlined.Download,
+                        stringResource(if (local) R.string.fm_upload_to_remote else R.string.fm_download))
+                }
+                if (!local) IconButton(onClick = onRename, enabled = count == 1, modifier = Modifier.testTag("sftp-selection-rename")) {
+                    Icon(Icons.Outlined.Edit, stringResource(R.string.fm_rename))
+                }
+                Box {
+                    IconButton(onClick = { moreVisible = true }, modifier = Modifier.testTag("sftp-selection-more")) {
+                        Icon(Icons.Outlined.MoreVert, stringResource(R.string.fm_more_actions))
+                    }
+                    SftpTransferBadge(transferCount, Modifier.align(Alignment.TopEnd).offset(x = (-2).dp, y = 2.dp))
+                    DropdownMenu(moreVisible, { moreVisible = false }, shape = MaterialTheme.shapes.large) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.ux_copy_path)) }, enabled = count > 0,
+                            onClick = { moreVisible = false; onCopyPaths() }, leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) })
+                        if (transferCount > 0) DropdownMenuItem(text = { Text(stringResource(R.string.sftp_transfers_title)) },
+                            modifier = Modifier.testTag("sftp-transfer-dock"),
+                            onClick = { moreVisible = false; onTransfers() }, leadingIcon = { Icon(Icons.Outlined.SwapVert, null) })
                     }
                 }
             }
@@ -121,13 +138,32 @@ internal fun SftpPaneSwitch(local: Boolean, onSelect: (Boolean) -> Unit, panePos
 }
 
 @Composable
-internal fun SftpPaneSurface(modifier: Modifier = Modifier, rounded: Boolean = false, content: @Composable () -> Unit) {
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = if (rounded) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer,
-        shape = if (rounded) MaterialTheme.shapes.extraLarge else RectangleShape,
-        content = content
-    )
+internal fun SftpPasteToolbar(local: Boolean, count: Int, busy: Boolean,
+    onPaste: () -> Unit, onClear: () -> Unit, transferCount: Int, onTransfers: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(modifier.testTag("sftp-paste-toolbar"), shape = CircleShape,
+        color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shadowElevation = 3.dp) {
+        Row(Modifier.heightIn(min = 64.dp).padding(horizontal = UiSpacing.xs), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onPaste, enabled = !busy,
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("sftp-paste-action"),
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) {
+                if (busy) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                else Icon(if (local) Icons.Outlined.Download else Icons.Outlined.ContentPaste, null)
+                Spacer(Modifier.width(UiSpacing.xs))
+                Text(stringResource(if (local) R.string.sftp_browser_download_here else R.string.sftp_browser_paste_here, count),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton(onClick = onClear, enabled = !busy, modifier = Modifier.testTag("sftp-paste-clear")) {
+                Icon(Icons.Outlined.Close, stringResource(R.string.sftp_browser_clear_clipboard))
+            }
+            if (transferCount > 0) Box {
+                IconButton(onClick = onTransfers, modifier = Modifier.testTag("sftp-transfer-dock")) {
+                    Icon(Icons.Outlined.SwapVert, stringResource(R.string.sftp_transfers_title))
+                }
+                SftpTransferBadge(transferCount, Modifier.align(Alignment.TopEnd).offset(x = (-2).dp, y = 2.dp))
+            }
+        }
+    }
 }
 
 @Composable
@@ -229,72 +265,84 @@ internal fun SftpDirectoryBar(
     onNavigateUp: () -> Unit,
     onNavigate: (String) -> Unit,
     onPathAction: () -> Unit,
-    onRefresh: () -> Unit,
     refreshing: Boolean = false,
     searchVisible: Boolean,
     showSearchAction: Boolean,
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
     query: String,
-    onQuery: (String) -> Unit,
-    sort: FileSort,
-    sortAscending: Boolean,
-    onSort: (FileSort) -> Unit,
-    onSelect: () -> Unit
+    onQuery: (String) -> Unit
 ) {
     val breadcrumbScroll = rememberScrollState()
     LaunchedEffect(path, breadcrumbScroll.maxValue) { breadcrumbScroll.animateScrollTo(breadcrumbScroll.maxValue) }
     Column(Modifier.fillMaxWidth()) {
         Surface(
             modifier = Modifier.fillMaxWidth().padding(horizontal = UiSpacing.xs),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shape = RectangleShape,
+            color = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
         ) {
-            if (searchVisible) SftpSearchField(query, onQuery, onCloseSearch) else Row(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = UiSpacing.xxs),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onNavigateUp, enabled = if (local) path.isNotBlank() else path != "/") {
-                    Icon(Icons.Outlined.ArrowUpward, stringResource(R.string.sftp_navigate_up))
-                }
-                Row(Modifier.weight(1f).horizontalScroll(breadcrumbScroll), verticalAlignment = Alignment.CenterVertically) {
-                    val absolute = path.startsWith('/')
-                    val segments = path.split('/').filter { it.isNotEmpty() && it != "." }
-                    TextButton(
-                        onClick = { onNavigate(if (local) "" else if (absolute) "/" else ".") },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
-                    ) {
-                        Icon(if (local) Icons.Outlined.PhoneAndroid else Icons.Outlined.Dns, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(UiSpacing.xs))
-                        Text(if (local) rootLabel ?: stringResource(R.string.fm_local) else if (absolute) "/" else ".", maxLines = 1)
+            AnimatedContent(targetState = searchVisible, modifier = Modifier.fillMaxWidth().testTag("sftp-search-transition"),
+                transitionSpec = {
+                    (fadeIn(tween(MiaominalMotion.DurationShort4, easing = MiaominalMotion.StandardDecelerate)) +
+                        slideInVertically(tween(MiaominalMotion.DurationShort4)) { it / 6 }) togetherWith
+                        (fadeOut(tween(MiaominalMotion.DurationShort2)) +
+                            slideOutVertically(tween(MiaominalMotion.DurationShort2)) { -it / 6 })
+                }, label = "sftp-directory-search") { searching ->
+                if (searching) SftpSearchField(query, onQuery, onCloseSearch) else Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onNavigateUp, enabled = if (local) path.isNotBlank() else path != "/") {
+                        Icon(Icons.Outlined.ArrowUpward, stringResource(R.string.sftp_navigate_up))
                     }
-                    segments.forEachIndexed { index, segment ->
-                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(16.dp))
+                    Row(Modifier.weight(1f).horizontalScroll(breadcrumbScroll), verticalAlignment = Alignment.CenterVertically) {
+                        val absolute = path.startsWith('/')
+                        val segments = path.split('/').filter { it.isNotEmpty() && it != "." }
                         TextButton(
-                            onClick = { onNavigate((if (absolute) "/" else "") + segments.take(index + 1).joinToString("/")) },
-                            colors = ButtonDefaults.textButtonColors(contentColor =
-                                if (index == segments.lastIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        ) { Text(segment, maxLines = 1) }
+                            onClick = { onNavigate(if (local) "" else if (absolute) "/" else ".") },
+                            contentPadding = PaddingValues(horizontal = UiSpacing.xs),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                        ) {
+                            Icon(if (local) Icons.Outlined.PhoneAndroid else Icons.Outlined.Dns, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(UiSpacing.xs))
+                            Text(if (local) rootLabel ?: stringResource(R.string.fm_local) else if (absolute) "/" else ".", maxLines = 1)
+                        }
+                        segments.forEachIndexed { index, segment ->
+                            Icon(Icons.Outlined.ChevronRight, null, Modifier.size(16.dp))
+                            TextButton(
+                                onClick = { onNavigate((if (absolute) "/" else "") + segments.take(index + 1).joinToString("/")) },
+                                contentPadding = PaddingValues(horizontal = UiSpacing.xxs),
+                                colors = ButtonDefaults.textButtonColors(contentColor =
+                                    if (index == segments.lastIndex) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            ) { Text(segment, maxLines = 1) }
+                        }
                     }
-                }
-                IconButton(onClick = onPathAction) {
-                    Icon(if (local) Icons.Outlined.FolderOpen else Icons.Outlined.Edit,
-                        stringResource(if (local) R.string.sftp_local_pick else R.string.sftp_edit_path))
+                    IconButton(onClick = onPathAction) {
+                        Icon(if (local) Icons.Outlined.FolderOpen else Icons.Outlined.Edit,
+                            stringResource(if (local) R.string.sftp_local_pick else R.string.sftp_edit_path))
+                    }
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().padding(start = UiSpacing.sm, end = UiSpacing.xs),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        if (showSearchAction) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = UiSpacing.xs, vertical = UiSpacing.xxs),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(if (refreshing && count == 0) stringResource(R.string.sftp_browser_loading_short)
+                    else stringResource(R.string.sftp_browser_item_count, count),
+                    Modifier.weight(1f).padding(start = UiSpacing.xs),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = onOpenSearch) {
+                    Icon(Icons.Outlined.Search, stringResource(R.string.ux_filter_directory))
+                }
+            }
+        } else {
             Text(if (refreshing && count == 0) stringResource(R.string.sftp_browser_loading_short)
-                else stringResource(R.string.sftp_browser_item_count, count), Modifier.weight(1f),
+                else stringResource(R.string.sftp_browser_item_count, count),
+                Modifier.fillMaxWidth().padding(horizontal = UiSpacing.sm, vertical = UiSpacing.xxs),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (showSearchAction) IconButton(onClick = onOpenSearch) { Icon(Icons.Outlined.Search, stringResource(R.string.ux_filter_directory)) }
-            SftpSortMenu(sort, sortAscending, onSort, onSelect, onRefresh, refreshing,
-                onFilter = onOpenSearch, filterActive = query.isNotBlank(), onClearFilter = { onQuery("") })
         }
     }
 }
@@ -324,12 +372,8 @@ private fun SftpSearchField(query: String, onQuery: (String) -> Unit, onClose: (
 }
 
 @Composable
-private fun SftpSortMenu(sort: FileSort, ascending: Boolean, onSort: (FileSort) -> Unit, onSelect: () -> Unit,
-    onRefresh: () -> Unit, refreshing: Boolean, onFilter: () -> Unit, filterActive: Boolean,
-    onClearFilter: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    val optionsLabel = stringResource(R.string.sftp_browser_filter_sort)
-    val direction = stringResource(if (ascending) R.string.sftp_browser_sort_ascending else R.string.sftp_browser_sort_descending)
+internal fun SftpDirectoryOptionsMenu(expanded: Boolean, onDismissRequest: () -> Unit,
+    sort: FileSort, ascending: Boolean, onSort: (FileSort) -> Unit, onBack: () -> Unit) {
     val options = listOf(FileSort.Name, FileSort.Modified, FileSort.Size)
     val captions = options.map { stringResource(sortCaption(it)) }
     val captionStyle = MaterialTheme.typography.labelSmall
@@ -344,46 +388,20 @@ private fun SftpSortMenu(sort: FileSort, ascending: Boolean, onSort: (FileSort) 
     val availableWidth = (LocalConfiguration.current.screenWidthDp.dp - UiSpacing.sm).coerceAtLeast(0.dp)
     val menuWidth = maxOf(280.dp, preferredWidths.reduce { a, b -> a + b } + UiSpacing.xs * 3)
         .coerceAtMost(availableWidth)
-    Box {
-        TextButton(onClick = { menu = true },
-            modifier = Modifier.padding(vertical = UiSpacing.xxs).testTag("sftp-directory-options")
-                .semantics { contentDescription = optionsLabel; stateDescription = direction },
-            colors = ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)) {
-            Text(stringResource(sortCaption(sort)), style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.width(UiSpacing.xxs))
-            Icon(if (ascending) Icons.Outlined.ArrowUpward else Icons.Outlined.ArrowDownward,
-                null, Modifier.size(20.dp))
-            Spacer(Modifier.width(UiSpacing.xxs))
-            Icon(Icons.Outlined.Tune, null, Modifier.size(18.dp))
-        }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false },
-            modifier = Modifier.width(menuWidth).testTag("sftp-directory-options-menu"),
-            shape = MaterialTheme.shapes.large,
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shadowElevation = 3.dp) {
-            Text(stringResource(R.string.sftp_browser_sort_by),
-                Modifier.padding(horizontal = UiSpacing.sm, vertical = UiSpacing.xs),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = UiSpacing.xs).selectableGroup(),
-                horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
-                options.forEachIndexed { index, option ->
-                    val widthWeight = preferredWidths[index].value
-                    SftpSortOption(option, sort == option, ascending, { onSort(option) }, Modifier.weight(widthWeight).fillMaxHeight())
-                }
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest,
+        modifier = Modifier.width(menuWidth).testTag("sftp-directory-options-menu"),
+        shape = MaterialTheme.shapes.large,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 3.dp) {
+        DropdownMenuItem(text = { Text(stringResource(R.string.sftp_browser_sort_by)) },
+            modifier = Modifier.testTag("sftp-options-back"), onClick = onBack,
+            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.ArrowBack, stringResource(R.string.action_back)) })
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = UiSpacing.xs).selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
+            options.forEachIndexed { index, option ->
+                val widthWeight = preferredWidths[index].value
+                SftpSortOption(option, sort == option, ascending, { onSort(option) }, Modifier.weight(widthWeight).fillMaxHeight())
             }
-            HorizontalDivider(Modifier.padding(horizontal = UiSpacing.sm, vertical = UiSpacing.xs),
-                color = MaterialTheme.colorScheme.outlineVariant)
-            Text(stringResource(R.string.sftp_browser_options),
-                Modifier.padding(horizontal = UiSpacing.sm, vertical = UiSpacing.xs),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            DropdownMenuItem(text = { Text(stringResource(R.string.ux_filter_directory)) },
-                onClick = { menu = false; onFilter() }, leadingIcon = { Icon(Icons.Outlined.Search, null) })
-            if (filterActive) DropdownMenuItem(text = { Text(stringResource(R.string.sftp_browser_clear_search)) },
-                onClick = { menu = false; onClearFilter() }, leadingIcon = { Icon(Icons.Outlined.FilterAltOff, null) })
-            DropdownMenuItem(text = { Text(stringResource(R.string.ux_choose)) },
-                onClick = { menu = false; onSelect() }, leadingIcon = { Icon(Icons.Outlined.CheckCircle, null) })
-            DropdownMenuItem(text = { Text(stringResource(R.string.fm_refresh)) }, enabled = !refreshing,
-                onClick = { menu = false; onRefresh() }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) })
         }
     }
 }
@@ -416,48 +434,6 @@ private fun SftpSortOption(option: FileSort, active: Boolean, ascending: Boolean
             if (active) {
                 Icon(if (ascending) Icons.Outlined.ArrowUpward else Icons.Outlined.ArrowDownward,
                     null, Modifier.size(directionIconSize), tint)
-            }
-        }
-    }
-}
-
-@Composable
-internal fun SftpBrowserFooter(local: Boolean, showPaneSwitch: Boolean, onSelect: (Boolean) -> Unit,
-    panePosition: () -> Float, transfers: List<SftpTransferModel>, onTransfers: () -> Unit) {
-    val transferCountLabel = stringResource(R.string.sftp_browser_transfer_records, transfers.size)
-    Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = UiSpacing.xs, vertical = UiSpacing.xs),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(UiSpacing.xs)) {
-            if (transfers.any { !it.state.isTerminal || it.state == SftpTransferStateModel.Failed }) {
-                SftpTransferDock(transfers, onTransfers)
-            }
-            Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerLowest) {
-                Row(Modifier.fillMaxWidth().padding(UiSpacing.xxs), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(UiSpacing.xxs)) {
-                    if (showPaneSwitch) SftpPaneSwitch(local, onSelect, panePosition, Modifier.weight(1f))
-                    else Text(stringResource(R.string.sftp_transfers_title), Modifier.weight(1f).padding(start = UiSpacing.sm),
-                        style = MaterialTheme.typography.labelLarge)
-                    Box(Modifier.size(48.dp)) {
-                        FilledTonalIconButton(onClick = onTransfers,
-                            modifier = Modifier.size(48.dp).testTag("sftp-transfer-dock").semantics {
-                                if (transfers.isNotEmpty()) stateDescription = transferCountLabel
-                            },
-                            shape = CircleShape, colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                            Icon(Icons.Outlined.SwapVert, stringResource(R.string.sftp_transfers_title))
-                        }
-                        if (transfers.isNotEmpty()) Box(
-                            Modifier.align(Alignment.TopEnd).offset(x = (-4).dp)
-                                .background(MaterialTheme.colorScheme.surfaceContainerLowest, CircleShape)
-                                .padding(2.dp).clearAndSetSemantics {}
-                        ) {
-                            Badge { Text(transfers.size.toString()) }
-                        }
-                    }
-                }
             }
         }
     }
@@ -543,45 +519,6 @@ internal fun SftpFileDetailHeader(name: String, path: String, icon: ImageVector,
         SelectionContainer {
             Text(path, modifier = Modifier.padding(UiSpacing.sm), style = MaterialTheme.typography.bodySmall,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-        }
-    }
-}
-
-@Composable
-internal fun SftpTransferDock(transfers: List<SftpTransferModel>, onClick: () -> Unit) {
-    val active = transfers.filter { !it.state.isTerminal }
-    val failed = transfers.count { it.state == SftpTransferStateModel.Failed }
-    val progress = active.map { it.progress }.average().takeUnless { it.isNaN() }?.toFloat() ?: 0f
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().testTag("sftp-transfer-summary"),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLowest
-    ) {
-        Column {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = UiSpacing.sm, vertical = UiSpacing.xxs),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(UiSpacing.sm)
-            ) {
-                Icon(Icons.Outlined.SwapVert, null, tint = MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        when {
-                            active.isNotEmpty() || failed > 0 -> stringResource(R.string.ux_transfers, active.size, failed)
-                            transfers.isNotEmpty() -> stringResource(R.string.sftp_browser_transfer_records, transfers.size)
-                            else -> stringResource(R.string.sftp_browser_transfer_idle)
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (active.isNotEmpty()) Text("${(progress * 100).toInt().coerceIn(0, 100)}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (active.isNotEmpty()) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(start = UiSpacing.sm, end = UiSpacing.sm, bottom = UiSpacing.xs))
         }
     }
 }

@@ -200,6 +200,17 @@ class SftpSessionUiTest {
         compose.onNodeWithText(label(R.string.session_trust_title)).assertDoesNotExist()
     }
 
+    private fun openTransfersFromFab() {
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithTag("sftp-create-action").fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("sftp-create-action").performClick()
+        }
+        compose.onNodeWithTag("sftp-transfer-dock").performClick()
+    }
+
     @Test
     fun transferSheetShowsProgressAndControlActions() {
         val session = seedReadySession()
@@ -207,10 +218,7 @@ class SftpSessionUiTest {
         repository.refreshSftpSnapshots()
         openSftpScreen()
 
-        compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("sftp-transfer-dock").performClick()
+        openTransfersFromFab()
         compose.waitForIdle()
         compose.onNodeWithText("release.tar.gz").assertIsDisplayed()
         compose.onNodeWithText(label(R.string.ui_transferring), substring = true).assertIsDisplayed()
@@ -224,10 +232,7 @@ class SftpSessionUiTest {
         openSftpScreen()
 
         compose.waitForIdle()
-        compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("sftp-transfer-dock").performClick()
+        openTransfersFromFab()
         compose.waitForIdle()
         compose.onNode(hasText(label(R.string.forward_runtime_failed), substring = true) and hasAnyAncestor(hasTestTag("sftp-transfer-list"))).assertIsDisplayed()
     }
@@ -247,10 +252,7 @@ class SftpSessionUiTest {
         restoration.emulateSavedInstanceStateRestore()
         compose.waitForIdle()
 
-        compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithTag("sftp-transfer-dock").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("sftp-transfer-dock").performClick()
+        openTransfersFromFab()
         compose.waitForIdle()
         compose.onNodeWithContentDescription(label(R.string.ui_resume)).performClick()
         compose.waitForIdle()

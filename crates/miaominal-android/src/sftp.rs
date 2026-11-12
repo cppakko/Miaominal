@@ -1562,6 +1562,22 @@ impl SftpSession {
             })
     }
 
+    pub async fn paste_remote(
+        &self,
+        from: String,
+        to: String,
+        moving: bool,
+    ) -> Result<(), BackendError> {
+        self.inner.ensure_ready()?;
+        self.inner
+            .commands()?
+            .paste_remote(from, to, moving)
+            .await
+            .map_err(|error| BackendError::Storage {
+                storage_failure: format!("failed to paste the remote entry: {error:#}"),
+            })
+    }
+
     pub fn answer_host_key(
         &self,
         request_id: u64,

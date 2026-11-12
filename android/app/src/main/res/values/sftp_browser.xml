@@ -24,4 +24,12 @@
     <string name="sftp_browser_directory_empty_hint">上传文件或新建文件夹，开始整理此目录。</string>
     <string name="sftp_browser_filter_empty_hint">试试其他关键词，或清除筛选查看全部文件。</string>
     <string name="sftp_browser_local_empty_hint">可从远程下载文件到此目录。</string>
+    <string name="sftp_browser_cut">剪切</string>
+    <string name="sftp_browser_copy">复制</string>
+    <string name="sftp_browser_paste_here">在此粘贴（%1$d）</string>
+    <string name="sftp_browser_download_here">下载到这里（%1$d）</string>
+    <string name="sftp_browser_clear_clipboard">取消粘贴</string>
+    <string name="sftp_browser_clipboard_expired">来源连接已更改，请重新选择文件</string>
+    <string name="sftp_browser_paste_inside_self">不能把文件夹粘贴到它的子目录中</string>
+    <string name="sftp_browser_paste_done">已粘贴 %1$d 项</string>
 </resources>

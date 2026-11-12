@@ -219,7 +219,8 @@ class NativeMiaominalRepository(
         if (state !is NativeBackendState.Running) {
             error("native backend is unavailable (${state::class.simpleName})")
         }
-        _status.value = RepositoryStatus.Ready
+        // A running backend does not mean its persisted settings have reached
+        // the UI yet. refreshAll publishes Ready after loading the snapshots.
     }.onFailure { error ->
         _status.value = RepositoryStatus.Failed(describe(error))
     }
