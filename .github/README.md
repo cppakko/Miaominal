@@ -1,9 +1,7 @@
 <div align="center" style="border-bottom: none">
-    <h1>
-        Miaominal
-        <br><br>
+    <p>
         <img src="assets/hero.png" width="760" alt="Miaominal logo" />
-    </h1>
+    </p>
     <a href="https://github.com/cppakko/miaominal/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/cppakko/miaominal?include_prereleases&color=2ea44f"></a>
     <a href="https://github.com/cppakko/miaominal/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/cppakko/miaominal/release.yml?label=release"></a>
     <a href="https://www.rust-lang.org/"><img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-dea584?logo=rust&logoColor=white"></a>
