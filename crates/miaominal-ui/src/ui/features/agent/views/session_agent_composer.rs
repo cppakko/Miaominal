@@ -485,13 +485,16 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                 .child(
                                     div()
                                         .id("session-agent-send-action")
-                                        .child(icon_button_with_tooltip(
-                                            if waiting {
-                                                AppIcon::Pause
-                                            } else {
-                                                AppIcon::ChevronUp
-                                            },
-                                            if !has_provider && !waiting {
+                                        .child(
+                                            Button::new("session-agent-send-button")
+                                                .text()
+                                                .small()
+                                                .tab_stop(false)
+                                                .w_12()
+                                                .h_6()
+                                                .p_0()
+                                                .rounded_full()
+                                                .tooltip(if !has_provider && !waiting {
                                                 i18n::string(
                                                     "workspace.panel.agent.no_provider_configured",
                                                 )
@@ -501,25 +504,32 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                             } else {
                                                 "workspace.panel.agent.tooltips.send_message"
                                                 })
-                                            },
-                                            26.0,
-                                            8.0,
-                                            Some(if waiting {
+                                            })
+                                                .accessibility_label(i18n::string(if waiting {
+                                                    "workspace.panel.agent.tooltips.stop_response"
+                                                } else {
+                                                    "workspace.panel.agent.tooltips.send_message"
+                                                }))
+                                                .bg(rgb(if waiting {
                                                 roles.error_container
                                             } else if !has_provider {
                                                 roles.surface_container_highest
                                             } else {
                                                 roles.primary
-                                            }),
-                                            Some(if waiting {
+                                            }))
+                                                .text_color(rgb(if waiting {
                                                 roles.on_error_container
                                             } else if !has_provider {
                                                 text_muted
                                             } else {
                                                 roles.on_primary
-                                            }),
-                                            None,
-                                            move |window, cx| {
+                                            }))
+                                                .child(Icon::new(if waiting {
+                                                    AppIcon::Pause
+                                                } else {
+                                                    AppIcon::ChevronUp
+                                                }).small())
+                                                .on_click(move |_, window, cx| {
                                                 let controller = send_controller.clone();
                                                 controller.update(cx, |controller, cx| {
                                                     if controller.session_agent().is_busy() {
@@ -529,8 +539,8 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                                             .submit_session_agent_prompt(window, cx);
                                                     }
                                                 });
-                                            },
-                                        ))
+                                            }),
+                                        )
                                         .with_animation(
                                             SharedString::from(format!(
                                                 "session-agent-send-state-{waiting}"
