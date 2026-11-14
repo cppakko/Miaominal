@@ -13,7 +13,7 @@ use crate::ui::features::session::view::canvas::{
 use gpui_kit::px;
 use gpui_kit::{
     App, Bounds, Context, Entity, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollEvent, Window,
 };
 use miaominal_terminal::{MouseEncoding, MouseProtocol, TerminalSelectionKind};
 use std::time::{Duration, Instant};
@@ -456,7 +456,7 @@ pub(crate) trait WorkspaceTerminalInputExt: Sized {
 
     fn handle_terminal_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         line_height: f32,
         cx: &mut Context<Self>,
     );
@@ -683,7 +683,7 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
 
     fn handle_terminal_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         line_height: f32,
         cx: &mut Context<Self>,
     ) {

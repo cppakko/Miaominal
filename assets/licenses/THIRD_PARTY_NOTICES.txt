@@ -866,6 +866,20 @@ Origin: https://crates.io/api/v1/crates/bincode/1.3.3/download!/LICENSE.md
 Full text SHA-256: 90d7e062634054e6866d3c81e6a2b3058a840e6af733e98e80bdfe1a7dec6912
 
 ==============================================================================
+bit-set@0.10.0
+License: Apache-2.0 OR MIT
+Source: https://crates.io/api/v1/crates/bit-set/0.10.0/download
+Upstream: https://github.com/contain-rs/bit-set
+Upstream authors/developers: Alexis Beingessner <a.beingessner@gmail.com>
+Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
+Document: LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/bit-set/0.10.0/download!/LICENSE-APACHE
+Full text SHA-256: af975c9737b3bdcdcf7ec3512b3dc936f91cc58a3c9152a8e4b0803f667df6b9
+Document: LICENSE-MIT
+Origin: https://crates.io/api/v1/crates/bit-set/0.10.0/download!/LICENSE-MIT
+Full text SHA-256: 6b56ddc7cd80419e5e22e075f2252d720f6cbe17e3e2c17383095ee2712bcffa
+
+==============================================================================
 bit-set@0.8.0
 License: Apache-2.0 OR MIT
 Source: https://crates.io/api/v1/crates/bit-set/0.8.0/download
@@ -878,20 +892,6 @@ Full text SHA-256: af975c9737b3bdcdcf7ec3512b3dc936f91cc58a3c9152a8e4b0803f667df
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/bit-set/0.8.0/download!/LICENSE-MIT
 Full text SHA-256: f51ac2c59a222f7476ce507ca879960e2b64ea64bb2786eefdbeb7b0b538d1b7
-
-==============================================================================
-bit-set@0.9.1
-License: Apache-2.0 OR MIT
-Source: https://crates.io/api/v1/crates/bit-set/0.9.1/download
-Upstream: https://github.com/contain-rs/bit-set
-Upstream authors/developers: Alexis Beingessner <a.beingessner@gmail.com>
-Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/bit-set/0.9.1/download!/LICENSE-APACHE
-Full text SHA-256: af975c9737b3bdcdcf7ec3512b3dc936f91cc58a3c9152a8e4b0803f667df6b9
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/bit-set/0.9.1/download!/LICENSE-MIT
-Full text SHA-256: 6b56ddc7cd80419e5e22e075f2252d720f6cbe17e3e2c17383095ee2712bcffa
 
 ==============================================================================
 bit-vec@0.8.0
@@ -1053,21 +1053,6 @@ Upstream authors/developers: Mads Marquart <mads@marquart.dk>
 Document: LICENSE.md
 Origin: https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md
 Full text SHA-256: 7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54
-
-==============================================================================
-block@0.1.6
-License: MIT
-Source: https://crates.io/api/v1/crates/block/0.1.6/download
-Selected license: MIT
-Upstream: http://github.com/SSheldon/rust-block
-Upstream authors/developers: Steven Sheldon
-License evidence: Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained.
-Document: License declaration in published source archive
-Origin: https://crates.io/api/v1/crates/block/0.1.6/download!/Cargo.toml
-Full text SHA-256: 24df2f33b48c9e756a4f864f882c1ab07a159b6c2b790f45af2e8162499b6719
-Document: Standard MIT text (no standalone license in source archive)
-Origin: https://raw.githubusercontent.com/spdx/license-list-data/60e0de29cbcf3e83bf9d5e299972a1969516d918/text/MIT.txt
-Full text SHA-256: 9645fb6e878aebd5e959be648a71973a108d4aa0d18eee478d0579066ad99958
 
 ==============================================================================
 blocking@1.6.2
@@ -1319,38 +1304,6 @@ Full text SHA-256: 50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c7
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/cmov/0.5.4/download!/LICENSE-MIT
 Full text SHA-256: 70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9
-
-==============================================================================
-cocoa-foundation@0.2.0
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/cocoa-foundation/0.2.0/download
-Upstream: https://github.com/servo/core-foundation-rs
-Upstream authors/developers: The Servo Project Developers
-Copyright 2013 The Servo Project Developers. See the COPYRIGHT
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/cocoa-foundation/0.2.0/download!/LICENSE-APACHE
-Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/cocoa-foundation/0.2.0/download!/LICENSE-MIT
-Full text SHA-256: 62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3
-
-==============================================================================
-cocoa@0.26.0
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/cocoa/0.26.0/download
-Upstream: https://github.com/servo/core-foundation-rs
-Upstream authors/developers: The Servo Project Developers
-Copyright 2013 The Servo Project Developers. See the COPYRIGHT
-Copyright 2018 The Servo Project Developers. See the COPYRIGHT
-Document: COPYRIGHT
-Origin: https://crates.io/api/v1/crates/cocoa/0.26.0/download!/COPYRIGHT
-Full text SHA-256: ec82b96487e9e778ee610c7ab245162464782cfa1f555c2299333f8dbe5c036a
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/cocoa/0.26.0/download!/LICENSE-APACHE
-Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/cocoa/0.26.0/download!/LICENSE-MIT
-Full text SHA-256: 62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3
 
 ==============================================================================
 codespan-reporting@0.13.1
@@ -2638,16 +2591,6 @@ Origin: https://crates.io/api/v1/crates/fnv/1.0.7/download!/LICENSE-MIT
 Full text SHA-256: 65fdb6c76cd61612070c066eec9ecdb30ee74fb27859d0d9af58b9f499fd0c3e
 
 ==============================================================================
-foldhash@0.1.5
-License: Zlib
-Source: https://crates.io/api/v1/crates/foldhash/0.1.5/download
-Upstream: https://github.com/orlp/foldhash
-Upstream authors/developers: Orson Peters <orsonpeters@gmail.com>
-Document: LICENSE
-Origin: https://crates.io/api/v1/crates/foldhash/0.1.5/download!/LICENSE
-Full text SHA-256: 1d4c38d56650edc2c673cadbec74bec14db1fe8f2f10f4e3477dcbb49563be40
-
-==============================================================================
 foldhash@0.2.0
 License: Zlib
 Source: https://crates.io/api/v1/crates/foldhash/0.2.0/download
@@ -3223,238 +3166,218 @@ Origin: https://crates.io/api/v1/crates/gpu-allocator/0.28.0/download!/LICENSE-M
 Full text SHA-256: ba824ff61dc6c7650681e3478d7421ba76e94515c0e165ad6477031b4d522c8c
 
 ==============================================================================
-gpu-descriptor-types@0.2.0
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/gpu-descriptor-types/0.2.0/download
-Upstream: https://github.com/zakarumych/gpu-descriptor
-Upstream authors/developers: Zakarum <zakarumych@ya.ru>
-Document: COPYING
-Origin: https://raw.githubusercontent.com/zakarumych/gpu-descriptor/9f2fb9546591322e7b77ee1e79385e01effd85e4/COPYING
-Full text SHA-256: f72143f7e9d9fb8bd336b139fa22f825a299591c29f2f7338c5566347b137613
-
-==============================================================================
-gpu-descriptor@0.3.2
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/gpu-descriptor/0.3.2/download
-Upstream: https://github.com/zakarumych/gpu-descriptor
-Upstream authors/developers: Zakarum <zakarumych@ya.ru>
-Document: COPYING
-Origin: https://raw.githubusercontent.com/zakarumych/gpu-descriptor/bb28b4e55b742e0ea3e7a0968e7ee6287ba0e06a/COPYING
-Full text SHA-256: f72143f7e9d9fb8bd336b139fa22f825a299591c29f2f7338c5566347b137613
-
-==============================================================================
-gpui-base@0.8.0
+gpui-base@0.9.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-base/0.8.0/download
+Source: https://crates.io/api/v1/crates/gpui-base/0.9.1/download
 Upstream: https://github.com/longbridge/gpui-kit
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-base/0.8.0/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-base/0.9.1/download!/LICENSE-APACHE
 Full text SHA-256: d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811
 
 ==============================================================================
-gpui-component-macros@0.8.0
+gpui-component-macros@0.9.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-component-macros/0.8.0/download
+Source: https://crates.io/api/v1/crates/gpui-component-macros/0.9.1/download
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-component-macros/0.8.0/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-component-macros/0.9.1/download!/LICENSE-APACHE
 Full text SHA-256: d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811
 
 ==============================================================================
-gpui-component@0.8.0
+gpui-component@0.9.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-component/0.8.0/download
+Source: https://crates.io/api/v1/crates/gpui-component/0.9.1/download
 Upstream: https://github.com/longbridge/gpui-kit
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-component/0.8.0/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-component/0.9.1/download!/LICENSE-APACHE
 Full text SHA-256: d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811
 
 ==============================================================================
-gpui-kit-assets@0.8.0
+gpui-kit-assets@0.9.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download
+Source: https://crates.io/api/v1/crates/gpui-kit-assets/0.9.1/download
 Upstream: https://github.com/longbridge/gpui-kit
 Document: LICENSE-LUCIDE
-Origin: https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download!/LICENSE-LUCIDE
+Origin: https://crates.io/api/v1/crates/gpui-kit-assets/0.9.1/download!/LICENSE-LUCIDE
 Full text SHA-256: b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57
 Document: assets/icons/copyright.svg
-Origin: https://crates.io/api/v1/crates/gpui-kit-assets/0.8.0/download!/assets/icons/copyright.svg
+Origin: https://crates.io/api/v1/crates/gpui-kit-assets/0.9.1/download!/assets/icons/copyright.svg
 Full text SHA-256: c48dd4821477080b092fcf209b3c45314c0405f0b5830a3f84b02ef02d0a7823
 
 ==============================================================================
-gpui-kit@0.8.0
+gpui-kit@0.9.1
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-kit/0.8.0/download
+Source: https://crates.io/api/v1/crates/gpui-kit/0.9.1/download
 Upstream: https://github.com/longbridge/gpui-kit
 Document: LICENSE-APACHE
-Origin: https://raw.githubusercontent.com/longbridge/gpui-kit/1676826d9d49b90f4d7b6808b69924f58796f6f1/LICENSE-APACHE
+Origin: https://raw.githubusercontent.com/longbridge/gpui-kit/39ab849a93b5f15507b969164d49891db8d5b470/LICENSE-APACHE
 Full text SHA-256: d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811
 Document: LICENSE-DOCS.md
-Origin: https://raw.githubusercontent.com/longbridge/gpui-kit/1676826d9d49b90f4d7b6808b69924f58796f6f1/LICENSE-DOCS.md
+Origin: https://raw.githubusercontent.com/longbridge/gpui-kit/39ab849a93b5f15507b969164d49891db8d5b470/LICENSE-DOCS.md
 Full text SHA-256: 8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f
 
 ==============================================================================
-gpui-pre-apple@0.3.9
+gpui-pre-apple@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-apple/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-apple/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-apple/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-apple/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-collections@0.3.9
+gpui-pre-collections@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-collections/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-collections/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-collections/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-collections/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-derive-refineable@0.3.9
+gpui-pre-derive-refineable@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-derive-refineable/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-http-client@0.3.9
+gpui-pre-http-client@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-http-client/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-linux@0.3.9
+gpui-pre-linux@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-linux/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-linux/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Copyright 2022 - 2025 Zed Industries, Inc.
 Copyright 2022 The Arboard contributors
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-linux/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-linux/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-macos@0.3.9
+gpui-pre-macos@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-macos/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-macos/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-macos/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-macos/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-macros@0.3.9
+gpui-pre-macros@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-macros/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-macros/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-macros/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-macros/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-platform@0.3.9
+gpui-pre-platform@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-platform/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-platform/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-platform/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-platform/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-refineable@0.3.9
+gpui-pre-refineable@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-refineable/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-scheduler@0.3.9
+gpui-pre-scheduler@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-scheduler/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-shared-string@0.3.9
+gpui-pre-shared-string@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-shared-string/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-sum-tree@0.3.9
+gpui-pre-sum-tree@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-sum-tree/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-util@0.3.9
+gpui-pre-util@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-util/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-util/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-util/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-util/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-wgpu@0.3.9
+gpui-pre-wgpu@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-wgpu/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-windows@0.3.9
+gpui-pre-windows@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-windows/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-windows/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-windows/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-windows/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-ztracing-macro@0.3.9
+gpui-pre-ztracing-macro@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-ztracing-macro/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre-ztracing@0.3.9
+gpui-pre-ztracing@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre-ztracing/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
-gpui-pre@0.3.9
+gpui-pre@0.3.12
 License: Apache-2.0
-Source: https://crates.io/api/v1/crates/gpui-pre/0.3.9/download
+Source: https://crates.io/api/v1/crates/gpui-pre/0.3.12/download
 Upstream: https://github.com/zed-industries/zed
 Upstream authors/developers: Nathan Sobo <nathan@zed.dev>
 Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/gpui-pre/0.3.9/download!/LICENSE-APACHE
+Origin: https://crates.io/api/v1/crates/gpui-pre/0.3.12/download!/LICENSE-APACHE
 Full text SHA-256: 752daf2fb234ca4a1fa372c073fe127f44b7b90fd2529ae44273a64f9d53da7a
 
 ==============================================================================
@@ -3570,19 +3493,6 @@ Origin: https://crates.io/api/v1/crates/hashbrown/0.14.5/download!/LICENSE-MIT
 Full text SHA-256: ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2
 
 ==============================================================================
-hashbrown@0.15.5
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/hashbrown/0.15.5/download
-Upstream: https://github.com/rust-lang/hashbrown
-Upstream authors/developers: Amanieu d'Antras <amanieu@gmail.com>
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/hashbrown/0.15.5/download!/LICENSE-APACHE
-Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/hashbrown/0.15.5/download!/LICENSE-MIT
-Full text SHA-256: ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2
-
-==============================================================================
 hashbrown@0.16.1
 License: MIT OR Apache-2.0
 Source: https://crates.io/api/v1/crates/hashbrown/0.16.1/download
@@ -3685,21 +3595,6 @@ Full text SHA-256: a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa
 Document: LICENSE-MIT
 Origin: https://crates.io/api/v1/crates/hex/0.4.3/download!/LICENSE-MIT
 Full text SHA-256: f7bdb3426d045cd50efd4953026e3eb5a83d0199f458a075602611b9344da5b9
-
-==============================================================================
-hexf-parse@0.2.1
-License: CC0-1.0
-Source: https://crates.io/api/v1/crates/hexf-parse/0.2.1/download
-Selected license: CC0-1.0
-Upstream: https://github.com/lifthrasiir/hexf
-Upstream authors/developers: Kang Seonghoon <public+rust@mearie.org>
-License evidence: Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained.
-Document: License declaration in published source archive
-Origin: https://crates.io/api/v1/crates/hexf-parse/0.2.1/download!/Cargo.toml.orig
-Full text SHA-256: 4a56dbdbc12054fd33b7a2634a45cbbe6fe12f5e6f4081002cbfa527f7220c70
-Document: Standard CC0-1.0 text (no standalone license in source archive)
-Origin: https://raw.githubusercontent.com/spdx/license-list-data/60e0de29cbcf3e83bf9d5e299972a1969516d918/text/CC0-1.0.txt
-Full text SHA-256: a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499
 
 ==============================================================================
 hkdf@0.12.4
@@ -3888,73 +3783,113 @@ Origin: https://crates.io/api/v1/crates/iana-time-zone/0.1.65/download!/LICENSE-
 Full text SHA-256: da28ccc6b158fc2d8cccc74e99794b1cff1d29bd7bbeb019442fcf0c04c6cad9
 
 ==============================================================================
-icu_collections@2.2.0
+icu_collections@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_collections/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_collections/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_collections/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_collections/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_locale_core@2.2.0
+icu_locale_core@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_locale_core/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_locale_core/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_locale_core/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_locale_core/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_normalizer@2.2.0
+icu_locale_fallback@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_normalizer/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_locale_fallback/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_normalizer/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_locale_fallback/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_normalizer_data@2.2.0
+icu_locale_fallback_data@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_normalizer_data/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_locale_fallback_data/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_normalizer_data/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_locale_fallback_data/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_properties@2.2.0
+icu_normalizer@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_properties/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_normalizer/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_properties/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_normalizer/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_properties_data@2.2.0
+icu_normalizer_data@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_properties_data/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_normalizer_data/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_properties_data/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_normalizer_data/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-icu_provider@2.2.0
+icu_properties@2.4.0
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/icu_provider/2.2.0/download
+Source: https://crates.io/api/v1/crates/icu_properties/2.4.0/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/icu_provider/2.2.0/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/icu_properties/2.4.0/download!/LICENSE
+Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
+
+==============================================================================
+icu_properties_data@2.4.0
+License: Unicode-3.0
+Source: https://crates.io/api/v1/crates/icu_properties_data/2.4.0/download
+Upstream: https://github.com/unicode-org/icu4x
+Upstream authors/developers: The ICU4X Project Developers
+Document: LICENSE
+Origin: https://crates.io/api/v1/crates/icu_properties_data/2.4.0/download!/LICENSE
+Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
+
+==============================================================================
+icu_provider@2.4.0
+License: Unicode-3.0
+Source: https://crates.io/api/v1/crates/icu_provider/2.4.0/download
+Upstream: https://github.com/unicode-org/icu4x
+Upstream authors/developers: The ICU4X Project Developers
+Document: LICENSE
+Origin: https://crates.io/api/v1/crates/icu_provider/2.4.0/download!/LICENSE
+Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
+
+==============================================================================
+icu_segmenter@2.4.0
+License: Unicode-3.0
+Source: https://crates.io/api/v1/crates/icu_segmenter/2.4.0/download
+Upstream: https://github.com/unicode-org/icu4x
+Upstream authors/developers: The ICU4X Project Developers
+Document: LICENSE
+Origin: https://crates.io/api/v1/crates/icu_segmenter/2.4.0/download!/LICENSE
+Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
+
+==============================================================================
+icu_segmenter_data@2.4.0
+License: Unicode-3.0
+Source: https://crates.io/api/v1/crates/icu_segmenter_data/2.4.0/download
+Upstream: https://github.com/unicode-org/icu4x
+Upstream authors/developers: The ICU4X Project Developers
+Document: LICENSE
+Origin: https://crates.io/api/v1/crates/icu_segmenter_data/2.4.0/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
@@ -4693,21 +4628,6 @@ Origin: https://crates.io/api/v1/crates/mach2/0.6.0/download!/LICENSE-MIT
 Full text SHA-256: 3f9f0f7e5a5911a8042e32c83ff5d061ce1ffd02e8a207ec2135a44ad73b4191
 
 ==============================================================================
-malloc_buf@0.0.6
-License: MIT
-Source: https://crates.io/api/v1/crates/malloc_buf/0.0.6/download
-Selected license: MIT
-Upstream: https://github.com/SSheldon/malloc_buf
-Upstream authors/developers: Steven Sheldon
-License evidence: Published source archive declares this license but contains no standalone license document; standard text supplied. Original author metadata and source copyright notices are retained.
-Document: License declaration in published source archive
-Origin: https://crates.io/api/v1/crates/malloc_buf/0.0.6/download!/Cargo.toml
-Full text SHA-256: d87624d9d117489bd49dbaeb70077a0721e00ac2a76eb371faec818a92da5661
-Document: Standard MIT text (no standalone license in source archive)
-Origin: https://raw.githubusercontent.com/spdx/license-list-data/60e0de29cbcf3e83bf9d5e299972a1969516d918/text/MIT.txt
-Full text SHA-256: 9645fb6e878aebd5e959be648a71973a108d4aa0d18eee478d0579066ad99958
-
-==============================================================================
 markdown@1.0.0
 License: MIT
 Source: https://crates.io/api/v1/crates/markdown/1.0.0/download
@@ -4834,24 +4754,6 @@ Upstream authors/developers: shshemi <shshemi@gmail.com>; po0uyan <info@pouyan.m
 Document: LICENSE
 Origin: https://crates.io/api/v1/crates/memsafe/1.0.2/download!/LICENSE
 Full text SHA-256: 1c304ccd211bfe9885cd8b4237fa66d823d7c2d064c14db41a5ecf83bc09a6b4
-
-==============================================================================
-metal@0.33.0
-License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/metal/0.33.0/download
-Upstream: https://github.com/gfx-rs/metal-rs
-Upstream authors/developers: gfx-rs developers
-Copyright 2016 GFX developers
-Copyright 2017 GFX developers
-Copyright 2018 GFX developers
-Copyright 2020 GFX developers
-Copyright 2023 GFX developers
-Document: LICENSE-APACHE
-Origin: https://crates.io/api/v1/crates/metal/0.33.0/download!/LICENSE-APACHE
-Full text SHA-256: 143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4
-Document: LICENSE-MIT
-Origin: https://crates.io/api/v1/crates/metal/0.33.0/download!/LICENSE-MIT
-Full text SHA-256: 0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720
 
 ==============================================================================
 mime@0.3.17
@@ -4983,16 +4885,29 @@ Origin: https://crates.io/api/v1/crates/muda/0.19.3/download!/LICENSE.spdx
 Full text SHA-256: 135bd40d7e81207369801d42a130c337371322df59687bf986fb8216352d71b6
 
 ==============================================================================
-naga@29.0.4
+naga-types@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/naga/29.0.4/download
+Source: https://crates.io/api/v1/crates/naga-types/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/naga/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/naga-types/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/naga/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/naga-types/30.0.1/download!/LICENSE.MIT
+Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
+
+==============================================================================
+naga@30.0.1
+License: MIT OR Apache-2.0
+Source: https://crates.io/api/v1/crates/naga/30.0.1/download
+Upstream: https://github.com/gfx-rs/wgpu
+Upstream authors/developers: gfx-rs developers
+Document: LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/naga/30.0.1/download!/LICENSE.APACHE
+Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
+Document: LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/naga/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
@@ -5416,6 +5331,15 @@ Origin: https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a5
 Full text SHA-256: 7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54
 
 ==============================================================================
+objc2-uniform-type-identifiers@0.3.2
+License: Zlib OR Apache-2.0 OR MIT
+Source: https://crates.io/api/v1/crates/objc2-uniform-type-identifiers/0.3.2/download
+Upstream: https://github.com/madsmtm/objc2
+Document: LICENSE.md
+Origin: https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md
+Full text SHA-256: 7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54
+
+==============================================================================
 objc2-user-notifications@0.3.2
 License: Zlib OR Apache-2.0 OR MIT
 Source: https://crates.io/api/v1/crates/objc2-user-notifications/0.3.2/download
@@ -5443,16 +5367,6 @@ Upstream authors/developers: Mads Marquart <mads@marquart.dk>
 Document: LICENSE.md
 Origin: https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md
 Full text SHA-256: 7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54
-
-==============================================================================
-objc@0.2.7
-License: MIT
-Source: https://crates.io/api/v1/crates/objc/0.2.7/download
-Upstream: http://github.com/SSheldon/rust-objc
-Upstream authors/developers: Steven Sheldon
-Document: LICENSE.txt
-Origin: https://crates.io/api/v1/crates/objc/0.2.7/download!/LICENSE.txt
-Full text SHA-256: e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5
 
 ==============================================================================
 object@0.37.3
@@ -7931,6 +7845,16 @@ Origin: https://crates.io/api/v1/crates/synstructure/0.13.2/download!/LICENSE
 Full text SHA-256: 219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59
 
 ==============================================================================
+synstructure@0.14.0
+License: MIT
+Source: https://crates.io/api/v1/crates/synstructure/0.14.0/download
+Upstream: https://github.com/mystor/synstructure
+Upstream authors/developers: Nika Layzell <nika@thelayzells.com>
+Document: LICENSE
+Origin: https://crates.io/api/v1/crates/synstructure/0.14.0/download!/LICENSE
+Full text SHA-256: 219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59
+
+==============================================================================
 syntect@5.3.0
 License: MIT
 Source: https://crates.io/api/v1/crates/syntect/5.3.0/download
@@ -7955,13 +7879,13 @@ Origin: https://crates.io/api/v1/crates/sys-locale/0.3.2/download!/LICENSE-MIT
 Full text SHA-256: 5cc390ab5e5e6507f467368cbab1297552d64bfd863f4b496c7928508bcfefd8
 
 ==============================================================================
-taffy@0.13.0
+taffy@0.15.1
 License: MIT
-Source: https://crates.io/api/v1/crates/taffy/0.13.0/download
+Source: https://crates.io/api/v1/crates/taffy/0.15.1/download
 Upstream: https://github.com/DioxusLabs/taffy
 Upstream authors/developers: Alice Cecile <alice.i.cecile@gmail.com>; Johnathan Kelley <jkelleyrtp@gmail.com>; Nico Burns <nico@nicoburns.com>
 Document: LICENSE
-Origin: https://raw.githubusercontent.com/DioxusLabs/taffy/45a56299d366ddb383e593a1f0372158d00e8530/LICENSE
+Origin: https://raw.githubusercontent.com/DioxusLabs/taffy/0064bd54cbe38bf1d8bcd6ec6ab0704d45fb048a/LICENSE
 Full text SHA-256: f97daf1a0124413dccf399a4e6626b4b74acd05282f80b6d64ac82225650b77a
 
 ==============================================================================
@@ -8124,13 +8048,13 @@ Origin: https://crates.io/api/v1/crates/tiny-skia/0.11.4/download!/LICENSE
 Full text SHA-256: 6d41e05f1d54fe726997cb0334ec539f1dff50600b1d5d90462ec2b392770ced
 
 ==============================================================================
-tinystr@0.8.3
+tinystr@0.8.5
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/tinystr/0.8.3/download
+Source: https://crates.io/api/v1/crates/tinystr/0.8.5/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/tinystr/0.8.3/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/tinystr/0.8.5/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
@@ -8995,81 +8919,81 @@ Origin: https://crates.io/api/v1/crates/weezl/0.1.12/download!/LICENSE-MIT
 Full text SHA-256: 776aa6f89099bf24a9bceac4b7d9ad8946c017161de770698b5a5cc8de0254a6
 
 ==============================================================================
-wgpu-core-deps-windows-linux-android@29.0.4
+wgpu-core-deps-windows-linux-android@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu-core-deps-windows-linux-android/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
-wgpu-core@29.0.4
+wgpu-core@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu-core/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu-core/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu-core/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu-core/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu-core/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu-core/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
-wgpu-hal@29.0.4
+wgpu-hal@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu-hal/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu-hal/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu-hal/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu-hal/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu-hal/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu-hal/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
-wgpu-naga-bridge@29.0.4
+wgpu-naga-bridge@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu-naga-bridge/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu-naga-bridge/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu-naga-bridge/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu-naga-bridge/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu-naga-bridge/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu-naga-bridge/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
-wgpu-types@29.0.4
+wgpu-types@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu-types/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu-types/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu-types/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu-types/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu-types/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu-types/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
-wgpu@29.0.4
+wgpu@30.0.1
 License: MIT OR Apache-2.0
-Source: https://crates.io/api/v1/crates/wgpu/29.0.4/download
+Source: https://crates.io/api/v1/crates/wgpu/30.0.1/download
 Upstream: https://github.com/gfx-rs/wgpu
 Upstream authors/developers: gfx-rs developers
 Document: LICENSE.APACHE
-Origin: https://crates.io/api/v1/crates/wgpu/29.0.4/download!/LICENSE.APACHE
+Origin: https://crates.io/api/v1/crates/wgpu/30.0.1/download!/LICENSE.APACHE
 Full text SHA-256: bb28c48e3e078166e91cfc2b6db7ffebb8a0973b9e23b3df060561292d8d69ec
 Document: LICENSE.MIT
-Origin: https://crates.io/api/v1/crates/wgpu/29.0.4/download!/LICENSE.MIT
+Origin: https://crates.io/api/v1/crates/wgpu/30.0.1/download!/LICENSE.MIT
 Full text SHA-256: dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21
 
 ==============================================================================
@@ -9509,13 +9433,13 @@ Origin: https://crates.io/api/v1/crates/wnaf/0.14.1/download!/LICENSE-MIT
 Full text SHA-256: c1c9d5ca65122bab96e368709f8cfe9b92b443a3c21306c3260fc98eaac7e5fc
 
 ==============================================================================
-writeable@0.6.3
+writeable@0.6.4
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/writeable/0.6.3/download
+Source: https://crates.io/api/v1/crates/writeable/0.6.4/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/writeable/0.6.3/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/writeable/0.6.4/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
@@ -9654,23 +9578,23 @@ Origin: https://crates.io/api/v1/crates/yeslogic-fontconfig-sys/6.0.0/download!/
 Full text SHA-256: 1946ace4922e92527e0a52dde03f8d24766d72d53edeefffd97aac5deec6fe40
 
 ==============================================================================
-yoke-derive@0.8.2
+yoke-derive@0.8.4
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/yoke-derive/0.8.2/download
+Source: https://crates.io/api/v1/crates/yoke-derive/0.8.4/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: Manish Goregaokar <manishsmail@gmail.com>
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/yoke-derive/0.8.2/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/yoke-derive/0.8.4/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-yoke@0.8.2
+yoke@0.8.4
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/yoke/0.8.2/download
+Source: https://crates.io/api/v1/crates/yoke/0.8.4/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: Manish Goregaokar <manishsmail@gmail.com>
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/yoke/0.8.2/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/yoke/0.8.4/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
@@ -9881,33 +9805,33 @@ Origin: https://crates.io/api/v1/crates/zeroize_derive/1.5.0/download!/LICENSE-M
 Full text SHA-256: b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0
 
 ==============================================================================
-zerotrie@0.2.4
+zerotrie@0.2.5
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/zerotrie/0.2.4/download
+Source: https://crates.io/api/v1/crates/zerotrie/0.2.5/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/zerotrie/0.2.4/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/zerotrie/0.2.5/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-zerovec-derive@0.11.3
+zerovec-derive@0.11.7
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/zerovec-derive/0.11.3/download
+Source: https://crates.io/api/v1/crates/zerovec-derive/0.11.7/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: Manish Goregaokar <manishsmail@gmail.com>
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/zerovec-derive/0.11.3/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/zerovec-derive/0.11.7/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
-zerovec@0.11.6
+zerovec@0.11.9
 License: Unicode-3.0
-Source: https://crates.io/api/v1/crates/zerovec/0.11.6/download
+Source: https://crates.io/api/v1/crates/zerovec/0.11.9/download
 Upstream: https://github.com/unicode-org/icu4x
 Upstream authors/developers: The ICU4X Project Developers
 Document: LICENSE
-Origin: https://crates.io/api/v1/crates/zerovec/0.11.6/download!/LICENSE
+Origin: https://crates.io/api/v1/crates/zerovec/0.11.9/download!/LICENSE
 Full text SHA-256: f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2
 
 ==============================================================================
@@ -13129,33 +13053,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-==============================================================================
-SHA-256: 24df2f33b48c9e756a4f864f882c1ab07a159b6c2b790f45af2e8162499b6719
-
-[package]
-name = "block"
-version = "0.1.6"
-authors = ["Steven Sheldon"]
-
-description = "Rust interface for Apple's C language extension of blocks."
-keywords = ["blocks", "osx", "ios", "objective-c"]
-readme = "README.md"
-repository = "http://github.com/SSheldon/rust-block"
-documentation = "http://ssheldon.github.io/rust-objc/block/"
-license = "MIT"
-
-exclude = [
-  ".gitignore",
-  ".travis.yml",
-  "travis_install.sh",
-  "travis_test.sh",
-  "tests-ios/**",
-]
-
-[dev-dependencies.objc_test_utils]
-version = "0.0"
-path = "test_utils"
 
 ==============================================================================
 SHA-256: 24e5860bf589d8501643e6ea51ffb3df66db2867492b09033d486183efbfa970
@@ -16510,21 +16407,6 @@ Apache License
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-
-==============================================================================
-SHA-256: 4a56dbdbc12054fd33b7a2634a45cbbe6fe12f5e6f4081002cbfa527f7220c70
-
-[package]
-name = "hexf-parse"
-version = "0.2.1"
-authors = ["Kang Seonghoon <public+rust@mearie.org>"]
-
-description = "Parses hexadecimal floats (see also hexf)"
-homepage = "https://github.com/lifthrasiir/hexf"
-documentation = "https://docs.rs/hexf-parse/"
-repository = "https://github.com/lifthrasiir/hexf"
-license = "CC0-1.0"
-edition = "2018"
 
 ==============================================================================
 SHA-256: 4b6c5ac5c550bea22b1d6455684b21d94ca96f3bcbbc2840b793180707ed582a
@@ -34347,24 +34229,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==============================================================================
-SHA-256: d87624d9d117489bd49dbaeb70077a0721e00ac2a76eb371faec818a92da5661
-
-[package]
-name = "malloc_buf"
-version = "0.0.6"
-authors = ["Steven Sheldon"]
-
-description = "Structs for handling malloc'd memory passed to Rust."
-repository = "https://github.com/SSheldon/malloc_buf"
-documentation = "http://ssheldon.github.io/malloc_buf/malloc_buf/"
-license = "MIT"
-
-exclude = [".gitignore"]
-
-[dependencies]
-libc = ">= 0.1, < 0.3"
-
-==============================================================================
 SHA-256: d8c4ab431f20da8452c9a217084163822e5fd9d134e1343903c929f2859fc8fd
 
 Copyright (c) 2020-2026 RustCrypto Developers
@@ -36181,16 +36045,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-==============================================================================
-SHA-256: f72143f7e9d9fb8bd336b139fa22f825a299591c29f2f7338c5566347b137613
-
-Copyright 2020 The gpu-descriptor Project Developers
-
-Licensed under the Apache License, Version 2.0, <license/LICENSE-APACHE or
-http://apache.org/licenses/LICENSE-2.0> or the MIT license <license/LICENSE-MIT or
-http://opensource.org/licenses/MIT>, at your option. This file may not be
-copied, modified, or distributed except according to those terms.
 
 ==============================================================================
 SHA-256: f76b7831ee8f42d3ac38919101e4ceb9f56aeb7796cdfe8a5ef52e26acedcbbf

@@ -242,7 +242,7 @@ impl Render for AppView {
                             search.update(cx, |search, cx| search.release_focus(window, cx));
                             cx.stop_propagation();
                         })
-                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation()),
+                        .on_scroll(|_, _, cx| cx.stop_propagation()),
                 )
             })
             .when(search_visible, |root| {

@@ -3,7 +3,7 @@
 use super::gestures::{TerminalInputHost, WorkspaceTerminalInputExt};
 use gpui_kit::{
     Context, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ScrollWheelEvent, StatefulInteractiveElement,
+    ScrollEvent, StatefulInteractiveElement,
 };
 
 pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInteractiveElement>(
@@ -61,7 +61,7 @@ pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInte
         )
         .on_key_down(cx.listener(V::handle_terminal_key_down))
         .on_key_up(cx.listener(V::handle_terminal_key_up))
-        .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+        .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
             this.handle_terminal_scroll_wheel(event, line_height, cx);
         }))
 }

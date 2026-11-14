@@ -1,7 +1,7 @@
 use super::keymap::{TerminalKeyAction, classify_terminal_key, terminal_key_stroke};
 use crate::ui::contracts::{TabId, TerminalWorkspaceRequest};
 use crate::ui::features::session::SessionController;
-use gpui_kit::{Context, KeyDownEvent, KeyUpEvent, Keystroke, ScrollDelta, ScrollWheelEvent};
+use gpui_kit::{Context, KeyDownEvent, KeyUpEvent, Keystroke, ScrollDelta, ScrollEvent};
 use miaominal_terminal::{
     MouseReportButton, MouseReportKind, MouseReportModifiers, TerminalKeyEvent, TerminalKeyPhase,
     TerminalScroll, encode_mouse_report,
@@ -205,7 +205,7 @@ impl SessionController {
     pub(crate) fn route_terminal_wheel(
         &mut self,
         tab_id: Option<TabId>,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         line_height: f32,
         viewport_cell: Option<(usize, usize)>,
         cx: &mut Context<Self>,

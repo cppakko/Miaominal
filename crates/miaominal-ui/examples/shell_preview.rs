@@ -456,11 +456,6 @@ fn main() {
                                     gpui_kit::ScrollDelta::Pixels(point(px(0.0), px(-10000.0))),
                                     cx,
                                 ),
-                                "tabs" | "tabs-scroll" => {
-                                    for _ in 0..8 {
-                                        window.click("top-add-host", cx);
-                                    }
-                                }
                                 "tab-context-focus" | "chrome" | "chrome-idle" | "chrome-active" | "chrome-close" => {
                                     window.click("top-add-host", cx);
                                 }
@@ -477,6 +472,77 @@ fn main() {
                 cx.background_executor()
                     .timer(Duration::from_millis(700))
                     .await;
+                if scenario == "notification-center" {
+                    const TRIGGER: &str = "notification-center-trigger-button";
+                    for key in [None, Some("enter"), Some("space")] {
+                        if key == Some("enter") {
+                            cx.update(|cx| {
+                                handle.update(cx, |_, window, cx| {
+                                    window.blur(cx);
+                                    window.focus_next(cx);
+                                    window.render_frame(cx);
+                                }).unwrap();
+                            });
+                            for _ in 0..60 {
+                                let focused = cx.update(|cx| {
+                                    handle.update(cx, |_, window, _| window.find(TRIGGER).focused() == Some(true)).unwrap()
+                                });
+                                if focused { break; }
+                                cx.update(|cx| { handle.update(cx, |_, window, cx| window.press("tab", cx)).unwrap(); });
+                                cx.background_executor().timer(Duration::from_millis(20)).await;
+                            }
+                        }
+                        cx.update(|cx| {
+                            handle.update(cx, |_, window, cx| {
+                                if let Some(key) = key {
+                                    assert_eq!(window.find(TRIGGER).focused(), Some(true), "the bell must remain keyboard reachable");
+                                    window.render_to_image().unwrap().save(output.with_file_name("notification-center-keyboard.png")).unwrap();
+                                    window.press(key, cx);
+                                } else {
+                                    window.click(TRIGGER, cx);
+                                }
+                            }).unwrap();
+                        });
+                        for _ in 0..12 {
+                            cx.background_executor().timer(Duration::from_millis(30)).await;
+                            cx.update(|cx| { handle.update(cx, |_, window, cx| window.render_frame(cx)).unwrap(); });
+                        }
+                        cx.update(|cx| {
+                            handle.update(cx, |_, window, cx| {
+                                assert!(window.try_find("notification-center-clear").is_some(), "activation must open the notification center");
+                                assert_eq!(window.find(TRIGGER).focused(), Some(false), "opening must focus the popover content rather than the bell");
+                                if key.is_none() {
+                                    window.render_to_image().unwrap().save(output.with_file_name("notification-center-pointer.png")).unwrap();
+                                }
+                                window.press("escape", cx);
+                            }).unwrap();
+                        });
+                        for _ in 0..12 {
+                            cx.background_executor().timer(Duration::from_millis(30)).await;
+                            cx.update(|cx| { handle.update(cx, |_, window, cx| window.render_frame(cx)).unwrap(); });
+                        }
+                        cx.update(|cx| {
+                            handle.update(cx, |_, window, _| {
+                                assert!(window.try_find("notification-center-clear").is_none(), "Escape must dismiss the center");
+                                assert_eq!(window.find(TRIGGER).focused(), Some(key.is_some()), "dismissal must restore the previous keyboard focus");
+                            }).unwrap();
+                        });
+                    }
+                    println!("PASS: notification center focuses its content on pointer/Enter/Space activation and restores keyboard focus on Escape");
+                }
+                if matches!(scenario.strip_prefix("reference-").unwrap_or(&scenario), "tabs" | "tabs-scroll") {
+                    // The add button moves while each tab enters. Finish that
+                    // transition before resolving the next pointer target.
+                    for _ in 0..8 {
+                        cx.update(|cx| {
+                            handle.update(cx, |_, window, cx| window.click("top-add-host", cx)).unwrap();
+                        });
+                        cx.background_executor().timer(Duration::from_millis(250)).await;
+                        cx.update(|cx| {
+                            handle.update(cx, |_, window, cx| window.render_frame(cx)).unwrap();
+                        });
+                    }
+                }
                 if scenario == "vault-unlock" {
                     cx.update(|cx| {
                         handle.update(cx, |_, window, cx| {
@@ -1058,7 +1124,7 @@ fn main() {
 /// Exercise the production shell with real pointer dispatch and overflowing tabs.
 /// A tab's native-caption occlusion must not swallow vertical or horizontal wheels.
 fn verify_tab_wheel_scrolling(window: &mut gpui_kit::Window, cx: &mut App) {
-    use gpui_kit::{ScrollDelta, ScrollWheelEvent};
+    use gpui_kit::{ScrollDelta, ScrollEvent};
     let add_bounds = window.find("top-add-host").bounds();
     let origin = window.bounds().origin;
     let first_x = |window: &gpui_kit::Window| {
@@ -1080,7 +1146,7 @@ fn verify_tab_wheel_scrolling(window: &mut gpui_kit::Window, cx: &mut App) {
             cx,
         );
         window.dispatch_event(
-            ScrollWheelEvent {
+            ScrollEvent {
                 position,
                 delta,
                 ..Default::default()

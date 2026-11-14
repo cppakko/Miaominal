@@ -396,7 +396,6 @@ struct NotificationCenterTrigger {
     activity: Option<u32>,
     roles: miaominal_settings::theme::Md3Roles,
     tooltip: SharedString,
-    focus_handle: gpui_kit::FocusHandle,
 }
 
 impl Selectable for NotificationCenterTrigger {
@@ -418,7 +417,6 @@ impl RenderOnce for NotificationCenterTrigger {
             .size(crate::ui::components::shell_tokens::space(32.0))
             .child(
                 footer_tool_button("notification-center-trigger-button", self.selected, cx)
-                    .track_focus(&self.focus_handle)
                     .icon(IconName::Bell)
                     .accessibility_label(self.tooltip),
             )
@@ -711,7 +709,7 @@ pub(crate) struct StatusCenterActivity {
 /// Footer status center: live activity (when given) above the notification history.
 pub(crate) fn render_status_center_popover(
     activity: Option<StatusCenterActivity>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
     let unread = notification_center_unread(cx);
@@ -738,14 +736,7 @@ pub(crate) fn render_status_center_popover(
         activity: activity.as_ref().and_then(|activity| activity.indicator),
         roles,
         tooltip: title.clone(),
-        focus_handle: window
-            .use_keyed_state("notification-center-trigger-focus", cx, |_, cx| {
-                cx.focus_handle()
-            })
-            .read(cx)
-            .clone(),
     };
-    let trigger_focus = trigger.focus_handle.clone();
     let (open, on_open_change, content) = match activity {
         Some(activity) => (
             Some(activity.open),
@@ -759,7 +750,8 @@ pub(crate) fn render_status_center_popover(
         .anchor(Anchor::BottomRight)
         .appearance(false)
         .trigger(trigger)
-        .track_focus(&trigger_focus)
+        // Popover owns content focus and restores the previous focus on close.
+        // Sharing its handle with the trigger makes opening focus the button.
         .when_some(open, |popover, open| popover.open(open))
         .on_open_change(move |open, window, cx| {
             if *open {
@@ -1034,6 +1026,63 @@ fn render_notification_history_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Render, TestAppContext};
+
+    struct NotificationFooter;
+
+    impl Render for NotificationFooter {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().flex().items_end().p_4().child(
+                h_flex()
+                    .gap_2()
+                    .child(footer_tool_button("neighbor", false, cx).icon(IconName::Settings))
+                    .child(render_status_center_popover(None, window, cx)),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn notification_popover_keeps_content_focus_separate_from_trigger(cx: &mut TestAppContext) {
+        const TRIGGER: &str = "notification-center-trigger-button";
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| NotificationFooter);
+            Root::new(view, window, cx)
+        });
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.click("neighbor", cx);
+            assert_eq!(window.find("neighbor").focused(), Some(false));
+
+            window.click(TRIGGER, cx);
+            assert!(window.try_find("notification-center-clear").is_some());
+            assert_eq!(window.find(TRIGGER).focused(), Some(false));
+            window.press("escape", cx);
+            assert!(window.try_find("notification-center-clear").is_none());
+            assert_eq!(window.find(TRIGGER).focused(), Some(false));
+
+            // Reach the real button through Tab order, then exercise both activation keys.
+            window.focus_next(cx);
+            window.render_frame(cx);
+            for _ in 0..3 {
+                if window.find(TRIGGER).focused() == Some(true) {
+                    break;
+                }
+                window.press("tab", cx);
+            }
+            for key in ["enter", "space"] {
+                assert_eq!(window.find(TRIGGER).focused(), Some(true));
+                window.press(key, cx);
+                assert!(window.try_find("notification-center-clear").is_some());
+                assert_eq!(window.find(TRIGGER).focused(), Some(false));
+                window.press("escape", cx);
+                assert!(window.try_find("notification-center-clear").is_none());
+                assert_eq!(window.find(TRIGGER).focused(), Some(true));
+            }
+        });
+    }
 
     fn note(id: Option<&str>, priority: AppNotificationPriority) -> AppNotification {
         let note = AppNotification::new(AppNotificationTone::Info, priority, "title", "message");

@@ -2718,7 +2718,7 @@ impl SftpController {
                 table: self.remote_table(),
                 has_floating_menu: true,
             })
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
                 }
@@ -3173,7 +3173,7 @@ impl SftpController {
                 table: self.local_table(),
                 has_floating_menu: false,
             })
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
                 }
@@ -3325,7 +3325,7 @@ impl SftpController {
                 table: self.remote_table(),
                 has_floating_menu: false,
             })
-            .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(move |event: &ScrollEvent, window, cx| {
                 if !event.modifiers.shift {
                     return;
                 }

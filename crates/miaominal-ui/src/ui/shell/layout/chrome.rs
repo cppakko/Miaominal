@@ -213,7 +213,7 @@ fn new_host_action(
     )
 }
 
-fn scroll_topbar_tabs(scroll_handle: &ScrollHandle, event: &ScrollWheelEvent) -> bool {
+fn scroll_topbar_tabs(scroll_handle: &ScrollHandle, event: &ScrollEvent) -> bool {
     let scroll_delta = match event.delta {
         ScrollDelta::Pixels(point) => f32::from(point.x + point.y),
         ScrollDelta::Lines(point) => (point.x + point.y) * 40.0,
@@ -344,7 +344,7 @@ fn topbar_add_button<V: TopbarHost>(
                 .h(space(32.0))
                 .rounded(px(99.0))
                 .accessibility_label(i18n::string("chrome.new_tab"))
-                .on_scroll_wheel(move |event: &ScrollWheelEvent, _, cx| {
+                .on_scroll(move |event: &ScrollEvent, _, cx| {
                     if scroll_topbar_tabs(&scroll_handle, event) {
                         scroll_entity.update(cx, |_, cx| cx.notify());
                         cx.stop_propagation();
@@ -1052,7 +1052,7 @@ impl ChromeAppViewExt for AppView {
                     .occlude()
                     // Tabs occlude the native caption hitbox. Forward wheel input
                     // here too, since that occlusion also hides the scroll strip.
-                    .on_scroll_wheel(move |event, _, cx| {
+                    .on_scroll(move |event, _, cx| {
                         if scroll_topbar_tabs(&wheel_scroll, event) {
                             wheel_entity.update(cx, |_, cx| cx.notify());
                             cx.stop_propagation();
@@ -1256,7 +1256,7 @@ impl ChromeAppViewExt for AppView {
         let chrome_entity = entity.clone();
         topbar_drag_surface()
             .test_support()
-            .on_scroll_wheel(move |event, _, cx| {
+            .on_scroll(move |event, _, cx| {
                 if scroll_topbar_tabs(&chrome_scroll, event) {
                     chrome_entity.update(cx, |_, cx| cx.notify());
                     cx.stop_propagation();
@@ -1287,7 +1287,7 @@ impl ChromeAppViewExt for AppView {
                     .overflow_x_scroll()
                     .track_scroll(&scroll)
                     .children(tab_elements)
-                    .on_scroll_wheel(move |event, _, cx| {
+                    .on_scroll(move |event, _, cx| {
                         if scroll_topbar_tabs(&scroll_wheel, event) {
                             scroll_entity.update(cx, |_, cx| cx.notify());
                             cx.stop_propagation();

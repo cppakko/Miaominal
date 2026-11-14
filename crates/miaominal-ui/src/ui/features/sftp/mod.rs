@@ -33,8 +33,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, ElementId, Entity, ExternalPaths, Focusable,
     FontWeight, InteractiveElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, ScrollWheelEvent, SharedString, Stateful, Styled, WeakEntity, Window,
-    div, px, rgb,
+    Pixels, Point, Render, ScrollEvent, SharedString, Stateful, Styled, WeakEntity, Window, div,
+    px, rgb,
 };
 use miaominal_core::profile::SessionProfile;
 use miaominal_sftp::{SftpEntry, TransferDirection, TransferId};

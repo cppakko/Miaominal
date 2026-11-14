@@ -43,6 +43,7 @@ pub fn sync_component_theme(cx: &mut App) {
     colors.background = hsla(material.roles.background);
     colors.foreground = hsla(material.roles.on_background);
     colors.border = hsla(material.roles.outline_variant);
+    colors.window_border = hsla(material.roles.outline_variant);
     colors.input = hsla(material.roles.outline);
     colors.caret = hsla(material.roles.on_surface);
     colors.ring = hsla(material.roles.primary);
@@ -219,27 +220,6 @@ fn md3_highlight_theme(material: &material_theme::MaterialTheme) -> HighlightThe
     syntax.insert("variant".into(), syntax_color(&tertiary));
 
     let mut style_json = Map::new();
-    style_json.insert(
-        "editor.background".into(),
-        Value::String(hex(material.roles.surface_container_highest)),
-    );
-    style_json.insert("editor.foreground".into(), Value::String(foreground));
-    style_json.insert(
-        "editor.active_line.background".into(),
-        Value::String(hex(material.roles.surface_container_high)),
-    );
-    style_json.insert(
-        "editor.line_number".into(),
-        Value::String(hex(material.roles.on_surface_variant)),
-    );
-    style_json.insert(
-        "editor.active_line_number".into(),
-        Value::String(hex(material.roles.on_surface)),
-    );
-    style_json.insert(
-        "editor.invisible".into(),
-        Value::String(hex(material.roles.outline_variant)),
-    );
     style_json.insert("error".into(), Value::String(error));
     style_json.insert(
         "error.background".into(),
@@ -292,21 +272,30 @@ fn md3_highlight_theme(material: &material_theme::MaterialTheme) -> HighlightThe
     } else {
         HighlightTheme::default_light()
     };
-    let style = serde_json::from_value::<HighlightThemeStyle>(Value::Object(style_json))
+    let mut style = serde_json::from_value::<HighlightThemeStyle>(Value::Object(style_json))
         .unwrap_or_else(|_| fallback_theme.style.clone());
+    // The syntect and tree-sitter theme types use different serde names for
+    // these fields in 0.9.1. Assign them through their shared Rust API.
+    style.editor_background = Some(rgb(material.roles.surface_container_highest).into());
+    style.editor_foreground = Some(rgb(material.roles.on_surface).into());
+    style.editor_active_line = Some(rgb(material.roles.surface_container_high).into());
+    style.editor_line_number = Some(rgb(material.roles.on_surface_variant).into());
+    style.editor_active_line_number = Some(rgb(material.roles.on_surface).into());
+    style.editor_invisible = Some(rgb(material.roles.outline_variant).into());
+    style.syntax.comment_doc = style.syntax.comment;
 
-    HighlightTheme {
-        name: format!(
-            "miaominal_md3_{}",
-            if material.dark { "dark" } else { "light" }
-        ),
-        appearance: if material.dark {
-            ThemeMode::Dark
-        } else {
-            ThemeMode::Light
-        },
-        style,
-    }
+    let mut highlight_theme = fallback_theme.as_ref().clone();
+    highlight_theme.name = format!(
+        "miaominal_md3_{}",
+        if material.dark { "dark" } else { "light" }
+    );
+    highlight_theme.appearance = if material.dark {
+        ThemeMode::Dark
+    } else {
+        ThemeMode::Light
+    };
+    highlight_theme.style = style;
+    highlight_theme
 }
 
 fn syntax_color(color: &str) -> Value {
@@ -477,6 +466,64 @@ mod tests {
         // Code blocks render inside the interface, so their size tracks the
         // interface font size setting and ignores the terminal one.
         assert_eq!(mono_font_size.as_f32(), 16.0);
+    }
+
+    #[test]
+    fn highlight_theme_preserves_material_colors_in_both_modes() {
+        for dark in [false, true] {
+            let material = material_theme::build_theme(material_theme::default_seed_argb(), dark);
+            let theme = md3_highlight_theme(&material);
+
+            assert_eq!(
+                theme.name,
+                if dark {
+                    "miaominal_md3_dark"
+                } else {
+                    "miaominal_md3_light"
+                }
+            );
+            assert_eq!(
+                theme.appearance,
+                if dark {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                }
+            );
+            assert_eq!(
+                theme.style.editor_background,
+                Some(rgb(material.roles.surface_container_highest).into())
+            );
+            assert_eq!(
+                theme.style.editor_foreground,
+                Some(rgb(material.roles.on_surface).into())
+            );
+            assert_eq!(
+                theme.style.editor_active_line,
+                Some(rgb(material.roles.surface_container_high).into())
+            );
+            assert_eq!(
+                theme.style.editor_invisible,
+                Some(rgb(material.roles.outline_variant).into())
+            );
+            let keyword = theme.style.syntax.style("keyword").unwrap();
+            assert_eq!(
+                keyword.color,
+                Some(
+                    rgb(material_theme::palette_tone_rgb(
+                        material.palettes.primary,
+                        if dark { 78 } else { 36 },
+                    ))
+                    .into()
+                )
+            );
+            assert_eq!(keyword.font_weight, Some(gpui_kit::FontWeight::SEMIBOLD));
+            let comment = theme.style.syntax.style("comment").unwrap();
+            let doc_comment = theme.style.syntax.style("comment.doc").unwrap();
+            assert_eq!(comment.color, doc_comment.color);
+            assert_eq!(comment.font_style, Some(gpui_kit::FontStyle::Italic));
+            assert_eq!(doc_comment.font_style, Some(gpui_kit::FontStyle::Italic));
+        }
     }
 
     #[test]

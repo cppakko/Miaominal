@@ -11,7 +11,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     App, Div, InteractiveElement as _, IntoElement, ParentElement, RenderOnce, Role, SharedString,
-    StatefulInteractiveElement as _, Styled, TestSupportExt as _, Window, div, rgb,
+    StatefulInteractiveElement as _, Styled, TestSupportExt as _, Window, div, px, rgb,
 };
 use std::rc::Rc;
 
@@ -54,6 +54,16 @@ impl RenderOnce for ViewModeSwitcher {
         } = self;
         let progress = view_mode_progress(id, selected_mode, window, cx);
         let colors = ShellColors::current();
+        // GPUI snaps authored lengths before layout. Match the buttons' separate
+        // inset, width and gap snapping so the animated indicator stays aligned
+        // when the interface font or display scale produces fractional metrics.
+        let device_scale = window.scale_factor();
+        let snap = |value| {
+            let pixels = f32::from(space(value).to_pixels(window.rem_size()));
+            (pixels * device_scale - 0.5).ceil() / device_scale
+        };
+        let indicator_left =
+            snap(4.0) + progress * (snap(ShellMetrics::VIEW_MODE_ITEM_WIDTH) + snap(4.0));
         h_flex()
             .id(id)
             .role(Role::Group)
@@ -71,9 +81,7 @@ impl RenderOnce for ViewModeSwitcher {
                     .test_support()
                     .absolute()
                     .top(space(4.0))
-                    .left(space(
-                        4.0 + progress * (ShellMetrics::VIEW_MODE_ITEM_WIDTH + 4.0),
-                    ))
+                    .left(px(indicator_left))
                     .w(space(ShellMetrics::VIEW_MODE_ITEM_WIDTH))
                     .h(space(ShellMetrics::VIEW_MODE_ITEM_HEIGHT))
                     .rounded_full()

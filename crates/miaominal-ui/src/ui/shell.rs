@@ -13,7 +13,7 @@ use gpui_kit::component::{
 use gpui_kit::{
     AnyElement, App, Bounds, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
-    ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled, Subscription, Window, div,
+    ScrollDelta, ScrollEvent, ScrollHandle, SharedString, Styled, Subscription, Window, div,
     prelude::*, px, rgb,
 };
 use miaominal_core::profile::{AuthMethod, SessionProfile};
