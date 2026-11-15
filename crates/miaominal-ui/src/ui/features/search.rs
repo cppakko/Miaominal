@@ -8,19 +8,20 @@ use crate::ui::components::{
 use crate::ui::contracts::search::SearchKind;
 use crate::ui::contracts::search::{SearchEntry, SearchTarget};
 use crate::ui::i18n;
+use gpui_kit::base::IndexPath;
 use gpui_kit::component::{
-    Disableable, FocusTrapElement as _, Icon, IconName, Selectable,
+    FocusTrapElement as _, Icon, IconName,
     button::{Button, ButtonVariants as _},
+    command::{Command, CommandEntry, CommandGroup, CommandItem, CommandState},
     input::{InputEvent, InputState},
     menu::{ContextMenuExt as _, PopupMenu},
-    scroll::ScrollableElement as _,
 };
 use gpui_kit::{
-    Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _, IntoElement,
-    MouseButton, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, TestSupportExt as _, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _,
+    IntoElement, MouseButton, Render, SharedString, Styled as _, Subscription, TestSupportExt as _,
+    WeakEntity, Window, div, prelude::*, px,
 };
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 pub(in crate::ui) enum SearchEvent {
     QueryChanged(String),
@@ -31,13 +32,12 @@ pub(in crate::ui) type SearchContextMenuBuilder =
     Rc<dyn Fn(&SearchTarget, PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 pub(in crate::ui) struct SearchView {
     input: Entity<InputState>,
+    command_state: Entity<CommandState>,
     entries: Vec<SearchEntry>,
     results: Vec<SearchEntry>,
     query: String,
     open: bool,
     suppress_next_focus: bool,
-    selected: usize,
-    scroll: ScrollHandle,
     context_menu_builder: Option<SearchContextMenuBuilder>,
     context_menu: Option<WeakEntity<PopupMenu>>,
     _subscriptions: Vec<Subscription>,
@@ -72,6 +72,7 @@ fn matching_entries(entries: &[SearchEntry], query: &str, recent_limit: usize) -
 impl SearchView {
     pub(in crate::ui) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = new_input_state(i18n::string("search.placeholder"), "", false, window, cx);
+        let command_state = cx.new(|cx| CommandState::new(window, cx));
         let subscription = cx.subscribe_in(&input, window, |this, input, event, _, cx| {
             match event {
                 InputEvent::Change => {
@@ -79,8 +80,6 @@ impl SearchView {
                     if value != this.query {
                         this.query = value.clone();
                         this.refresh();
-                        this.selected = 0;
-                        this.scroll.scroll_to_item(0);
                         this.open = true;
                         cx.emit(SearchEvent::QueryChanged(value));
                     }
@@ -98,13 +97,12 @@ impl SearchView {
         });
         Self {
             input,
+            command_state,
             entries: Vec::new(),
             results: Vec::new(),
             query: String::new(),
             open: false,
             suppress_next_focus: false,
-            selected: 0,
-            scroll: ScrollHandle::new(),
             context_menu_builder: None,
             context_menu: None,
             _subscriptions: vec![subscription],
@@ -114,6 +112,7 @@ impl SearchView {
         self.context_menu_builder = Some(builder);
     }
     /// Whether a result's context menu currently owns keyboard focus.
+    #[cfg(test)]
     fn context_menu_focused(&self, window: &Window, cx: &gpui_kit::App) -> bool {
         self.context_menu
             .as_ref()
@@ -137,18 +136,11 @@ impl SearchView {
         cx.notify();
     }
     fn refresh(&mut self) {
-        let selected_id = self
-            .results
-            .get(self.selected)
-            .map(|entry| entry.id().to_owned());
         self.results = matching_entries(
             &self.entries,
             &self.query,
             miaominal_settings::current_settings().recent_connections_count as usize,
         );
-        self.selected = selected_id
-            .and_then(|id| self.results.iter().position(|entry| entry.id() == id))
-            .unwrap_or(0);
     }
     pub(in crate::ui) fn set_entries(&mut self, entries: Vec<SearchEntry>) {
         self.entries = entries;
@@ -164,8 +156,6 @@ impl SearchView {
         self.query = query.clone();
         set_input_value(&self.input, query, window, cx);
         self.refresh();
-        self.selected = 0;
-        self.scroll.scroll_to_item(0);
         cx.notify();
     }
     pub(in crate::ui) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -192,83 +182,331 @@ impl SearchView {
         self.open = false;
         cx.notify();
     }
-    pub(in crate::ui) fn handle_key(
-        &mut self,
-        key: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if !self.open {
-            return false;
-        }
-        // An open result menu handles its own navigation, confirm and cancel.
-        if self.context_menu_focused(window, cx) {
-            return false;
-        }
-        match key {
-            "escape" => self.dismiss(true, window, cx),
-            "down" | "up" => {
-                if !self.results.is_empty() {
-                    self.selected = if key == "down" {
-                        (self.selected + 1) % self.results.len()
-                    } else {
-                        (self.selected + self.results.len() - 1) % self.results.len()
-                    };
-                    self.scroll.scroll_to_item(self.selected);
-                }
-                cx.notify();
-            }
-            "enter" => {
-                // Buttons retain their native Enter behavior when reached with Tab.
-                if !self.input.focus_handle(cx).is_focused(window) {
-                    return false;
-                }
-                if let Some(entry) = self.results.get(self.selected) {
-                    let target = entry.target().clone();
-                    self.open = false;
-                    cx.emit(SearchEvent::Activate(target));
+}
+fn render_search_input_region(
+    input: Entity<InputState>,
+    query: String,
+    open: bool,
+    colors: ShellColors,
+    owner: WeakEntity<SearchView>,
+) -> AnyElement {
+    let input_view = HintedInput::new(&input)
+        .appearance(false)
+        .text_metrics(
+            miaominal_settings::scaled_font_size(ShellTypography::TITLE_SIZE),
+            miaominal_settings::scaled_line_height(ShellTypography::TITLE_LINE_HEIGHT),
+        )
+        .hint_left(miaominal_settings::scaled_font_size(16.0))
+        .hint_color(colors.muted)
+        .h(space(ShellMetrics::SEARCH_HEIGHT))
+        .w_full()
+        .p_0()
+        .px(space(16.0))
+        .when(!query.is_empty(), |input| {
+            let owner = owner.clone();
+            input.suffix(
+                Button::new("search-clear")
+                    .ghost()
+                    .child(Icon::new(IconName::Close).size(space(20.0)))
+                    .accessibility_label(i18n::string("search.clear"))
+                    .size(space(32.0))
+                    .on_click(move |_, window, cx| {
+                        owner
+                            .update(cx, |search, cx| {
+                                set_input_value(&search.input, "", window, cx);
+                                search.input.update(cx, |input, cx| input.focus(window, cx));
+                            })
+                            .ok();
+                    }),
+            )
+        });
+
+    let owner_for_open = owner.clone();
+    div()
+        .id("search-input-region")
+        .test_support()
+        .capture_any_mouse_down(move |_, _, cx| {
+            owner_for_open
+                .update(cx, |search, cx| {
+                    search.open = true;
                     cx.notify();
-                }
+                })
+                .ok();
+        })
+        .h(space(ShellMetrics::SEARCH_HEIGHT))
+        .relative()
+        .rounded_full()
+        .bg(if open { colors.hover } else { colors.card })
+        .px(space(20.0))
+        .flex()
+        .items_center()
+        .gap(space(12.0))
+        .child(
+            Icon::new(IconName::Search)
+                .size(space(24.0))
+                .text_color(colors.muted),
+        )
+        .child(div().flex_1().min_w_0().child(input_view))
+        .when(open, |region| {
+            region.child(
+                div()
+                    .absolute()
+                    .inset(space(-4.0))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(colors.primary),
+            )
+        })
+        .into_any_element()
+}
+
+impl SearchView {
+    fn command_item(
+        &self,
+        entry: &SearchEntry,
+        path: IndexPath,
+        colors: ShellColors,
+        command_state: Entity<CommandState>,
+        selection: Rc<Cell<Option<IndexPath>>>,
+        owner: WeakEntity<SearchView>,
+    ) -> CommandItem {
+        let id = entry.id().to_owned();
+        let title = entry.title().to_owned();
+        let category = entry.category().to_owned();
+        let kind = entry.kind();
+        let target = entry.target().clone();
+        let menu_target = target.clone();
+        let menu_builder = self.context_menu_builder.clone();
+        let menu_owner = owner.clone();
+        CommandItem::new()
+            .label(title.clone())
+            .keywords([category.clone()])
+            .child(move |_, _cx| {
+                let title = title.clone();
+                let category = category.clone();
+                let menu_target = menu_target.clone();
+                let selected = selection.get() == Some(path);
+                let foreground = if selected {
+                    colors.on_selected
+                } else {
+                    colors.foreground
+                };
+                let muted = if selected {
+                    colors.on_selected.opacity(0.82)
+                } else {
+                    colors.muted
+                };
+                let command_state_for_right_click = command_state.clone();
+                let menu_builder = menu_builder.clone();
+                let menu_owner = menu_owner.clone();
+                div()
+                    .id(SharedString::from(format!("search-result:{id}")))
+                    .test_support()
+                    .w_full()
+                    .min_h(space(56.0))
+                    .px(space(12.0))
+                    .py(space(8.0))
+                    .capture_any_mouse_down(move |event: &gpui_kit::MouseDownEvent, window, cx| {
+                        if event.button == MouseButton::Right {
+                            let command_state = command_state_for_right_click.clone();
+                            window.defer(cx, move |window, cx| {
+                                command_state.update(cx, |state, cx| {
+                                    state.set_selected_index(Some(path), window, cx);
+                                });
+                            });
+                            window.prevent_default();
+                        }
+                    })
+                    .context_menu(move |menu, window, cx| {
+                        let Some(builder) = menu_builder.as_ref() else {
+                            return menu;
+                        };
+                        let menu_handle = cx.weak_entity();
+                        menu_owner
+                            .update(cx, |search, _| search.context_menu = Some(menu_handle))
+                            .ok();
+                        builder(&menu_target, menu, window, cx)
+                    })
+                    .child(
+                        gpui_kit::component::h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap(space(8.0))
+                            .text_color(foreground)
+                            .child(
+                                div()
+                                    .size(space(32.0))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(match kind {
+                                            SearchKind::Host => AppIcon::Computer,
+                                            SearchKind::Key => AppIcon::Key,
+                                            SearchKind::Forward => AppIcon::Forward,
+                                            SearchKind::Snippet => AppIcon::Notebook,
+                                            SearchKind::Trust => AppIcon::FingerPrint,
+                                            SearchKind::Setting => AppIcon::Settings,
+                                        })
+                                        .size(space(20.0))
+                                        .text_color(colors.primary),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .items_start()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .truncate()
+                                            .text_size(space(ShellTypography::TITLE_SIZE))
+                                            .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
+                                            .child(title),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .truncate()
+                                            .text_size(space(ShellTypography::SUPPORTING_SIZE))
+                                            .line_height(space(
+                                                ShellTypography::SEARCH_CATEGORY_LINE_HEIGHT,
+                                            ))
+                                            .text_color(muted)
+                                            .child(category),
+                                    ),
+                            )
+                            .child(Icon::new(AppIcon::Next).size(space(20.0)).text_color(muted)),
+                    )
+                    .into_any_element()
+            })
+    }
+
+    fn command_entries(
+        &self,
+        colors: ShellColors,
+        command_state: Entity<CommandState>,
+        selection: Rc<Cell<Option<IndexPath>>>,
+        owner: WeakEntity<SearchView>,
+    ) -> (Vec<CommandEntry>, Vec<(IndexPath, SearchTarget)>) {
+        let recent = self.query.trim().is_empty();
+        let mut targets = Vec::new();
+        let mut entries = Vec::new();
+        if recent {
+            let items = self.results.iter().enumerate().map(|(row, entry)| {
+                let path = IndexPath::new(row).section(0);
+                targets.push((path, entry.target().clone()));
+                self.command_item(
+                    entry,
+                    path,
+                    colors,
+                    command_state.clone(),
+                    selection.clone(),
+                    owner.clone(),
+                )
+            });
+            entries.push(
+                CommandGroup::new()
+                    .label(format!(
+                        "{} · {}",
+                        i18n::string("search.recent"),
+                        self.results.len()
+                    ))
+                    .items(items)
+                    .into(),
+            );
+        } else {
+            let kinds = self.results.iter().map(SearchEntry::kind).fold(
+                Vec::<SearchKind>::new(),
+                |mut kinds, kind| {
+                    if !kinds.contains(&kind) {
+                        kinds.push(kind);
+                    }
+                    kinds
+                },
+            );
+            for (section, kind) in kinds.into_iter().enumerate() {
+                let matching = self.results.iter().filter(|entry| entry.kind() == kind);
+                let count = matching.clone().count();
+                let items = matching.enumerate().map(|(row, entry)| {
+                    let path = IndexPath::new(row).section(section);
+                    targets.push((path, entry.target().clone()));
+                    self.command_item(
+                        entry,
+                        path,
+                        colors,
+                        command_state.clone(),
+                        selection.clone(),
+                        owner.clone(),
+                    )
+                });
+                entries.push(
+                    CommandGroup::new()
+                        .label(format!("{} · {}", i18n::string(kind.label_key()), count))
+                        .items(items)
+                        .into(),
+                );
             }
-            _ => return false,
         }
-        true
+        (entries, targets)
     }
 }
+
 impl Render for SearchView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = ShellColors::current();
         let focus = self.input.focus_handle(cx);
-        let input = HintedInput::new(&self.input)
-            .appearance(false)
-            .text_metrics(
-                miaominal_settings::scaled_font_size(ShellTypography::TITLE_SIZE),
-                miaominal_settings::scaled_line_height(ShellTypography::TITLE_LINE_HEIGHT),
-            )
-            .hint_left(miaominal_settings::scaled_font_size(16.0))
-            .hint_color(colors.muted)
-            .h(space(ShellMetrics::SEARCH_HEIGHT))
-            .w_full()
-            .p_0()
-            .px(space(16.0))
-            .when(!self.query.is_empty(), |input| {
-                input.suffix(
-                    Button::new("search-clear")
-                        .ghost()
-                        .child(Icon::new(IconName::Close).size(space(20.0)))
-                        .accessibility_label(i18n::string("search.clear"))
-                        .size(space(32.0))
-                        .disabled(self.query.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            set_input_value(&this.input, "", window, cx);
-                            this.input.update(cx, |input, cx| input.focus(window, cx));
-                        })),
-                )
-            });
+        let owner = cx.weak_entity();
+        let input = self.input.clone();
+        let query = self.query.clone();
+        let open = self.open;
+        let command_state = self.command_state.clone();
+        let selection = Rc::new(Cell::new(command_state.read(cx).selected_index()));
+        let (entries, targets) = self.command_entries(
+            colors,
+            command_state.clone(),
+            selection.clone(),
+            owner.clone(),
+        );
+        if !targets
+            .iter()
+            .any(|(path, _)| Some(*path) == selection.get())
+        {
+            selection.set(targets.first().map(|(path, _)| *path));
+        }
+        let max_height = (f32::from(window.bounds().size.height)
+            - f32::from(window.rem_size()) * 17.0)
+            .max(100.0);
+        let mut command = Command::new(&command_state)
+            .searchable(false)
+            .filterable(false)
+            .on_select({
+                let selection = selection.clone();
+                let owner = owner.clone();
+                move |index, _, cx| {
+                    selection.set(Some(index));
+                    owner.update(cx, |_, cx| cx.notify()).ok();
+                }
+            })
+            .bordered(false)
+            .bg(colors.card)
+            .rounded(space(28.0))
+            .shadow_lg()
+            .max_h(px(max_height));
+        for entry in entries {
+            command = match entry {
+                CommandEntry::Item(item) => command.item(item),
+                CommandEntry::Group(group) => command.group(group),
+                CommandEntry::Separator => command.separator(),
+            };
+        }
         let mut content = div()
             .id("management-search")
             .occlude()
-            // Pointer presses elsewhere release the field, as on any desktop surface.
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if this.input.focus_handle(cx).is_focused(window) {
                     this.release_focus(window, cx);
@@ -277,209 +515,53 @@ impl Render for SearchView {
             .w_full()
             .flex()
             .flex_col()
-            .gap(space(8.0))
-            .child(
-                div()
-                    .id("search-input-region")
-                    .test_support()
-                    .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
-                        this.open = true;
-                        cx.notify();
-                    }))
-                    .h(space(ShellMetrics::SEARCH_HEIGHT))
-                    .relative()
-                    .rounded_full()
-                    .bg(if self.open { colors.hover } else { colors.card })
-                    .px(space(20.0))
-                    .flex()
-                    .items_center()
-                    .gap(space(12.0))
-                    .child(
-                        Icon::new(IconName::Search)
-                            .size(space(24.0))
-                            .text_color(colors.muted),
-                    )
-                    .child(div().flex_1().min_w_0().child(input))
-                    .when(self.open, |region| {
-                        region.child(
-                            div()
-                                .absolute()
-                                .inset(space(-4.0))
-                                .rounded_full()
-                                .border_2()
-                                .border_color(colors.primary),
-                        )
-                    }),
-            );
-        if self.open {
-            let max_height = (f32::from(window.bounds().size.height)
-                - f32::from(window.rem_size()) * 17.0)
-                .max(100.0);
-            let recent = self.query.trim().is_empty();
-            let rows = self
-                .results
-                .iter()
-                .enumerate()
-                .map(|(index, entry)| {
-                    let heading =
-                        index == 0 || (!recent && self.results[index - 1].kind() != entry.kind());
-                    let target = entry.target().clone();
-                    let menu_target = target.clone();
-                    let menu_builder = self.context_menu_builder.clone();
-                    let menu_owner = cx.weak_entity();
-                    let selected = self.selected == index;
-                    div()
-                        .id(SharedString::from(format!("search-row:{}", entry.id())))
-                        .when(heading, |row| {
-                            row.child(
-                                gpui_kit::component::h_flex()
-                                    .px(space(12.0))
-                                    .py(space(4.0))
-                                    .gap(space(8.0))
-                                    .text_size(space(ShellTypography::BODY_SIZE))
-                                    .line_height(space(ShellTypography::SEARCH_GROUP_LINE_HEIGHT))
-                                    .font_weight(gpui_kit::FontWeight::NORMAL)
-                                    .text_color(colors.primary)
-                                    .child(i18n::string(if recent {
-                                        "search.recent"
-                                    } else {
-                                        entry.kind().label_key()
-                                    }))
-                                    .child(div().font_weight(gpui_kit::FontWeight::NORMAL).text_color(colors.muted).child(
-                                        self.results.iter().filter(|result| recent || result.kind() == entry.kind()).count().to_string(),
-                                    )),
-                            )
-                        })
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("search-result-item:{}", entry.id())))
-                                .w_full()
-                                // The keyboard selection follows the pointer, so the highlight
-                                // marks the result under the mouse or the one whose menu is open
-                                // rather than staying on the first result.
-                                .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                                    if this.selected != index && !this.context_menu_focused(window, cx) {
-                                        this.selected = index;
-                                        cx.notify();
-                                    }
-                                }))
-                                .capture_any_mouse_down(cx.listener(
-                                    move |this, event: &gpui_kit::MouseDownEvent, _, cx| {
-                                        if event.button == MouseButton::Right && this.selected != index {
-                                            this.selected = index;
-                                            cx.notify();
-                                        }
-                                    },
-                                ))
-                                .context_menu(move |menu, window, cx| {
-                                    let Some(builder) = menu_builder.as_ref() else {
-                                        return menu;
-                                    };
-                                    let menu_handle = cx.weak_entity();
-                                    menu_owner
-                                        .update(cx, |search, _| search.context_menu = Some(menu_handle))
-                                        .ok();
-                                    builder(&menu_target, menu, window, cx)
-                                })
-                                .child(
-                            Button::new(SharedString::from(format!(
-                                "search-result:{}",
-                                entry.id()
-                            )))
-                            .ghost()
-                            // Right-click opens the result menu; keep focus where it is so
-                            // the menu hands it back to the search field on dismiss. Capture
-                            // phase, so the press also never paints the pressed fill.
-                            .capture_any_mouse_down(|event, window, _| {
-                                if event.button == MouseButton::Right {
-                                    window.prevent_default()
-                                }
-                            })
-                            .accessibility_label(format!(
-                                "{} · {}",
-                                entry.title(),
-                                entry.category()
-                            ))
-                            .selected(selected)
-                            .w_full()
-                            .h_auto()
-                            .min_h(space(56.0))
-                            .px(space(12.0))
-                            .py(space(8.0))
-                            .rounded(miaominal_settings::scaled_font_size(16.0))
-                            .justify_start()
-                            .when(selected, |button| {
-                                button.bg(colors.card.blend(colors.foreground.opacity(0.12))).text_color(colors.foreground)
-                            })
-                            .child(
-                                gpui_kit::component::h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .gap(space(8.0))
-                                    .child(
-                                        div().size(space(32.0)).flex_shrink_0().flex().items_center().justify_center()
-                                        .text_color(colors.primary).child(Icon::new(match entry.kind() {
-                                            SearchKind::Host => AppIcon::Computer,
-                                            SearchKind::Key => AppIcon::Key,
-                                            SearchKind::Forward => AppIcon::Forward,
-                                            SearchKind::Snippet => AppIcon::Notebook,
-                                            SearchKind::Trust => AppIcon::FingerPrint,
-                                            SearchKind::Setting => AppIcon::Settings,
-                                        })
-                                        .size(space(20.0))),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .items_start()
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .truncate()
-                                                    .text_size(space(ShellTypography::TITLE_SIZE))
-                                                    .line_height(space(ShellTypography::TITLE_LINE_HEIGHT))
-                                                    .font_weight(gpui_kit::FontWeight::NORMAL)
-                                                    .child(entry.title().to_owned()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .truncate()
-                                                    .text_size(space(ShellTypography::SUPPORTING_SIZE))
-                                                    .line_height(space(ShellTypography::SEARCH_CATEGORY_LINE_HEIGHT))
-                                                    .text_color(colors.muted)
-                                                    .child(entry.category().to_owned()),
-                                            ),
-                                    )
-                                    .child(Icon::new(AppIcon::Next).size(space(20.0)).text_color(colors.muted)),
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.open = false;
-                                    cx.emit(SearchEvent::Activate(target.clone()));
-                                    cx.notify();
-                                },
-                            )),
-                                ),
-                        )
-                })
-                .collect::<Vec<_>>();
+            .gap(space(8.0));
+
+        if open {
+            let header_input = input.clone();
+            let header_query = query.clone();
+            let header_owner = owner.clone();
+            let target_owner = owner.clone();
+            let target_map = targets.clone();
+            let empty_owner = owner.clone();
+            let footer_count = self.results.len().to_string();
             content = content.child(
-                div()
-                    .id("search-results")
-                    .relative()
-                    .max_h(px(max_height))
-                    .track_scroll(&self.scroll)
-                    .overflow_y_scroll()
-                    .vertical_scrollbar(&self.scroll)
-                    .p(space(4.0))
-                    .rounded(space(28.0))
-                    .bg(colors.card)
-                    .shadow_lg()
-                    .child(
+                command
+                    .header(move |_, _, _| {
+                        render_search_input_region(
+                            header_input.clone(),
+                            header_query.clone(),
+                            true,
+                            colors,
+                            header_owner.clone(),
+                        )
+                    })
+                    .on_confirm(move |index, _, cx| {
+                        let Some((_, target)) = target_map.iter().find(|(path, _)| *path == index)
+                        else {
+                            return;
+                        };
+                        let target = target.clone();
+                        target_owner
+                            .update(cx, |search, cx| {
+                                search.open = false;
+                                cx.emit(SearchEvent::Activate(target));
+                                cx.notify();
+                            })
+                            .ok();
+                    })
+                    .on_cancel(move |window, cx| {
+                        empty_owner
+                            .update(cx, |search, cx| search.dismiss(true, window, cx))
+                            .ok();
+                    })
+                    .empty(move |_, _, _| {
+                        div()
+                            .p(space(24.0))
+                            .text_color(colors.muted)
+                            .child(i18n::string("search.empty"))
+                    })
+                    .footer(move |_, window, _| {
                         gpui_kit::component::h_flex()
                             .min_h(space(32.0))
                             .px(space(12.0))
@@ -491,30 +573,25 @@ impl Render for SearchView {
                             .text_color(colors.muted)
                             .child(i18n::string_args(
                                 "search.result_count",
-                                &[("count", &self.results.len().to_string())],
+                                &[("count", &footer_count)],
                             ))
                             .when(
                                 f32::from(window.viewport_size().width)
                                     > f32::from(window.rem_size()) / 14.0 * 700.0,
                                 |row| row.child(i18n::string("search.shortcuts")),
-                            ),
-                    )
-                    .when(rows.is_empty(), |list| {
-                        list.child(
-                            div()
-                                .p(space(24.0))
-                                .text_color(colors.muted)
-                                .child(i18n::string("search.empty")),
-                        )
+                            )
                     })
-                    .children(rows),
+                    .w_full(),
             );
-            content
-                .focus_trap("management-search-focus", &focus)
-                .into_any_element()
         } else {
-            content.into_any_element()
+            content = content.child(render_search_input_region(
+                input, query, false, colors, owner,
+            ));
         }
+
+        content
+            .focus_trap("management-search-focus", &focus)
+            .into_any_element()
     }
 }
 #[cfg(test)]
@@ -761,7 +838,10 @@ mod interaction_tests {
         cx.run_until_parked();
         let center = cx.update(|window, cx| {
             window.render_frame(cx);
-            assert_eq!(search.read(cx).selected, 0);
+            assert_eq!(
+                search.read(cx).command_state.read(cx).selected_index(),
+                Some(IndexPath::new(0).section(0))
+            );
             window.find("search-result:host:b").bounds().center()
         });
         cx.simulate_mouse_down(center, MouseButton::Right, Default::default());
@@ -771,8 +851,8 @@ mod interaction_tests {
             window.render_frame(cx);
             assert!(search.read(cx).is_open());
             assert_eq!(
-                search.read(cx).selected,
-                1,
+                search.read(cx).command_state.read(cx).selected_index(),
+                Some(IndexPath::new(1).section(0)),
                 "the highlight follows the right-clicked result"
             );
             assert!(search.read(cx).context_menu_focused(window, cx));
@@ -867,10 +947,8 @@ mod interaction_tests {
             assert!(search.read(cx).is_open());
             assert!(window.find("search-result:host:a").visible());
             assert!(window.find("search-result:key:b").visible());
-            search.update(cx, |search, cx| {
-                assert!(search.handle_key("down", window, cx));
-                assert!(search.handle_key("enter", window, cx));
-            });
+            window.press("down", cx);
+            window.press("enter", cx);
         });
         cx.run_until_parked();
         assert_eq!(
@@ -901,9 +979,7 @@ mod interaction_tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             assert!(search.read(cx).is_open());
-            search.update(cx, |search, cx| {
-                assert!(search.handle_key("escape", window, cx));
-            });
+            window.press("escape", cx);
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
@@ -938,7 +1014,7 @@ mod interaction_tests {
                 search.set_entries(vec![entry.clone()]);
                 assert_eq!(search.results[0].id(), "host:a");
                 search.set_entries(vec![entry]);
-                assert_eq!(search.results[search.selected].id(), "host:a");
+                assert_eq!(search.results[0].id(), "host:a");
                 search.set_entries(vec![]);
                 assert!(search.results.is_empty());
             });

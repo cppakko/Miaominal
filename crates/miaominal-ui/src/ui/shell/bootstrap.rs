@@ -48,19 +48,6 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
                 return;
             }
         }
-        if !modifiers.control && !modifiers.alt && !modifiers.platform && !modifiers.shift {
-            let consumed = weak.upgrade().is_some_and(|view| {
-                view.update(cx, |this, cx| {
-                    this.shell
-                        .search
-                        .update(cx, |search, cx| search.handle_key(key, window, cx))
-                })
-            });
-            if consumed {
-                cx.stop_propagation();
-                return;
-            }
-        }
         if key == "escape"
             && !modifiers.control
             && !modifiers.alt

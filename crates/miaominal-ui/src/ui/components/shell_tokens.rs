@@ -16,7 +16,6 @@ impl ShellTypography {
     pub const BODY_LINE_HEIGHT: f32 = 21.0;
     pub const SUPPORTING_SIZE: f32 = 12.0;
     pub const SUPPORTING_LINE_HEIGHT: f32 = 18.0;
-    pub const SEARCH_GROUP_LINE_HEIGHT: f32 = 20.0;
     pub const SEARCH_CATEGORY_LINE_HEIGHT: f32 = 16.0;
 }
 
