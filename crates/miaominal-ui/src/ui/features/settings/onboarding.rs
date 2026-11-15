@@ -4,7 +4,6 @@ use crate::ui::components::{
     md3_select, md3_switch,
 };
 use crate::ui::i18n;
-use gpui_kit::UniformListScrollHandle;
 use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use miaominal_settings::{AppLanguage, TerminalRightClickBehavior, ThemeId};
 
@@ -45,13 +44,8 @@ pub(in crate::ui) fn render_onboarding_page(
         )
     };
     let (
-        font_family_query_input,
-        font_family_scroll_handle,
-        terminal_font_family_query_input,
-        terminal_font_family_scroll_handle,
-        font_family_options,
-        current_font_family,
-        current_terminal_font_family,
+        font_family_picker,
+        terminal_font_family_picker,
         font_fallbacks_input,
         seed_color_picker,
         terminal_right_click_behavior_select,
@@ -67,19 +61,11 @@ pub(in crate::ui) fn render_onboarding_page(
         let settings_controller = settings_entity.read(cx);
         let settings = settings_controller.settings();
         (
-            settings_controller.forms.font_family_query_input.clone(),
-            settings_controller.forms.font_family_scroll_handle.clone(),
+            settings_controller.forms.font_family_picker.clone(),
             settings_controller
                 .forms
-                .terminal_font_family_query_input
+                .terminal_font_family_picker
                 .clone(),
-            settings_controller
-                .forms
-                .terminal_font_family_scroll_handle
-                .clone(),
-            settings_controller.forms.font_family_options.clone(),
-            settings.font_family.clone(),
-            settings.terminal_font_family.clone(),
             settings_controller.forms.font_fallbacks_input.clone(),
             settings_controller.forms.seed_color_picker.clone(),
             settings_controller
@@ -110,13 +96,8 @@ pub(in crate::ui) fn render_onboarding_page(
             current_theme,
             current_seed_color,
             current_material,
-            font_family_query_input,
-            font_family_scroll_handle,
-            terminal_font_family_query_input,
-            terminal_font_family_scroll_handle,
-            font_family_options,
-            current_font_family,
-            current_terminal_font_family,
+            font_family_picker,
+            terminal_font_family_picker,
             font_fallbacks_input,
             seed_color_picker,
             terminal_right_click_behavior_select,
@@ -695,13 +676,8 @@ fn render_onboarding_preferences_step(
     current_theme: ThemeId,
     current_seed_color: String,
     current_material: crate::ui::theme::MaterialTheme,
-    font_family_query_input: Entity<InputState>,
-    font_family_scroll_handle: UniformListScrollHandle,
-    terminal_font_family_query_input: Entity<InputState>,
-    terminal_font_family_scroll_handle: UniformListScrollHandle,
-    font_family_options: Vec<String>,
-    current_font_family: String,
-    current_terminal_font_family: String,
+    font_family_picker: Entity<FontFamilyPickerState>,
+    terminal_font_family_picker: Entity<FontFamilyPickerState>,
     font_fallbacks_input: Entity<InputState>,
     seed_color_picker: Entity<ColorPickerState>,
     terminal_right_click_behavior_select: Entity<
@@ -743,10 +719,7 @@ fn render_onboarding_preferences_step(
                                     .child(onboarding_field(
                                         i18n::string("settings.appearance.font_family.label"),
                                         onboarding_font_family_control(
-                                            font_family_query_input,
-                                            font_family_scroll_handle,
-                                            current_font_family,
-                                            font_family_options.clone(),
+                                            font_family_picker,
                                             settings.clone(),
                                             cx,
                                         ),
@@ -756,10 +729,7 @@ fn render_onboarding_preferences_step(
                                             "settings.appearance.terminal_font_family.label",
                                         ),
                                         onboarding_terminal_font_family_control(
-                                            terminal_font_family_query_input,
-                                            terminal_font_family_scroll_handle,
-                                            current_terminal_font_family,
-                                            font_family_options,
+                                            terminal_font_family_picker,
                                             settings.clone(),
                                             cx,
                                         ),
@@ -1274,29 +1244,15 @@ fn step_title_key(step: OnboardingStep) -> &'static str {
 }
 
 fn onboarding_font_family_control(
-    query_input: Entity<InputState>,
-    scroll_handle: UniformListScrollHandle,
-    selected: String,
-    options: Vec<String>,
+    picker: Entity<FontFamilyPickerState>,
     entity: Entity<SettingsController>,
     cx: &App,
 ) -> AnyElement {
-    let entity_for_select = entity.clone();
     setting_field_with_reset_action(
         font_family_picker(
-            FontFamilyPickerState::new(
-                "onboarding-interface-font-family",
-                query_input,
-                scroll_handle,
-            ),
-            selected,
-            options,
+            "onboarding-interface-font-family",
+            &picker,
             gpui_kit::component::Size::Medium,
-            move |font, _, cx| {
-                entity_for_select.update(cx, |this, cx| {
-                    this.update_font_family(font, cx);
-                });
-            },
             cx,
         ),
         false,
@@ -1310,29 +1266,15 @@ fn onboarding_font_family_control(
 }
 
 fn onboarding_terminal_font_family_control(
-    query_input: Entity<InputState>,
-    scroll_handle: UniformListScrollHandle,
-    selected: String,
-    options: Vec<String>,
+    picker: Entity<FontFamilyPickerState>,
     entity: Entity<SettingsController>,
     cx: &App,
 ) -> AnyElement {
-    let entity_for_select = entity.clone();
     setting_field_with_reset_action(
         font_family_picker(
-            FontFamilyPickerState::new(
-                "onboarding-terminal-font-family",
-                query_input,
-                scroll_handle,
-            ),
-            selected,
-            options,
+            "onboarding-terminal-font-family",
+            &picker,
             gpui_kit::component::Size::Medium,
-            move |font, _, cx| {
-                entity_for_select.update(cx, |this, cx| {
-                    this.update_terminal_font_family(font, cx);
-                });
-            },
             cx,
         ),
         false,

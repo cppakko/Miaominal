@@ -2,17 +2,28 @@ use super::super::*;
 use super::session_agent_tool_parse::*;
 use super::session_agent_tool_ui::*;
 use crate::ui::i18n;
+use gpui_kit::TestSupportExt as _;
+use gpui_kit::component::{
+    ElementExt as _,
+    diff::{Diff, DiffMode, DiffState},
+};
+
+#[cfg(test)]
+#[path = "session_agent_patch_tests.rs"]
+mod patch_tests;
 
 pub(in crate::ui::features::agent) fn render_structured_tool_body(
     tool_call: &crate::ui::features::agent::SessionAgentToolCall,
     colors: ToolTerminalColors,
+    patch_diff: Option<(Entity<DiffState>, f32)>,
 ) -> gpui_kit::AnyElement {
     if arguments_are_streaming(tool_call) && tool_call.name != "apply_patch" {
         return render_preparing_tool_body(tool_call, colors);
     }
 
     match tool_call.name.as_str() {
-        "apply_patch" => render_apply_patch_tool_body(tool_call, colors),
+        "apply_patch" => render_apply_patch_tool_body(tool_call, colors, patch_diff),
+        "edit_file" | "write_file" => render_file_change_tool_body(tool_call, colors, patch_diff),
         "read" => render_read_tool_body(tool_call, colors),
         "list" => render_list_tool_body(tool_call, colors),
         "glob" => render_glob_tool_body(tool_call, colors),
@@ -92,6 +103,7 @@ pub(in crate::ui::features::agent) fn render_run_shell_tool_body(
 pub(in crate::ui::features::agent) fn render_apply_patch_tool_body(
     tool_call: &crate::ui::features::agent::SessionAgentToolCall,
     colors: ToolTerminalColors,
+    patch_diff: Option<(Entity<DiffState>, f32)>,
 ) -> gpui_kit::AnyElement {
     let args = tool_arguments_value(&tool_call.arguments);
     let output = tool_output_value(tool_call);
@@ -130,14 +142,18 @@ pub(in crate::ui::features::agent) fn render_apply_patch_tool_body(
             ],
             colors,
         ))
-        .child(render_tool_terminal_block(
-            &tool_call.id,
-            tool_field_label("diff"),
-            Some("diff"),
-            patch,
-            colors,
-            false,
-        ))
+        .child(if let Some((state, height)) = patch_diff {
+            render_patch_review(&tool_call.id, state, height)
+        } else {
+            render_tool_terminal_block(
+                &tool_call.id,
+                tool_field_label("diff"),
+                Some("diff"),
+                patch,
+                colors,
+                false,
+            )
+        })
         .when_some(
             summary.filter(|summary| !summary.trim().is_empty()),
             |this, summary| {
@@ -151,6 +167,57 @@ pub(in crate::ui::features::agent) fn render_apply_patch_tool_body(
                 ))
             },
         )
+        .into_any_element()
+}
+
+/// Diff owns both scroll axes; the tool card supplies the bounded viewport.
+fn render_patch_review(tool_id: &str, state: Entity<DiffState>, height_rem: f32) -> AnyElement {
+    let responsive_state = state.clone();
+    div()
+        .id(SharedString::from(format!(
+            "session-agent-patch-review-{tool_id}"
+        )))
+        .test_support()
+        .w_full()
+        .min_w_0()
+        .h(gpui_kit::rems(height_rem))
+        .on_prepaint(move |bounds, window, cx| {
+            let mode = if bounds.size.width >= window.rem_size() * 48.0 {
+                DiffMode::Split
+            } else {
+                DiffMode::Unified
+            };
+            if responsive_state.read(cx).mode() != mode {
+                let state = responsive_state.clone();
+                window.defer(cx, move |_, cx| {
+                    state.update(cx, |state, cx| state.set_mode(mode, cx));
+                });
+            }
+        })
+        .child(Diff::new(&state).soft_wrap(true).size_full())
+        .into_any_element()
+}
+
+fn render_file_change_tool_body(
+    tool_call: &crate::ui::features::agent::SessionAgentToolCall,
+    colors: ToolTerminalColors,
+    patch_diff: Option<(Entity<DiffState>, f32)>,
+) -> AnyElement {
+    let Some((state, height)) = patch_diff else {
+        return render_generic_tool_body(tool_call, colors);
+    };
+    let args = tool_arguments_value(&tool_call.arguments);
+    let path =
+        string_field(args.as_ref(), "path").unwrap_or_else(|| tool_placeholder("unknown_path"));
+    v_flex()
+        .w_full()
+        .gap_2()
+        .p_2()
+        .child(render_tool_field_grid(
+            vec![(tool_field_label("path"), path)],
+            colors,
+        ))
+        .child(render_patch_review(&tool_call.id, state, height))
         .into_any_element()
 }
 

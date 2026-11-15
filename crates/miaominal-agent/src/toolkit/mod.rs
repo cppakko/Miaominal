@@ -8,6 +8,9 @@ pub mod shape;
 pub mod specs;
 mod terminal;
 
+#[cfg(test)]
+mod ssh_exec_tests;
+
 pub use exec::ChannelToolRuntime;
 pub use runtime::{
     ProgressSender, ToolAssessment, ToolInvocation, ToolOutcome, ToolProgress, ToolRuntime,

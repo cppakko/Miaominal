@@ -3,6 +3,9 @@ use super::*;
 mod dialogs;
 #[path = "overlays.rs"]
 mod overlays;
+use crate::ui::components::{
+    FontFamilyPickerState, new_font_family_picker, sync_font_family_picker,
+};
 use crate::ui::contracts::overlay::OverlayRevisionState;
 use overlays::{SettingsOverlay, SettingsOverlayPresentation};
 
@@ -13,12 +16,13 @@ use anyhow::{Result, anyhow};
 use gpui_kit::component::{
     Colorize, IndexPath,
     color_picker::{ColorPickerEvent, ColorPickerState},
+    combobox::ComboboxEvent,
     input::{InputEvent, InputState},
     select::{SelectEvent, SelectState},
 };
 use gpui_kit::{
-    AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, ScrollStrategy, Subscription,
-    UniformListScrollHandle, Window, WindowHandle, rgb,
+    AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Subscription, Window,
+    WindowHandle, rgb,
 };
 use miaominal_core::profile::ImportSourceKind;
 use miaominal_core::proxy::{ProxyAuthMode, ProxyProfile, ProxyProtocol};
@@ -570,15 +574,11 @@ pub(in crate::ui) struct SettingsForms {
     pub(in crate::ui) web_search_kind_select:
         Entity<SelectState<Vec<SelectOption<WebSearchProviderKind>>>>,
     pub(in crate::ui) proxy_management_select: Entity<SelectState<Vec<SelectOption<String>>>>,
-    pub(in crate::ui) proxy_management_query_input: Entity<InputState>,
-    pub(in crate::ui) proxy_management_scroll_handle: UniformListScrollHandle,
     pub(in crate::ui) proxy_protocol_select: Entity<SelectState<Vec<SelectOption<ProxyProtocol>>>>,
     pub(in crate::ui) proxy_auth_mode_select: Entity<SelectState<Vec<SelectOption<ProxyAuthMode>>>>,
     pub(in crate::ui) font_family_options: Vec<String>,
-    pub(in crate::ui) font_family_query_input: Entity<InputState>,
-    pub(in crate::ui) font_family_scroll_handle: UniformListScrollHandle,
-    pub(in crate::ui) terminal_font_family_query_input: Entity<InputState>,
-    pub(in crate::ui) terminal_font_family_scroll_handle: UniformListScrollHandle,
+    pub(in crate::ui) font_family_picker: Entity<FontFamilyPickerState>,
+    pub(in crate::ui) terminal_font_family_picker: Entity<FontFamilyPickerState>,
     pub(in crate::ui) font_fallbacks_input: Entity<InputState>,
     pub(in crate::ui) seed_color_picker: Entity<ColorPickerState>,
     pub(in crate::ui) key_capture_focus: FocusHandle,
@@ -1018,15 +1018,8 @@ impl SettingsController {
                     window,
                     cx,
                 )
+                .searchable(true)
             }),
-            proxy_management_query_input: new_input_state(
-                i18n::string("settings.proxies.picker.search_placeholder"),
-                "",
-                false,
-                window,
-                cx,
-            ),
-            proxy_management_scroll_handle: UniformListScrollHandle::new(),
             proxy_protocol_select: cx.new(|cx| {
                 SelectState::new(
                     proxy_protocol_options,
@@ -1043,23 +1036,19 @@ impl SettingsController {
                     cx,
                 )
             }),
+            font_family_picker: new_font_family_picker(
+                &font_family_options,
+                &settings.font_family,
+                window,
+                cx,
+            ),
+            terminal_font_family_picker: new_font_family_picker(
+                &font_family_options,
+                &settings.terminal_font_family,
+                window,
+                cx,
+            ),
             font_family_options,
-            font_family_query_input: new_input_state(
-                i18n::string("settings.appearance.font_picker.search_placeholder"),
-                "",
-                false,
-                window,
-                cx,
-            ),
-            font_family_scroll_handle: UniformListScrollHandle::new(),
-            terminal_font_family_query_input: new_input_state(
-                i18n::string("settings.appearance.font_picker.search_placeholder"),
-                "",
-                false,
-                window,
-                cx,
-            ),
-            terminal_font_family_scroll_handle: UniformListScrollHandle::new(),
             font_fallbacks_input: new_input_state(
                 "",
                 settings.font_fallbacks.join(", "),
@@ -1298,14 +1287,6 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) {
         for (input, key) in [
-            (
-                &self.forms.font_family_query_input,
-                "settings.appearance.font_picker.search_placeholder",
-            ),
-            (
-                &self.forms.terminal_font_family_query_input,
-                "settings.appearance.font_picker.search_placeholder",
-            ),
             (
                 &self.forms.ai_provider_name_input,
                 "settings.ai_providers.placeholders.name",
@@ -1679,12 +1660,18 @@ impl SettingsController {
         let sync_provider_select = forms.sync_provider_select.clone();
         let ai_provider_select = forms.ai_provider_select.clone();
         let language_select = forms.language_select.clone();
-        let font_family_query_input = forms.font_family_query_input.clone();
-        let terminal_font_family_query_input = forms.terminal_font_family_query_input.clone();
+        let font_family_picker = forms.font_family_picker.clone();
+        let terminal_font_family_picker = forms.terminal_font_family_picker.clone();
         let font_fallbacks_input = forms.font_fallbacks_input.clone();
         let rdp_path_input = forms.rdp_path_input.clone();
         let seed_color_picker = forms.seed_color_picker.clone();
-        let proxy_management_query_input = forms.proxy_management_query_input.clone();
+        let proxy_management_select = forms.proxy_management_select.clone();
+        let proxy_management_subscription = cx.subscribe(
+            &proxy_management_select,
+            |_, _, _: &SelectEvent<Vec<SelectOption<String>>>, cx| {
+                cx.notify();
+            },
+        );
 
         let last_tab_close_behavior_subscription = cx.subscribe(
             &last_tab_close_behavior_select,
@@ -1833,30 +1820,22 @@ impl SettingsController {
                     this.set_language(language, cx);
                 }
             });
-        let font_family_query_subscription = cx.subscribe(
-            &font_family_query_input,
-            |this: &mut Self, _, event: &InputEvent, cx| match event {
-                InputEvent::Change => {
-                    this.forms
-                        .font_family_scroll_handle
-                        .scroll_to_item(0, ScrollStrategy::Top);
-                    cx.notify();
+        let font_family_subscription =
+            cx.subscribe(&font_family_picker, |this: &mut Self, _, event, cx| {
+                if let ComboboxEvent::Change(values) = event
+                    && let Some(font) = values.first()
+                {
+                    this.update_font_family(font.clone(), cx);
                 }
-                InputEvent::Focus | InputEvent::Blur => cx.notify(),
-                _ => {}
-            },
-        );
-        let terminal_font_family_query_subscription = cx.subscribe(
-            &terminal_font_family_query_input,
-            |this: &mut Self, _, event: &InputEvent, cx| match event {
-                InputEvent::Change => {
-                    this.forms
-                        .terminal_font_family_scroll_handle
-                        .scroll_to_item(0, ScrollStrategy::Top);
-                    cx.notify();
+            });
+        let terminal_font_family_subscription = cx.subscribe(
+            &terminal_font_family_picker,
+            |this: &mut Self, _, event, cx| {
+                if let ComboboxEvent::Change(values) = event
+                    && let Some(font) = values.first()
+                {
+                    this.update_terminal_font_family(font.clone(), cx);
                 }
-                InputEvent::Focus | InputEvent::Blur => cx.notify(),
-                _ => {}
             },
         );
         let font_fallbacks_subscription = cx.subscribe(
@@ -1885,19 +1864,6 @@ impl SettingsController {
                     return;
                 };
                 this.update_seed_color(color.to_hex(), cx);
-            },
-        );
-        let proxy_management_query_subscription = cx.subscribe(
-            &proxy_management_query_input,
-            |this: &mut Self, _, event: &InputEvent, cx| match event {
-                InputEvent::Change => {
-                    this.forms
-                        .proxy_management_scroll_handle
-                        .scroll_to_item(0, ScrollStrategy::Top);
-                    cx.notify();
-                }
-                InputEvent::Focus | InputEvent::Blur => cx.notify(),
-                _ => {}
             },
         );
         let ssh_bridge_status = args.ssh_bridge_service.status();
@@ -1982,11 +1948,11 @@ impl SettingsController {
                 sync_provider_select_subscription,
                 ai_provider_select_subscription,
                 language_select_subscription,
-                font_family_query_subscription,
-                terminal_font_family_query_subscription,
+                font_family_subscription,
+                terminal_font_family_subscription,
                 font_fallbacks_subscription,
                 seed_color_subscription,
-                proxy_management_query_subscription,
+                proxy_management_subscription,
             ],
         };
         controller.sync_ssh_bridge_security_level_select(window, cx);
@@ -2752,6 +2718,24 @@ impl SettingsController {
         self.replace_sync_engine(sync_engine);
         let settings = self.settings_store.settings().clone();
 
+        for (picker, selected) in [
+            (&self.forms.font_family_picker, &settings.font_family),
+            (
+                &self.forms.terminal_font_family_picker,
+                &settings.terminal_font_family,
+            ),
+        ] {
+            if picker.read(cx).selected_value().as_deref() != Some(selected.as_str()) {
+                sync_font_family_picker(
+                    picker,
+                    &self.forms.font_family_options,
+                    selected,
+                    window,
+                    cx,
+                );
+            }
+        }
+
         self.forms.language_select.update(cx, |select, cx| {
             select.set_selected_value(&settings.language, window, cx);
         });
@@ -2868,7 +2852,13 @@ impl SettingsController {
         let changed = self
             .settings_store
             .update(|settings| settings.font_family = default_font.clone());
-        set_input_value(&self.forms.font_family_query_input, "", window, cx);
+        sync_font_family_picker(
+            &self.forms.font_family_picker,
+            &self.forms.font_family_options,
+            &default_font,
+            window,
+            cx,
+        );
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -2915,7 +2905,13 @@ impl SettingsController {
         let changed = self.settings_store.update(|settings| {
             settings.terminal_font_family = default_font.clone();
         });
-        set_input_value(&self.forms.terminal_font_family_query_input, "", window, cx);
+        sync_font_family_picker(
+            &self.forms.terminal_font_family_picker,
+            &self.forms.font_family_options,
+            &default_font,
+            window,
+            cx,
+        );
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(

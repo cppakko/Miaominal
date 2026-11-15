@@ -2,8 +2,7 @@ use super::*;
 use crate::ui::assets::AppIcon;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
-    FontFamilyPickerState, SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select,
-    md3_spinner,
+    SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select, md3_spinner,
 };
 use crate::ui::i18n;
 use gpui_kit::component::{
@@ -1476,22 +1475,7 @@ impl SettingFieldElement for ProxyManagementField {
         let picker_options = controller.proxy_management_picker_options();
         let selected_proxy_id = controller.selected_proxy_management_id(cx);
         let has_proxies = !picker_options.is_empty();
-        let selected_label = selected_proxy_id
-            .as_ref()
-            .and_then(|selected_id| {
-                picker_options
-                    .iter()
-                    .find(|(proxy_id, _)| proxy_id == selected_id)
-                    .map(|(_, label)| label.clone())
-            })
-            .unwrap_or_default();
-        let picker_labels = picker_options
-            .iter()
-            .map(|(_, label)| label.clone())
-            .collect::<Vec<_>>();
-        let picker_options_for_select = picker_options;
         let add_controller = self.controller.clone();
-        let select_controller = self.controller.clone();
         let edit_controller = self.controller.clone();
         let delete_controller = self.controller.clone();
 
@@ -1503,29 +1487,22 @@ impl SettingFieldElement for ProxyManagementField {
                 div()
                     .flex_1()
                     .min_w(px(260.0))
-                    .child(font_family_picker(
-                        FontFamilyPickerState::new(
-                            "settings-proxy-management",
-                            forms.proxy_management_query_input,
-                            forms.proxy_management_scroll_handle,
-                        )
-                        .no_matches(i18n::string("settings.proxies.picker.no_matches")),
-                        selected_label,
-                        picker_labels,
-                        options.size(),
-                        move |selected_label, window, cx| {
-                            let Some((proxy_id, _)) = picker_options_for_select
-                                .iter()
-                                .find(|(_, label)| label == &selected_label)
-                            else {
-                                return;
-                            };
-                            select_controller.update(cx, |controller, cx| {
-                                controller.select_proxy_management(proxy_id, window, cx);
-                            });
-                        },
-                        cx,
-                    ))
+                    .child(
+                        md3_select(&forms.proxy_management_select)
+                            .id("settings-proxy-management")
+                            .w_full()
+                            .with_size(options.size())
+                            .search_placeholder(i18n::string(
+                                "settings.proxies.picker.search_placeholder",
+                            ))
+                            .empty(|_, cx| {
+                                div()
+                                    .py_4()
+                                    .px_3()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n::string("settings.proxies.picker.no_matches"))
+                            }),
+                    )
                     .into_any_element()
             } else {
                 div()
@@ -2014,28 +1991,14 @@ impl SettingFieldElement for FontFamilyField {
 
     fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
         let controller = self.entity.read(cx);
-        let query_input = controller.forms.font_family_query_input.clone();
-        let scroll_handle = controller.forms.font_family_scroll_handle.clone();
-        let font_options = controller.forms.font_family_options.clone();
-        let selected = controller.settings().font_family.clone();
+        let picker = controller.forms.font_family_picker.clone();
         let entity = self.entity.clone();
-        let entity_for_select = entity.clone();
 
         setting_field_with_reset_action(
             font_family_picker(
-                FontFamilyPickerState::new(
-                    "settings-interface-font-family",
-                    query_input,
-                    scroll_handle,
-                ),
-                selected,
-                font_options,
+                "settings-interface-font-family",
+                &picker,
                 options.size(),
-                move |font, _, cx| {
-                    entity_for_select.update(cx, |this, cx| {
-                        this.update_font_family(font, cx);
-                    });
-                },
                 cx,
             ),
             false,
@@ -2065,30 +2028,11 @@ impl SettingFieldElement for TerminalFontFamilyField {
 
     fn render_field(&self, options: &RenderOptions, _: &mut Window, cx: &mut App) -> Self::Element {
         let controller = self.entity.read(cx);
-        let query_input = controller.forms.terminal_font_family_query_input.clone();
-        let scroll_handle = controller.forms.terminal_font_family_scroll_handle.clone();
-        let font_options = controller.forms.font_family_options.clone();
-        let selected = controller.settings().terminal_font_family.clone();
+        let picker = controller.forms.terminal_font_family_picker.clone();
         let entity = self.entity.clone();
-        let entity_for_select = entity.clone();
 
         setting_field_with_reset_action(
-            font_family_picker(
-                FontFamilyPickerState::new(
-                    "settings-terminal-font-family",
-                    query_input,
-                    scroll_handle,
-                ),
-                selected,
-                font_options,
-                options.size(),
-                move |font, _, cx| {
-                    entity_for_select.update(cx, |this, cx| {
-                        this.update_terminal_font_family(font, cx);
-                    });
-                },
-                cx,
-            ),
+            font_family_picker("settings-terminal-font-family", &picker, options.size(), cx),
             false,
             move |window, cx| {
                 entity.update(cx, |this, cx| {

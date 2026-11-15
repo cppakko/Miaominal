@@ -7,10 +7,10 @@ use super::session_agent_utils::*;
 use crate::ui::components::icon_button_with_tooltip;
 use crate::ui::features::agent::conversation_view::SessionAgentMessageView;
 use crate::ui::i18n;
-use gpui_kit::AnimationExt as _;
 use gpui_kit::component::ElementExt as _;
 use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::text::{TextView, TextViewState};
+use gpui_kit::{AnimationExt as _, Role};
 
 const SESSION_AGENT_MESSAGE_ENTER_OFFSET: f32 = 8.0;
 const SESSION_AGENT_TOOL_BODY_REVEAL_MAX_HEIGHT_REM: f32 = 45.0;
@@ -173,6 +173,8 @@ pub(in crate::ui::features::agent) fn render_session_agent_messages(
                 current_match_block,
             );
             div()
+                .id(("session-agent-message-row", message_view.entity_id()))
+                .role(Role::Group)
                 .w_full()
                 .pb_2()
                 .track_focus(&row_focus_handle)
@@ -1267,6 +1269,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
         tool_call.id.as_str()
     ));
     let toggle_controller = entity.clone();
+    let patch_diff = message_view.read(cx).patch_diff();
     let toggle_message_view = message_view;
     let copy_all_entity = entity.clone();
     let copy_all_text = format_tool_call_copy_text(tool_call);
@@ -1374,7 +1377,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_tool_call(
                 let body = if is_run_shell {
                     render_run_shell_tool_body(tool_call, tool_colors)
                 } else {
-                    render_structured_tool_body(tool_call, tool_colors)
+                    render_structured_tool_body(tool_call, tool_colors, patch_diff)
                 };
 
                 this.child(div().w_full().overflow_hidden().child(body).with_animation(

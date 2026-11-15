@@ -66,7 +66,9 @@ pub(crate) use editor_footer_actions::{
     editor_footer_button,
 };
 pub(crate) use fab_button::{dock_action_button, dock_icon_action_button, fab_icon_button};
-pub(crate) use font_family_picker::{FontFamilyPickerState, font_family_picker};
+pub(crate) use font_family_picker::{
+    FontFamilyPickerState, font_family_picker, new_font_family_picker, sync_font_family_picker,
+};
 pub(crate) use icon_button::{
     IconButtonStyle, footer_tool_button, icon_button, icon_button_with_icon_size,
     icon_button_with_tooltip,

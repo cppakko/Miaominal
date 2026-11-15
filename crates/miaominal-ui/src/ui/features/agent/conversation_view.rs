@@ -6,10 +6,16 @@
 //! implementations below are useful defaults and keep Markdown state persistent, but
 //! they project the Agent feature's retained conversation state.
 
-use super::{SessionAgentMessage, SessionAgentMessageRole};
+use super::{SessionAgentMessage, SessionAgentMessageRole, SessionAgentToolStatus};
 use crate::ui::components::animation::LIST_ENTER_DURATION;
 use crate::ui::{components::md3_spinner, i18n};
-use gpui_kit::component::{h_flex, text::TextView, text::TextViewState, v_flex};
+use gpui_kit::component::{
+    diff::{DiffFile, DiffState},
+    h_flex,
+    text::TextView,
+    text::TextViewState,
+    v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -131,6 +137,9 @@ pub(in crate::ui) struct SessionAgentMessageView {
     focus_handle: FocusHandle,
     enter_motion: SessionAgentEnterMotionState,
     markdown_state: Option<Entity<TextViewState>>,
+    patch_source: Option<String>,
+    patch_diff: Option<Entity<DiffState>>,
+    patch_height_rem: f32,
     markdown_observation: Option<Subscription>,
     markdown_worker_seeded: bool,
     thinking_ticker: Option<Task<()>>,
@@ -157,6 +166,9 @@ impl SessionAgentMessageView {
             focus_handle: cx.focus_handle(),
             enter_motion,
             markdown_state: None,
+            patch_source: None,
+            patch_diff: None,
+            patch_height_rem: 6.0,
             markdown_observation: None,
             markdown_worker_seeded: false,
             thinking_ticker: None,
@@ -165,6 +177,7 @@ impl SessionAgentMessageView {
             selectable: true,
         };
         this.prepare_markdown_state(cx);
+        this.prepare_patch_diff(cx);
         this.refresh_thinking_ticker(cx);
         this
     }
@@ -223,6 +236,60 @@ impl SessionAgentMessageView {
 
     pub(in crate::ui) fn markdown_state(&self) -> Option<Entity<TextViewState>> {
         self.markdown_state.clone()
+    }
+
+    pub(in crate::ui) fn patch_diff(&self) -> Option<(Entity<DiffState>, f32)> {
+        self.patch_diff
+            .clone()
+            .map(|state| (state, self.patch_height_rem))
+    }
+
+    fn prepare_patch_diff(&mut self, cx: &mut Context<Self>) {
+        let tool = self.message.tool_call.as_ref().filter(|tool| {
+            matches!(
+                tool.name.as_str(),
+                "apply_patch" | "edit_file" | "write_file"
+            )
+        });
+        // An unexpanded history row need not allocate a review surface. Once opened,
+        // keep its state so collapsing the tool does not discard file folds/selection.
+        if tool.is_some_and(|tool| !tool.expanded) && self.patch_diff.is_none() {
+            return;
+        }
+        let arguments =
+            tool.and_then(|tool| serde_json::from_str::<serde_json::Value>(&tool.arguments).ok());
+        let patch = tool.and_then(|tool| match tool.name.as_str() {
+            "apply_patch" => arguments
+                .as_ref()
+                .and_then(|value| value.get("patch"))
+                .and_then(serde_json::Value::as_str),
+            // edit_file/write_file return the generated unified diff as their
+            // completed result note. Reuse the same retained DiffState so all
+            // file mutations get one review surface.
+            "edit_file" | "write_file" if tool.status == SessionAgentToolStatus::Completed => {
+                tool.confirmation_note.as_deref()
+            }
+            _ => None,
+        });
+        if patch == self.patch_source.as_deref() {
+            return;
+        }
+        self.patch_source = patch.map(ToOwned::to_owned);
+        let files = patch
+            .and_then(|patch| DiffFile::parse(patch).ok())
+            .filter(|files| !files.is_empty() && files.iter().all(|file| !file.is_truncated()));
+        if let (Some(patch), Some(files)) = (patch, files) {
+            self.patch_height_rem =
+                ((patch.lines().count() + files.len()) as f32 * 1.25).clamp(6.0, 22.0);
+            if let Some(state) = &self.patch_diff {
+                state.update(cx, |state, cx| state.set_files(files, cx));
+            } else {
+                self.patch_diff = Some(cx.new(|cx| DiffState::new(files, cx)));
+            }
+        } else {
+            // Incomplete streamed JSON and malformed patches remain visible as raw text.
+            self.patch_diff = None;
+        }
     }
 
     pub(in crate::ui) fn set_selectable(&mut self, selectable: bool, cx: &mut Context<Self>) {
@@ -378,6 +445,7 @@ impl SessionAgentMessageView {
 
         self.recount_content();
         self.prepare_markdown_state(cx);
+        self.prepare_patch_diff(cx);
         self.refresh_thinking_ticker(cx);
         if update.changed() {
             cx.emit(SessionAgentMessageViewEvent::ContentUpdated(update));
@@ -418,6 +486,7 @@ impl SessionAgentMessageView {
 
         self.recount_content();
         self.prepare_markdown_state(cx);
+        self.prepare_patch_diff(cx);
         self.refresh_thinking_ticker(cx);
         if content_update.changed() {
             cx.emit(SessionAgentMessageViewEvent::ContentUpdated(content_update));

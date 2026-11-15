@@ -1230,6 +1230,34 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn patch_connection_failure_is_reported_on_default_worker_stack() {
+        let mut profile = miaominal_core::profile::SessionProfile::blank("patch-stack", 1);
+        profile.host = "127.0.0.1".into();
+        profile.port = 0;
+        let channel = AgentExecChannel::for_profile(
+            profile,
+            Vec::new(),
+            miaominal_secrets::SecretStore::new_locked_vault(),
+            miaominal_storage::known_hosts_store::KnownHostsStore::with_path(
+                std::env::temp_dir().join("agent-patch-stack-known-hosts"),
+            ),
+        )
+        .with_policy_bypass(true);
+        let runtime = ChannelToolRuntime::new(Some(channel), "fixture", None);
+        let (progress, _) = tokio::sync::mpsc::unbounded_channel();
+        let result = runtime.execute(
+            invocation("apply_patch", json!({
+                "patch": "--- new.txt\n+++ new.txt\n@@ -1,5 +1,5 @@\n listen 8080;\n-server_name example.com;\n+server_name example.com www.example.com;\n root /var/www/site;\n index index.html;\n     add_header X-Frame-Options DENY;\n",
+                "base_dir": "/tmp/difftest",
+            })),
+            AgentToolCancellation::new(),
+            progress,
+        ).await;
+        assert_eq!(result.status, ToolResultStatus::Failed);
+        assert!(result.model_text.contains("Failed:"));
+    }
+
     #[test]
     fn job_start_guards_setup_in_foreground_before_backgrounding() {
         let script = job_start_script("pwd", "/tmp/job", Some("-P"));

@@ -160,13 +160,16 @@ Prefer edit_file for changing existing files.",
             ));
             specs.push(spec(
                 "apply_patch",
-                "Apply a unified diff (---/+++ headers with paths relative to base_dir, @@ hunks). \
-Use for coordinated changes across several files; prefer edit_file for single edits.",
+                "Apply a raw unified diff and show the change in the native file-diff review. \
+Use for coordinated changes across one or more files; prefer edit_file for one exact replacement. \
+The patch string must contain `--- path`, `+++ path`, and `@@` hunk headers with paths relative to base_dir. \
+Pass the diff text directly: do not wrap it in Markdown fences, `*** Begin Patch`, shell commands, or prose. \
+Example patch: `--- nginx.conf\\n+++ nginx.conf\\n@@ -1 +1 @@\\n-listen 80;\\n+listen 8080;`.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "patch": {"type": "string"},
-                        "base_dir": {"type": "string", "description": "Directory the patch paths are relative to."},
+                        "patch": {"type": "string", "description": "Raw unified diff only; no Markdown fences or `*** Begin Patch` wrapper. Include ---/+++/@@ headers and context lines."},
+                        "base_dir": {"type": "string", "description": "Directory the relative patch paths are resolved against; use the target's current workspace directory when unsure."},
                         "target": target
                     },
                     "required": ["patch", "base_dir"],
@@ -477,6 +480,24 @@ mod tests {
             validate_arguments(plan, &json!({"items": [{"step": "x", "status": "done"}]}))
                 .unwrap_err()
                 .contains("items[0].status")
+        );
+    }
+
+    #[test]
+    fn apply_patch_spec_teaches_raw_unified_diff_contract() {
+        let spec = tool_specs(&options())
+            .into_iter()
+            .find(|spec| spec.name == "apply_patch")
+            .expect("apply_patch is available in standard mode");
+        assert!(spec.description.contains("raw unified diff"));
+        assert!(spec.description.contains("Markdown fences"));
+        assert!(spec.description.contains("*** Begin Patch"));
+        assert_eq!(spec.parameters["properties"]["patch"]["type"], "string");
+        assert!(
+            spec.parameters["properties"]["patch"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("---/+++/@@")
         );
     }
 }

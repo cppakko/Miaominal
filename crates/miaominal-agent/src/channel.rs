@@ -1148,14 +1148,16 @@ impl AgentExecChannel {
                 resolved,
             );
         }
-        let mut resolved = miaominal_sftp::resolve_profile_paths(
+        // Keep transport state out of every enclosing tool future. Debug builds
+        // otherwise reserve large nested poll frames on the worker's stack.
+        let mut resolved = Box::pin(miaominal_sftp::resolve_profile_paths(
             self.profile.clone(),
             self.all_profiles.clone(),
             self.all_proxies.clone(),
             self.secrets.clone(),
             self.known_hosts.clone(),
             vec![normalized.clone()],
-        )
+        ))
         .await
         .map_err(|error| AgentError::Denied {
             tool_name: format!("{access:?}:{normalized}"),
@@ -1323,20 +1325,21 @@ impl AgentExecChannel {
         if self.is_terminal_only() {
             return self.exec_script_via_terminal(command.into()).await;
         }
-        self.backend_router
-            .exec(
-                route,
-                SshExecRequest {
-                    profile: self.profile.clone(),
-                    all_profiles: self.all_profiles.clone(),
-                    all_proxies: self.all_proxies.clone(),
-                    secrets: self.secrets.clone(),
-                    known_hosts: self.known_hosts.clone(),
-                    command: command.into(),
-                    mode,
-                },
-            )
-            .await
+        // SSH connection futures are large, especially in debug builds. This
+        // shared boundary prevents that state multiplying through tool dispatch.
+        Box::pin(self.backend_router.exec(
+            route,
+            SshExecRequest {
+                profile: self.profile.clone(),
+                all_profiles: self.all_profiles.clone(),
+                all_proxies: self.all_proxies.clone(),
+                secrets: self.secrets.clone(),
+                known_hosts: self.known_hosts.clone(),
+                command: command.into(),
+                mode,
+            },
+        ))
+        .await
     }
 
     /// Telnet targets have no exec channel or SFTP: every command is typed
@@ -2490,6 +2493,45 @@ mod tests {
             assert_eq!(scripts.len(), 4);
             assert!(scripts[0].contains("( echo hello\n) </dev/null"));
             assert!(scripts[2].contains("cd \"$HOME\""));
+        }
+
+        #[tokio::test]
+        async fn patch_executes_through_default_tool_worker() {
+            use crate::toolkit::{ChannelToolRuntime, ToolInvocation, ToolRuntime as _};
+            let SessionChannels {
+                connection,
+                commands,
+                ..
+            } = miaominal_ssh::session_channels();
+            let (tap, output) = TerminalOutputTap::channel();
+            let fake = spawn_fake_terminal(commands, tap);
+            let channel = channel_without_terminal()
+                .with_terminal_exec(TerminalExecHandle::new(connection.commands.clone(), output));
+            let runtime = ChannelToolRuntime::new(Some(channel), "fixture", None);
+            let (progress, _) = tokio::sync::mpsc::unbounded_channel();
+            let result = runtime.execute(
+                    ToolInvocation {
+                        call_id: "patch-stack".into(),
+                        name: "apply_patch".into(),
+                        arguments: serde_json::json!({
+                            "patch": "--- new.txt\n+++ new.txt\n@@ -1,5 +1,5 @@\n listen 8080;\n-server_name example.com;\n+server_name example.com www.example.com;\n root /var/www/site;\n index index.html;\n     add_header X-Frame-Options DENY;\n",
+                            "base_dir": "/tmp/difftest",
+                        }),
+                    },
+                crate::tools::AgentToolCancellation::new(),
+                progress,
+            ).await;
+            assert_eq!(result.status, crate::transcript::ToolResultStatus::Ok);
+            assert!(matches!(
+                result.display,
+                crate::transcript::ToolDisplay::Diff { .. }
+            ));
+            drop(runtime);
+            drop(connection);
+            let scripts = fake.await.unwrap();
+            assert_eq!(scripts.len(), 3);
+            assert!(scripts[1].contains("patch target traverses a symbolic link"));
+            assert!(scripts[2].contains("server_name example.com www.example.com;"));
         }
 
         #[tokio::test]

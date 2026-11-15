@@ -52,21 +52,6 @@ impl SettingsController {
         });
     }
 
-    pub(in crate::ui) fn select_proxy_management(
-        &mut self,
-        proxy_id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.proxies.iter().any(|proxy| proxy.id == proxy_id) {
-            return;
-        }
-        self.forms.proxy_management_select.update(cx, |select, cx| {
-            select.set_selected_value(&proxy_id.to_string(), window, cx);
-        });
-        cx.notify();
-    }
-
     pub(in crate::ui) fn selected_proxy_protocol(&self, cx: &App) -> ProxyProtocol {
         self.forms
             .proxy_protocol_select

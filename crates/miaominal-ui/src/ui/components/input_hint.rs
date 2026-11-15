@@ -288,11 +288,6 @@ impl HintedInput {
         self.hint_left = Some(left);
         self
     }
-
-    pub(crate) fn hide_hint_on_focus(mut self) -> Self {
-        self.hide_hint_on_focus = true;
-        self
-    }
 }
 
 impl Sizable for HintedInput {
