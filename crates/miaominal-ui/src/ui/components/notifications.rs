@@ -852,28 +852,20 @@ pub(crate) fn render_status_center_popover(
                                     .gap_1()
                                     .when(entries.is_empty(), |this| {
                                         this.child(
-                                            v_flex()
-                                                .h_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .gap_3()
-                                                .text_color(rgb(roles.on_surface_variant))
-                                                .child(
-                                                    div()
-                                                        .size(px(48.0))
-                                                        .rounded(px(999.0))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .bg(color_with_alpha(roles.secondary, 0x20))
-                                                        .child(
-                                                            Icon::new(IconName::Bell)
-                                                                .size(px(24.0))
-                                                                .text_color(rgb(roles.secondary)),
-                                                        ),
+                                            div().h_full().child(
+                                                crate::ui::components::empty_state::EmptyState::new(
+                                                    IconName::Bell,
+                                                    i18n::string("notifications.center.empty_title"),
                                                 )
-                                                .child(i18n::string("notifications.center.empty")),
+                                                .description(i18n::string(
+                                                    "notifications.center.empty",
+                                                ))
+                                                .size(
+                                                    crate::ui::components::empty_state::EmptyStateSize::Compact,
+                                                )
+                                                .min_height(0.0)
+                                                .build(),
+                                            ),
                                         )
                                     })
                                     .children(entries.into_iter().map(move |entry| {

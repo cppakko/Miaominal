@@ -47,13 +47,12 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_menu(
         .p_1()
         .when(filtered.is_empty(), |this| {
             this.child(
-                div()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                    .text_color(rgb(roles.on_surface_variant))
-                    .child(i18n::string("workspace.panel.agent.targets.empty")),
+                crate::ui::components::empty_state::EmptyState::new(
+                    AppIcon::Computer,
+                    i18n::string("workspace.panel.agent.targets.empty"),
+                )
+                .size(crate::ui::components::empty_state::EmptyStateSize::Inline)
+                .build(),
             )
         })
         .children(filtered.into_iter().map(|candidate| {

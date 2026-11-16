@@ -262,13 +262,6 @@ fn render_session_sftp_panel(
     session_tab_id: TabId,
     cx: &App,
 ) -> gpui_kit::AnyElement {
-    let material = miaominal_settings::current_theme().material;
-    let roles = material.roles;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
-
     if let Some(tab_id) = app.session_side_panel_sftp_tab_id(cx) {
         let controller = app.controllers.sftp.clone();
         let sftp_controller = controller.read(cx);
@@ -285,41 +278,27 @@ fn render_session_sftp_panel(
         }
     }
 
-    v_flex()
+    div()
         .id("session-sftp-panel-content")
         .size_full()
-        .items_center()
-        .justify_center()
-        .gap_3()
-        .py_3()
         .child(
-            div()
-                .size(px(44.0))
-                .rounded(px(12.0))
-                .bg(rgb(roles.surface))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(rgb(roles.primary))
-                .child(Icon::new(AppIcon::FolderSymlink).size(px(22.0))),
+            crate::ui::components::empty_state::EmptyState::new(
+                AppIcon::FolderSymlink,
+                i18n::string("sftp_browser.empty.panel_title"),
+            )
+            .description(i18n::string("sftp_browser.empty.remote"))
+            .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+            .action(editor_button(
+                i18n::string("workspace.menu.open_sftp_tab"),
+                false,
+                true,
+                move |_, cx| {
+                    session_controller.update(cx, |controller, cx| {
+                        controller.emit(AppCommand::EnsureSessionSftpRequested(session_tab_id), cx);
+                    });
+                },
+            ))
+            .build(),
         )
-        .child(
-            div()
-                .max_w(px(280.0))
-                .text_center()
-                .text_size(miaominal_settings::FontSize::Body.scaled())
-                .text_color(rgb(text_muted))
-                .child(i18n::string("sftp_browser.empty.remote")),
-        )
-        .child(editor_button(
-            i18n::string("workspace.menu.open_sftp_tab"),
-            false,
-            true,
-            move |_, cx| {
-                session_controller.update(cx, |controller, cx| {
-                    controller.emit(AppCommand::EnsureSessionSftpRequested(session_tab_id), cx);
-                });
-            },
-        ))
         .into_any_element()
 }

@@ -3,7 +3,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_content, catalog_card_icon, catalog_card_subtitle, catalog_card_surface,
     catalog_card_title,
 };
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::{EmptyState, empty_state_tonal_action};
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
@@ -189,20 +189,13 @@ fn snippet_list_row(
     .when(editing, |row| row.bg(ShellColors::current().selected))
 }
 
-fn snippets_empty_state(message: impl Into<SharedString>) -> gpui_kit::Div {
-    empty_page(AppIcon::Notebook, message)
-        .h_auto()
-        .flex_1()
-        .min_h_0()
-}
-
 impl SnippetsController {
     pub(in crate::ui) fn render_snippets_page(
         &self,
         controller: Entity<Self>,
         on_open_existing: impl Fn(String, &mut Window, &mut App) + Clone + 'static,
         available_width: f32,
-        _cx: &App,
+        cx: &App,
     ) -> gpui_kit::AnyElement {
         let catalog_view = self.catalog_view();
         let snippets = self.snippets().clone();
@@ -244,10 +237,12 @@ impl SnippetsController {
 
         let empty_results = visible_snippets.is_empty();
         if snippets.is_empty() {
-            return empty_page(
+            return EmptyState::new(
                 AppIcon::Notebook,
-                i18n::string("snippets.empty.no_snippets"),
+                i18n::string("snippets.empty.no_snippets_title"),
             )
+            .description(i18n::string("snippets.empty.no_snippets"))
+            .build_page()
             .into_any_element();
         }
 
@@ -337,8 +332,30 @@ impl SnippetsController {
                             .child(page_section_title(i18n::string("snippets.page.snippets"))),
                     )
                     .child(if visible_snippets.is_empty() {
-                        snippets_empty_state(i18n::string("snippets.empty.no_package_matches"))
-                            .into_any_element()
+                        let clear_controller = controller.clone();
+                        EmptyState::new(
+                            AppIcon::Filter,
+                            i18n::string("snippets.empty.no_package_matches_title"),
+                        )
+                        .description(i18n::string("snippets.empty.no_package_matches"))
+                        .action(empty_state_tonal_action(
+                            "snippets-clear-package-filter",
+                            Some(AppIcon::Rotate),
+                            i18n::string("snippets.empty.clear_package_filter"),
+                            cx,
+                            move |_, cx| {
+                                clear_controller.update(cx, |controller, cx| {
+                                    controller.catalog_view.borrow_mut().snippets_package_filter =
+                                        None;
+                                    cx.notify();
+                                });
+                            },
+                        ))
+                        .build_page()
+                        .h_auto()
+                        .flex_1()
+                        .min_h_0()
+                        .into_any_element()
                     } else {
                         animated_card_collection(
                             "snippets-grid",

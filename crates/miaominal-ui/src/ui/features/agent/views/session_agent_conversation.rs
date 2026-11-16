@@ -51,24 +51,15 @@ pub(in crate::ui::features::agent) fn render_session_agent_messages(
     _window: &mut Window,
     cx: &mut Context<AgentController>,
 ) -> gpui_kit::AnyElement {
-    let material = miaominal_settings::current_theme().material;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
-
     if agent.session_agent().messages.is_empty() && !agent.session_agent().is_busy() {
-        return div()
-            .size_full()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .flex()
-            .text_center()
-            .text_size(miaominal_settings::FontSize::Input.scaled())
-            .text_color(rgb(text_muted))
-            .child(i18n::string("workspace.panel.agent.empty"))
-            .into_any_element();
+        return crate::ui::components::empty_state::EmptyState::new(
+            AppIcon::Sparkles,
+            i18n::string("workspace.panel.agent.empty_title"),
+        )
+        .description(i18n::string("workspace.panel.agent.empty"))
+        .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+        .build()
+        .into_any_element();
     }
 
     let conversation = match agent.panel_conversation_view() {

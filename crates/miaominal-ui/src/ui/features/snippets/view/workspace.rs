@@ -1,5 +1,5 @@
 use crate::ui::assets::AppIcon;
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::{EmptyState, EmptyStateSize, empty_state_tonal_action};
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{SearchInputStyle, card_surface, icon_button, search_filter_input};
@@ -114,6 +114,7 @@ impl SnippetsController {
     ) -> gpui_kit::AnyElement {
         let snippets_filter_input = self.workspace_filter_input.clone();
         let selected_package_filter = self.workspace_package_filter.borrow().clone();
+        let empty_for_package = controller.clone();
         let on_package_toggle = move |package, cx: &mut App| {
             controller.update(cx, |owner, cx| owner.toggle_workspace_package(package, cx));
         };
@@ -172,17 +173,41 @@ impl SnippetsController {
 
         let empty_results = visible_snippets.is_empty();
         let content = if empty_results {
-            empty_page(
-                AppIcon::Notebook,
-                i18n::string(if snippets.is_empty() {
-                    "workspace.panel.snippets.empty"
-                } else if search_matched_snippets.is_empty() {
-                    "workspace.panel.snippets.no_search_matches"
-                } else {
-                    "snippets.empty.no_package_matches"
-                }),
-            )
-            .into_any_element()
+            let state = if snippets.is_empty() {
+                EmptyState::new(
+                    AppIcon::Notebook,
+                    i18n::string("workspace.panel.snippets.empty_title"),
+                )
+                .description(i18n::string("workspace.panel.snippets.empty"))
+                .size(EmptyStateSize::Panel)
+            } else if search_matched_snippets.is_empty() {
+                EmptyState::new(
+                    AppIcon::Search,
+                    i18n::string("workspace.panel.snippets.no_search_matches_title"),
+                )
+                .description(i18n::string("workspace.panel.snippets.no_search_matches"))
+                .size(EmptyStateSize::Panel)
+            } else {
+                EmptyState::new(
+                    AppIcon::Filter,
+                    i18n::string("snippets.empty.no_package_matches_title"),
+                )
+                .description(i18n::string("snippets.empty.no_package_matches"))
+                .size(EmptyStateSize::Panel)
+                .action(empty_state_tonal_action(
+                    "workspace-snippets-clear-package",
+                    Some(AppIcon::Rotate),
+                    i18n::string("workspace.panel.snippets.clear_package_filter"),
+                    cx,
+                    move |_, cx| {
+                        empty_for_package.update(cx, |owner, cx| {
+                            *owner.workspace_package_filter.borrow_mut() = None;
+                            cx.notify();
+                        });
+                    },
+                ))
+            };
+            state.build_page().into_any_element()
         } else {
             let mut list = v_flex().gap_2();
             for snippet in visible_snippets {

@@ -16,11 +16,6 @@ pub(in crate::ui::features::agent) fn render_session_agent_history_panel(
     cx: &mut App,
     search_visibility: Option<f32>,
 ) -> gpui_kit::AnyElement {
-    let material = miaominal_settings::current_theme().material;
-    let text_muted = crate::ui::theme::palette_tone_rgb(
-        material.palettes.neutral_variant,
-        if material.dark { 65 } else { 50 },
-    );
     let all_sessions = Rc::new(controller.chat_sessions().to_vec());
     let current_session_id = controller.session_agent().session_id.clone();
     let runtime_statuses = Rc::new(
@@ -91,30 +86,36 @@ pub(in crate::ui::features::agent) fn render_session_agent_history_panel(
                     div()
                         .flex_1()
                         .min_h_0()
-                        .min_h(px(160.0))
                         .w_full()
-                        .items_center()
-                        .justify_center()
-                        .flex()
-                        .text_center()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("workspace.panel.agent.history.empty"))
+                        .child(
+                            crate::ui::components::empty_state::EmptyState::new(
+                                AppIcon::Sparkles,
+                                i18n::string("workspace.panel.agent.history.empty_title"),
+                            )
+                            .description(i18n::string("workspace.panel.agent.history.empty"))
+                            .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+                            .min_height(160.0)
+                            .build(),
+                        )
                         .into_any_element()
                 } else if filtered_indices.is_empty() {
                     // Empty state: no matching sessions
                     div()
                         .flex_1()
                         .min_h_0()
-                        .min_h(px(160.0))
                         .w_full()
-                        .items_center()
-                        .justify_center()
-                        .flex()
-                        .text_center()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("search.messages.no_matches"))
+                        .child(
+                            crate::ui::components::empty_state::EmptyState::new(
+                                AppIcon::Search,
+                                i18n::string(
+                                    "workspace.panel.agent.history.no_search_matches_title",
+                                ),
+                            )
+                            .description(i18n::string("search.messages.no_matches"))
+                            .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+                            .min_height(160.0)
+                            .build(),
+                        )
                         .into_any_element()
                 } else {
                     div()

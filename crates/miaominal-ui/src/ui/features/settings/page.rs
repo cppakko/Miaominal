@@ -1495,12 +1495,13 @@ impl SettingFieldElement for ProxyManagementField {
                             .search_placeholder(i18n::string(
                                 "settings.proxies.picker.search_placeholder",
                             ))
-                            .empty(|_, cx| {
-                                div()
-                                    .py_4()
-                                    .px_3()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(i18n::string("settings.proxies.picker.no_matches"))
+                            .empty(|_, _| {
+                                crate::ui::components::empty_state::EmptyState::new(
+                                    AppIcon::Search,
+                                    i18n::string("settings.proxies.picker.no_matches"),
+                                )
+                                .size(crate::ui::components::empty_state::EmptyStateSize::Inline)
+                                .build()
                             }),
                     )
                     .into_any_element()

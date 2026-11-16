@@ -4,7 +4,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon,
     catalog_card_surface, catalog_card_title,
 };
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{EditorFooterActionTone, SegmentedSwitch, editor_footer_button};
 use crate::ui::{
@@ -214,20 +214,7 @@ impl KeychainController {
                 ),
             );
 
-        let empty_copy = if show_managed_keys && visible_managed_keys.is_empty() {
-            Some((
-                "keychain.empty.no_managed_keys_title",
-                "keychain.empty.no_managed_keys_copy",
-            ))
-        } else if show_agent_identities && visible_agent_identities.is_empty() {
-            Some((
-                "keychain.empty.no_agent_identities_title",
-                "keychain.empty.no_agent_identities_copy",
-            ))
-        } else {
-            None
-        };
-        if let Some((title, copy)) = empty_copy {
+        if show_managed_keys && visible_managed_keys.is_empty() {
             return v_flex()
                 .size_full()
                 .min_h_0()
@@ -239,10 +226,37 @@ impl KeychainController {
                         .test_support()
                         .flex_1()
                         .min_h_0()
-                        .child(empty_page(
-                            AppIcon::Key,
-                            format!("{}\n{}", i18n::string(title), i18n::string(copy)),
-                        )),
+                        .child(
+                            EmptyState::new(
+                                AppIcon::Key,
+                                i18n::string("keychain.empty.no_managed_keys_title"),
+                            )
+                            .description(i18n::string("keychain.empty.no_managed_keys_copy"))
+                            .build_page(),
+                        ),
+                )
+                .into_any_element();
+        }
+        if show_agent_identities && visible_agent_identities.is_empty() {
+            return v_flex()
+                .size_full()
+                .min_h_0()
+                .gap_6()
+                .child(header.flex_shrink_0())
+                .child(
+                    div()
+                        .id("keychain-empty-region")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            EmptyState::new(
+                                AppIcon::FingerPrint,
+                                i18n::string("keychain.empty.no_agent_identities_title"),
+                            )
+                            .description(i18n::string("keychain.empty.no_agent_identities_copy"))
+                            .build_page(),
+                        ),
                 )
                 .into_any_element();
         }

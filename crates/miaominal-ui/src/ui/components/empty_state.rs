@@ -1,113 +1,541 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::shell_tokens::{ShellColors, space};
-use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{Icon, v_flex};
-use gpui_kit::{Div, SharedString, TestSupportExt as _, div, prelude::*};
+use crate::ui::components::tokens::color_with_alpha;
+use gpui_kit::component::{
+    Icon,
+    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    h_flex,
+    scroll::ScrollableElement as _,
+    v_flex,
+};
+use gpui_kit::{
+    AnyElement, App, Background, Bounds, Div, ElementId, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement as _, PathBuilder, Pixels, Point, SharedString, Styled as _,
+    TestSupportExt as _, Window, canvas, div, linear_color_stop, linear_gradient, point,
+    prelude::*, px, rgb,
+};
+use std::f32::consts::TAU;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(in crate::ui) enum EmptyStateTone {
+    /// Unified Material 3 primary tonal presentation for all standard empty states.
+    #[default]
+    Primary,
+    /// Recoverable error state (`error_container`).
+    ErrorRecovery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(in crate::ui) enum EmptyStateSize {
+    /// Full management page or main workspace viewport.
+    #[default]
+    Page,
+    /// Side panel, drawer, or inspector pane.
+    Panel,
+    /// Compact card region, table viewport, or popover list.
+    Compact,
+    /// Inline row inside a dropdown picker, combobox, or settings bar.
+    Inline,
+}
 
 #[derive(Clone, Copy)]
-struct EmptyStateLayout {
-    min_height: f32,
-    icon_size: f32,
-    max_width: f32,
-    gap: f32,
-    compact: bool,
+struct TonePalette {
+    backdrop_from: Hsla,
+    backdrop_to: Hsla,
+    core_from: Hsla,
+    core_to: Hsla,
+    core_icon: Hsla,
+    inline_bg: Hsla,
+    inline_fg: Hsla,
 }
 
-impl EmptyStateLayout {
-    fn page() -> Self {
+impl EmptyStateTone {
+    fn palette(self) -> TonePalette {
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let dark = material.dark;
+
+        match self {
+            Self::Primary => TonePalette {
+                backdrop_from: color_with_alpha(
+                    roles.primary_container,
+                    if dark { 0x48 } else { 0x62 },
+                )
+                .into(),
+                backdrop_to: color_with_alpha(
+                    roles.secondary_container,
+                    if dark { 0x38 } else { 0x4E },
+                )
+                .into(),
+                core_from: rgb(roles.primary_container).into(),
+                core_to: rgb(roles.secondary_container).into(),
+                core_icon: rgb(roles.on_primary_container).into(),
+                inline_bg: rgb(roles.primary_container).into(),
+                inline_fg: rgb(roles.on_primary_container).into(),
+            },
+            Self::ErrorRecovery => TonePalette {
+                backdrop_from: color_with_alpha(
+                    roles.error_container,
+                    if dark { 0x48 } else { 0x66 },
+                )
+                .into(),
+                backdrop_to: color_with_alpha(
+                    roles.surface_container_highest,
+                    if dark { 0x3C } else { 0x54 },
+                )
+                .into(),
+                core_from: rgb(roles.error_container).into(),
+                core_to: rgb(roles.error_container).into(),
+                core_icon: rgb(roles.on_error_container).into(),
+                inline_bg: rgb(roles.error_container).into(),
+                inline_fg: rgb(roles.on_error_container).into(),
+            },
+        }
+    }
+}
+
+/// Paints a smooth Material 3 Expressive 4-petal organic clover using cubic Bézier splines with
+/// exact analytic tangents.
+fn build_m3_clover_path(bounds: Bounds<Pixels>) -> Option<gpui_kit::Path<Pixels>> {
+    const LOBES: f32 = 4.0;
+    const AMPLITUDE: f32 = 0.068;
+
+    let center_x = f32::from(bounds.center().x);
+    let center_y = f32::from(bounds.center().y);
+    let base_radius =
+        (f32::from(bounds.size.width).min(f32::from(bounds.size.height)) * 0.5) / (1.0 + AMPLITUDE);
+    if base_radius <= 0.5 {
+        return None;
+    }
+
+    let samples = 48usize;
+    let step = TAU / samples as f32;
+    let handle_scale = step / 3.0;
+
+    let sample = |index: usize| -> (Point<Pixels>, (f32, f32)) {
+        let theta = index as f32 * step;
+        let angle_arg = LOBES * theta;
+        let r = base_radius * (1.0 + AMPLITUDE * angle_arg.cos());
+        let dr = -base_radius * AMPLITUDE * LOBES * angle_arg.sin();
+        let (sin_t, cos_t) = theta.sin_cos();
+        let x = center_x + r * cos_t;
+        let y = center_y + r * sin_t;
+        let tx = dr * cos_t - r * sin_t;
+        let ty = dr * sin_t + r * cos_t;
+        (point(px(x), px(y)), (tx, ty))
+    };
+
+    let mut path = PathBuilder::fill();
+    let (start_pt, mut prev_tangent) = sample(0);
+    let mut prev_pt = start_pt;
+    path.move_to(start_pt);
+
+    for i in 1..=samples {
+        let (next_pt, next_tangent) = sample(i % samples);
+        let ctrl_a = point(
+            px(f32::from(prev_pt.x) + prev_tangent.0 * handle_scale),
+            px(f32::from(prev_pt.y) + prev_tangent.1 * handle_scale),
+        );
+        let ctrl_b = point(
+            px(f32::from(next_pt.x) - next_tangent.0 * handle_scale),
+            px(f32::from(next_pt.y) - next_tangent.1 * handle_scale),
+        );
+        path.cubic_bezier_to(next_pt, ctrl_a, ctrl_b);
+        prev_pt = next_pt;
+        prev_tangent = next_tangent;
+    }
+
+    path.close();
+    path.build().ok()
+}
+
+pub(in crate::ui) struct EmptyState {
+    icon: Icon,
+    title: SharedString,
+    description: Option<SharedString>,
+    tone: EmptyStateTone,
+    size: EmptyStateSize,
+    min_height: Option<f32>,
+    action: Option<AnyElement>,
+}
+
+impl EmptyState {
+    pub fn new(icon: impl Into<Icon>, copy: impl Into<SharedString>) -> Self {
+        let raw: SharedString = copy.into();
+        let (title, description) = split_title_and_description(raw);
         Self {
-            min_height: 240.0,
-            icon_size: 128.0,
-            max_width: 380.0,
-            gap: 12.0,
-            compact: false,
+            icon: icon.into(),
+            title,
+            description,
+            tone: EmptyStateTone::Primary,
+            size: EmptyStateSize::Page,
+            min_height: None,
+            action: None,
         }
     }
 
-    fn compact(min_height: f32) -> Self {
-        Self {
-            min_height,
-            icon_size: 48.0,
-            max_width: 260.0,
-            gap: 8.0,
-            compact: true,
+    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
+        let text: SharedString = description.into();
+        if !text.as_ref().trim().is_empty() {
+            self.description = Some(text);
         }
+        self
     }
-}
 
-pub(in crate::ui) fn empty_state(icon: AppIcon, copy: impl Into<SharedString>) -> Div {
-    empty_state_with_layout(icon, copy.into(), EmptyStateLayout::page())
-}
+    pub fn tone(mut self, tone: EmptyStateTone) -> Self {
+        self.tone = tone;
+        self
+    }
 
-pub(in crate::ui) fn compact_empty_state(
-    icon: AppIcon,
-    copy: impl Into<SharedString>,
-    min_height: f32,
-) -> Div {
-    empty_state_with_layout(icon, copy.into(), EmptyStateLayout::compact(min_height))
-}
+    pub fn size(mut self, size: EmptyStateSize) -> Self {
+        self.size = size;
+        self
+    }
 
-fn empty_state_with_layout(icon: AppIcon, copy: SharedString, layout: EmptyStateLayout) -> Div {
-    let colors = ShellColors::current();
-    let text_size = if layout.compact {
-        miaominal_settings::FontSize::Body.scaled()
-    } else {
-        miaominal_settings::FontSize::Title.scaled()
-    };
-    let line_height = if layout.compact { 18.0 } else { 24.0 };
+    pub fn min_height(mut self, min_height: f32) -> Self {
+        self.min_height = Some(min_height);
+        self
+    }
 
-    let container = div()
-        .size_full()
-        .min_w_0()
-        .min_h(space(layout.min_height))
-        .flex()
-        .items_center()
-        .justify_center();
+    pub fn action(mut self, action: impl IntoElement) -> Self {
+        self.action = Some(action.into_any_element());
+        self
+    }
 
-    let container = if layout.compact {
-        container.px_3().py_2()
-    } else {
-        container.px_4().py_6()
-    };
+    pub fn build(self) -> Div {
+        let roles = miaominal_settings::current_theme().material.roles;
+        let palette = self.tone.palette();
 
-    container.child(
-        v_flex()
-            .id("empty-state-content")
-            .test_support()
+        if self.size == EmptyStateSize::Inline {
+            return self.build_inline(roles.on_surface, roles.on_surface_variant, palette);
+        }
+
+        if self.size == EmptyStateSize::Compact {
+            return self.build_compact(roles.on_surface, roles.on_surface_variant, palette);
+        }
+
+        let is_page = self.size == EmptyStateSize::Page;
+        let default_min_height = if is_page { 220.0 } else { 164.0 };
+        let outer_size = if is_page { 168.0 } else { 108.0 };
+        let core_size = if is_page { 112.0 } else { 70.0 };
+        let icon_size = if is_page { 54.0 } else { 34.0 };
+        let max_width = if is_page { 480.0 } else { 300.0 };
+        let block_gap = if is_page { 18.0 } else { 14.0 };
+        let title_font = if is_page {
+            miaominal_settings::FontSize::PageTitle.scaled()
+        } else {
+            miaominal_settings::FontSize::Title.scaled()
+        };
+        let title_line_height = if is_page { 28.0 } else { 22.0 };
+        let desc_font = if is_page {
+            miaominal_settings::FontSize::Heading.scaled()
+        } else {
+            miaominal_settings::FontSize::Input.scaled()
+        };
+        let desc_line_height = if is_page { 22.0 } else { 18.0 };
+
+        let min_height = self.min_height.unwrap_or(default_min_height);
+        let emblem = build_emblem(self.icon, outer_size, core_size, icon_size, palette);
+
+        let text_group = v_flex()
             .w_full()
             .min_w_0()
-            .max_w(space(layout.max_width))
-            .flex_shrink_0()
             .items_center()
-            .justify_center()
-            .gap(space(layout.gap))
-            .child(
-                div()
-                    .size(space(layout.icon_size))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(colors.muted)
-                    .child(Icon::new(icon).size(space(layout.icon_size))),
-            )
+            .gap(space(if is_page { 8.0 } else { 6.0 }))
             .child(
                 div()
                     .w_full()
-                    .text_size(text_size)
-                    .line_height(miaominal_settings::scaled_line_height(line_height))
+                    .text_size(title_font)
+                    .line_height(miaominal_settings::scaled_line_height(title_line_height))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_center()
-                    .text_color(colors.primary)
-                    .child(copy),
-            ),
-    )
+                    .text_color(rgb(roles.on_surface))
+                    .child(self.title),
+            )
+            .when_some(self.description, |this, description| {
+                this.child(
+                    div()
+                        .w_full()
+                        .text_size(desc_font)
+                        .line_height(miaominal_settings::scaled_line_height(desc_line_height))
+                        .text_center()
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(description),
+                )
+            });
+
+        div()
+            .size_full()
+            .min_w_0()
+            .min_h(space(min_height))
+            .flex()
+            .items_center()
+            .justify_center()
+            .px(space(if is_page { 24.0 } else { 16.0 }))
+            .py(space(if is_page { 16.0 } else { 12.0 }))
+            .child(
+                v_flex()
+                    .id("empty-state-content")
+                    .test_support()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(space(max_width))
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .gap(space(block_gap))
+                    .child(emblem)
+                    .child(text_group)
+                    .when_some(self.action, |this, action| {
+                        this.child(
+                            div()
+                                .pt(space(4.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(action),
+                        )
+                    }),
+            )
+    }
+
+    pub fn build_page(self) -> Div {
+        scrollable_empty_page(self.build())
+    }
+
+    fn build_compact(self, on_surface: u32, on_surface_variant: u32, palette: TonePalette) -> Div {
+        let min_height = self.min_height.unwrap_or(0.0);
+        let emblem = build_emblem(self.icon, 66.0, 44.0, 22.0, palette);
+
+        div()
+            .size_full()
+            .min_w_0()
+            .min_h(space(min_height))
+            .flex()
+            .items_center()
+            .justify_center()
+            .px_3()
+            .py_2()
+            .child(
+                v_flex()
+                    .id("empty-state-content")
+                    .test_support()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(space(268.0))
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .gap(space(8.0))
+                    .child(emblem)
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .items_center()
+                            .gap(space(4.0))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .text_size(miaominal_settings::FontSize::Heading.scaled())
+                                    .line_height(miaominal_settings::scaled_line_height(19.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_center()
+                                    .text_color(rgb(on_surface))
+                                    .child(self.title),
+                            )
+                            .when_some(self.description, |this, description| {
+                                this.child(
+                                    div()
+                                        .w_full()
+                                        .text_size(miaominal_settings::FontSize::Input.scaled())
+                                        .line_height(miaominal_settings::scaled_line_height(17.0))
+                                        .text_center()
+                                        .text_color(rgb(on_surface_variant))
+                                        .child(description),
+                                )
+                            }),
+                    )
+                    .when_some(self.action, |this, action| {
+                        this.child(
+                            div()
+                                .pt(space(2.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(action),
+                        )
+                    }),
+            )
+    }
+
+    fn build_inline(self, on_surface: u32, on_surface_variant: u32, palette: TonePalette) -> Div {
+        div().w_full().min_w_0().child(
+            h_flex()
+                .id("empty-state-content")
+                .test_support()
+                .w_full()
+                .min_w_0()
+                .items_center()
+                .gap(space(10.0))
+                .px(space(12.0))
+                .py(space(10.0))
+                .child(
+                    div()
+                        .size(space(28.0))
+                        .flex_shrink_0()
+                        .rounded(space(8.0))
+                        .bg(palette.inline_bg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(palette.inline_fg)
+                        .child(self.icon.size(space(15.0))),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(space(1.0))
+                        .child(
+                            div()
+                                .w_full()
+                                .text_size(miaominal_settings::FontSize::Input.scaled())
+                                .line_height(miaominal_settings::scaled_line_height(17.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(on_surface))
+                                .child(self.title),
+                        )
+                        .when_some(self.description, |this, description| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .text_size(miaominal_settings::FontSize::Body.scaled())
+                                    .line_height(miaominal_settings::scaled_line_height(15.0))
+                                    .text_color(rgb(on_surface_variant))
+                                    .child(description),
+                            )
+                        }),
+                )
+                .when_some(self.action, |this, action| {
+                    this.child(div().flex_shrink_0().child(action))
+                }),
+        )
+    }
 }
 
-pub(in crate::ui) fn empty_page(icon: AppIcon, copy: impl Into<SharedString>) -> Div {
-    scrollable_empty_page(empty_state(icon, copy))
+/// Renders a flat, minimalist two-plane Material 3 tonal emblem (soft organic halo + crisp
+/// circular tonal core + oversized vector glyph).
+fn build_emblem(
+    icon: Icon,
+    outer_size: f32,
+    core_size: f32,
+    icon_size: f32,
+    palette: TonePalette,
+) -> Div {
+    let backdrop_bg: Background = linear_gradient(
+        135.0,
+        linear_color_stop(palette.backdrop_from, 0.0),
+        linear_color_stop(palette.backdrop_to, 1.0),
+    );
+    let core_bg: Background = linear_gradient(
+        145.0,
+        linear_color_stop(palette.core_from, 0.0),
+        linear_color_stop(palette.core_to, 1.0),
+    );
+
+    div()
+        .relative()
+        .size(space(outer_size))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            canvas(
+                |_bounds, _window, _cx| (),
+                move |bounds, _, window, _cx| {
+                    if let Some(path) = build_m3_clover_path(bounds) {
+                        window.paint_path(path, backdrop_bg);
+                    }
+                },
+            )
+            .size(space(outer_size)),
+        )
+        .child(
+            div()
+                .absolute()
+                .size(space(core_size))
+                .rounded_full()
+                .bg(core_bg)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(palette.core_icon)
+                .child(icon.size(space(icon_size))),
+        )
 }
 
-fn scrollable_empty_page(content: Div) -> Div {
+fn split_title_and_description(copy: SharedString) -> (SharedString, Option<SharedString>) {
+    let raw = copy.as_ref().trim();
+    if let Some((first, rest)) = raw.split_once('\n') {
+        let title = first.trim();
+        let desc = rest.trim();
+        if !title.is_empty() && !desc.is_empty() {
+            return (
+                SharedString::from(title.to_string()),
+                Some(SharedString::from(desc.to_string())),
+            );
+        }
+    }
+    (copy, None)
+}
+
+/// Material 3 Filled Tonal pill button for empty-state primary/recovery actions.
+pub(in crate::ui) fn empty_state_tonal_action(
+    id: impl Into<ElementId>,
+    icon: Option<AppIcon>,
+    label: impl Into<SharedString>,
+    cx: &App,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    let label = label.into();
+    let colors = ShellColors::current();
+    let background = colors.selected;
+    let foreground = colors.on_selected;
+
+    Button::new(id)
+        .ghost()
+        .h(space(38.0))
+        .px(space(20.0))
+        .rounded_full()
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(background)
+                .foreground(foreground)
+                .hover(background.blend(foreground.opacity(0.08)))
+                .active(background.blend(foreground.opacity(0.14))),
+        )
+        .bg(background)
+        .text_color(foreground)
+        .child(
+            h_flex()
+                .items_center()
+                .gap(space(8.0))
+                .when_some(icon, |row, icon| {
+                    row.child(Icon::new(icon).size(space(16.0)))
+                })
+                .child(
+                    div()
+                        .text_size(miaominal_settings::FontSize::Heading.scaled())
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(label),
+                ),
+        )
+        .on_click(move |_, window, cx| on_click(window, cx))
+}
+
+pub(in crate::ui) fn scrollable_empty_page(content: Div) -> Div {
     // Scrollable gives the content an automatic height and a viewport-sized
     // minimum: short content centers, while oversized content grows downward
     // instead of placing its first half above the reachable scroll range.
@@ -126,6 +554,20 @@ mod tests {
         Bounds, Context, Render, ScrollDelta, TestAppContext, Window, WindowBounds, WindowOptions,
         point, px, size,
     };
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    fn compact_empty_state(icon: AppIcon, copy: impl Into<SharedString>, min_height: f32) -> Div {
+        EmptyState::new(icon, copy)
+            .size(EmptyStateSize::Compact)
+            .min_height(min_height)
+            .build()
+    }
+
+    fn empty_page(icon: AppIcon, copy: impl Into<SharedString>) -> Div {
+        EmptyState::new(icon, copy).build_page()
+    }
+
     struct EmptyPageHarness {
         base_font: f32,
         compact: bool,
@@ -310,5 +752,62 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    struct ExpressiveActionHarness {
+        clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for ExpressiveActionHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            div().id("expressive-body").size_full().child(
+                EmptyState::new(AppIcon::Filter, "No matching hosts")
+                    .description("Clear the group filter to see all saved hosts.")
+                    .action(empty_state_tonal_action(
+                        "empty-state-reset-action",
+                        Some(AppIcon::Rotate),
+                        "Reset filter",
+                        cx,
+                        move |_, _| {
+                            clicks.set(clicks.get() + 1);
+                        },
+                    ))
+                    .build_page(),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn expressive_empty_state_renders_and_dispatches_tonal_action(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let clicks = Rc::new(Cell::new(0));
+        let clicks_for_view = clicks.clone();
+        let (handle, _) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(480.0), px(360.0)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|_| ExpressiveActionHarness {
+                        clicks: clicks_for_view,
+                    })
+                },
+            )
+            .expect("open expressive empty state window")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("empty-state-content").visible());
+            assert!(window.find("empty-state-reset-action").visible());
+            window.click("empty-state-reset-action", cx);
+        })
+        .unwrap();
+        assert_eq!(clicks.get(), 1);
     }
 }

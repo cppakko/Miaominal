@@ -1,5 +1,5 @@
 use gpui_kit::component::{
-    ActiveTheme as _, IndexPath, Sizable as _, Size, StyleSized as _,
+    IndexPath, Sizable as _, Size, StyleSized as _,
     combobox::{Combobox, ComboboxState},
     searchable_list::SearchableVec,
 };
@@ -78,14 +78,13 @@ pub(crate) fn font_family_picker(
                 .search_placeholder(crate::ui::i18n::string(
                     "settings.appearance.font_picker.search_placeholder",
                 ))
-                .empty(|_, cx| {
-                    div()
-                        .py_4()
-                        .px_3()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(crate::ui::i18n::string(
-                            "settings.appearance.font_picker.no_matches",
-                        ))
+                .empty(|_, _| {
+                    crate::ui::components::empty_state::EmptyState::new(
+                        crate::ui::assets::AppIcon::Search,
+                        crate::ui::i18n::string("settings.appearance.font_picker.no_matches"),
+                    )
+                    .size(crate::ui::components::empty_state::EmptyStateSize::Inline)
+                    .build()
                 }),
         )
         .into_any_element()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui::components::empty_state::compact_empty_state;
+use crate::ui::components::empty_state::{EmptyState, EmptyStateSize};
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use crate::ui::i18n;
 use std::cell::RefCell;
@@ -1132,11 +1132,16 @@ fn remote_path_favorites_panel(
                 .min_h(px(0.0))
                 .overflow_y_scrollbar()
                 .when(empty, |this| {
-                    this.child(compact_empty_state(
-                        AppIcon::FolderOpen,
-                        i18n::string("sftp.ui.remote_favorites_empty"),
-                        0.0,
-                    ))
+                    this.child(
+                        EmptyState::new(
+                            AppIcon::FolderOpen,
+                            i18n::string("sftp.ui.remote_favorites_empty_title"),
+                        )
+                        .description(i18n::string("sftp.ui.remote_favorites_empty"))
+                        .size(EmptyStateSize::Compact)
+                        .min_height(0.0)
+                        .build(),
+                    )
                 })
                 .when(!empty, |this| this.child(rows)),
         )
@@ -1376,11 +1381,11 @@ fn sftp_progress_center_card(
 }
 
 fn sftp_empty_transfer_summary() -> impl IntoElement {
-    compact_empty_state(
-        AppIcon::ArrowUpDown,
-        i18n::string("sftp.ui.transfer_idle"),
-        0.0,
-    )
+    EmptyState::new(AppIcon::ArrowUpDown, i18n::string("sftp.ui.transfer_idle"))
+        .description(i18n::string("sftp.ui.transfer_idle_hint"))
+        .size(EmptyStateSize::Compact)
+        .min_height(0.0)
+        .build()
 }
 
 fn context_menu_local_sftp_entry(

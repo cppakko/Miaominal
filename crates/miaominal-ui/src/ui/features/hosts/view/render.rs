@@ -1,6 +1,6 @@
 use super::components::host_card;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::{EmptyState, empty_state_tonal_action};
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, ShellTypography, space};
 use crate::ui::components::{animated_card_collection, view_mode_switcher};
 use crate::ui::contracts::navigation::ProfileViewMode;
@@ -279,7 +279,9 @@ impl HostsController {
         let catalog = self.catalog_view();
         let profiles = self.profiles();
         if profiles.is_empty() {
-            return empty_page(AppIcon::Computer, i18n::string("hosts.home.empty"))
+            return EmptyState::new(AppIcon::Computer, i18n::string("hosts.home.empty"))
+                .description(i18n::string("hosts.home.empty_copy"))
+                .build_page()
                 .id("hosts-empty-region")
                 .test_support()
                 .into_any_element();
@@ -495,20 +497,34 @@ impl HostsController {
             )
             .child(view_toggle);
         let library = if visible.is_empty() {
-            empty_page(
-                AppIcon::Computer,
-                i18n::string(if remote.is_empty() {
-                    "hosts.home.empty"
-                } else {
-                    "hosts.home.empty_group"
-                }),
-            )
-            .id("hosts-empty-region")
-            .test_support()
-            .h_auto()
-            .flex_1()
-            .min_h_0()
-            .into_any_element()
+            let empty = if remote.is_empty() {
+                EmptyState::new(AppIcon::Computer, i18n::string("hosts.home.empty"))
+                    .description(i18n::string("hosts.home.empty_copy"))
+            } else {
+                let clear_controller = controller.clone();
+                EmptyState::new(AppIcon::Filter, i18n::string("hosts.home.empty_group"))
+                    .description(i18n::string("hosts.home.empty_group_copy"))
+                    .action(empty_state_tonal_action(
+                        "hosts-clear-group-filter",
+                        Some(AppIcon::Rotate),
+                        i18n::string("hosts.home.clear_filter"),
+                        cx,
+                        move |_, cx| {
+                            clear_controller.update(cx, |controller, cx| {
+                                controller.catalog_view.borrow_mut().hosts_group_filter = None;
+                                cx.notify();
+                            });
+                        },
+                    ))
+            };
+            empty
+                .build_page()
+                .id("hosts-empty-region")
+                .test_support()
+                .h_auto()
+                .flex_1()
+                .min_h_0()
+                .into_any_element()
         } else {
             render_collection(&visible, false, "library-host").into_any_element()
         };

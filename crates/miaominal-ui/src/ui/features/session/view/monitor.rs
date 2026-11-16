@@ -403,39 +403,29 @@ impl SessionController {
 
         if !monitoring.auto_collect_enabled {
             let profile_id = session.profile_id.clone();
-            return v_flex()
+            return div()
                 .id("session-monitor-panel-content")
                 .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .p_3()
                 .child(
-                    div()
-                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                        .text_center()
-                        .text_color(rgb(roles.on_surface))
-                        .child(i18n::string("workspace.panel.monitor.disabled_title")),
+                    crate::ui::components::empty_state::EmptyState::new(
+                        crate::ui::assets::AppIcon::Sliders,
+                        i18n::string("workspace.panel.monitor.disabled_title"),
+                    )
+                    .description(i18n::string("workspace.panel.monitor.disabled_body"))
+                    .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+                    .action(editor_button(
+                        i18n::string("workspace.panel.monitor.start_now"),
+                        false,
+                        true,
+                        move |_, cx| {
+                            let profile_id = profile_id.clone();
+                            entity.update(cx, |controller, cx| {
+                                controller.enable_profile_monitoring(&profile_id, cx);
+                            });
+                        },
+                    ))
+                    .build(),
                 )
-                .child(
-                    div()
-                        .max_w(px(280.0))
-                        .text_center()
-                        .text_size(miaominal_settings::FontSize::Body.scaled())
-                        .text_color(rgb(text_muted))
-                        .child(i18n::string("workspace.panel.monitor.disabled_body")),
-                )
-                .child(editor_button(
-                    i18n::string("workspace.panel.monitor.start_now"),
-                    false,
-                    true,
-                    move |_, cx| {
-                        let profile_id = profile_id.clone();
-                        entity.update(cx, |controller, cx| {
-                            controller.enable_profile_monitoring(&profile_id, cx);
-                        });
-                    },
-                ))
                 .into_any_element();
         }
 
@@ -1011,45 +1001,47 @@ impl SessionController {
         error: &str,
         text_muted: u32,
     ) -> gpui_kit::AnyElement {
-        let roles = miaominal_settings::current_theme().material.roles;
         let error_preview = truncate_with_ellipsis(error, 180);
-        v_flex()
+        div()
             .id("session-monitor-panel-content")
             .size_full()
-            .items_center()
-            .justify_center()
-            .gap_3()
-            .p_3()
             .child(
-                div()
-                    .text_center()
-                    .text_size(miaominal_settings::FontSize::Input.scaled())
-                    .text_color(rgb(roles.on_surface))
-                    .child(i18n::string("workspace.panel.monitor.error_title")),
+                crate::ui::components::empty_state::EmptyState::new(
+                    crate::ui::assets::AppIcon::Rotate,
+                    i18n::string("workspace.panel.monitor.error_title"),
+                )
+                .tone(crate::ui::components::empty_state::EmptyStateTone::ErrorRecovery)
+                .size(crate::ui::components::empty_state::EmptyStateSize::Panel)
+                .action(
+                    v_flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .id("session-monitor-error-message")
+                                .max_w(px(280.0))
+                                .max_h(px(52.0))
+                                .overflow_hidden()
+                                .text_center()
+                                .text_size(miaominal_settings::FontSize::Body.scaled())
+                                .text_color(rgb(text_muted))
+                                .tooltip(monitor_tooltip(error.to_string()))
+                                .child(error_preview),
+                        )
+                        .child(editor_button(
+                            i18n::string("workspace.panel.monitor.retry"),
+                            false,
+                            true,
+                            move |_, cx| {
+                                let profile_id = profile_id.clone();
+                                entity.update(cx, |controller, cx| {
+                                    controller.enable_profile_monitoring(&profile_id, cx);
+                                });
+                            },
+                        )),
+                )
+                .build(),
             )
-            .child(
-                div()
-                    .id("session-monitor-error-message")
-                    .max_w(px(280.0))
-                    .max_h(px(52.0))
-                    .overflow_hidden()
-                    .text_center()
-                    .text_size(miaominal_settings::FontSize::Body.scaled())
-                    .text_color(rgb(text_muted))
-                    .tooltip(monitor_tooltip(error.to_string()))
-                    .child(error_preview),
-            )
-            .child(editor_button(
-                i18n::string("workspace.panel.monitor.retry"),
-                false,
-                true,
-                move |_, cx| {
-                    let profile_id = profile_id.clone();
-                    entity.update(cx, |controller, cx| {
-                        controller.enable_profile_monitoring(&profile_id, cx);
-                    });
-                },
-            ))
             .into_any_element()
     }
 

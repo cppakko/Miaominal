@@ -5,7 +5,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_chip, catalog_card_chips, catalog_card_content, catalog_card_icon,
     catalog_card_surface, catalog_card_title,
 };
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::{EmptyState, EmptyStateSize, empty_state_tonal_action};
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
@@ -595,7 +595,7 @@ impl TrustedHostsController {
         &self,
         controller: Entity<Self>,
         available_width: f32,
-        _cx: &App,
+        cx: &App,
     ) -> gpui_kit::AnyElement {
         let entries = self.known_hosts_entries().clone();
         let profiles = self.catalog.profiles();
@@ -605,15 +605,10 @@ impl TrustedHostsController {
         let orphaned = views.iter().filter(|view| view.is_orphaned()).count();
         let duplicated = views.iter().filter(|view| view.duplicate_count > 1).count();
         if views.is_empty() {
-            return empty_page(
-                AppIcon::FingerPrint,
-                format!(
-                    "{}\n{}",
-                    i18n::string("trusted.page.empty"),
-                    i18n::string("trusted.page.empty_detail"),
-                ),
-            )
-            .into_any_element();
+            return EmptyState::new(AppIcon::FingerPrint, i18n::string("trusted.page.empty"))
+                .description(i18n::string("trusted.page.empty_detail"))
+                .build_page()
+                .into_any_element();
         }
 
         let filter = self.filter;
@@ -717,10 +712,27 @@ impl TrustedHostsController {
                             .min_w_0()
                             .min_h_0()
                             .child(if filtered.is_empty() {
-                                empty_page(
-                                    AppIcon::FingerPrint,
-                                    i18n::string("trusted.page.no_matches"),
+                                let reset_controller = controller.clone();
+                                EmptyState::new(
+                                    AppIcon::Filter,
+                                    i18n::string("trusted.page.no_matches_title"),
                                 )
+                                .description(i18n::string("trusted.page.no_matches"))
+                                .action(empty_state_tonal_action(
+                                    "trusted-clear-filter",
+                                    Some(AppIcon::Rotate),
+                                    i18n::string("trusted.page.clear_filter"),
+                                    cx,
+                                    move |_, cx| {
+                                        reset_controller.update(cx, |controller, cx| {
+                                            controller.set_trusted_host_filter(
+                                                TrustedHostFilter::All,
+                                                cx,
+                                            );
+                                        });
+                                    },
+                                ))
+                                .build_page()
                                 .into_any_element()
                             } else {
                                 div()
@@ -784,10 +796,13 @@ impl TrustedHostsController {
                     .into_any_element()
             })
             .unwrap_or_else(|| {
-                empty_page(
+                EmptyState::new(
                     AppIcon::FingerPrint,
-                    i18n::string("trusted.page.no_matches"),
+                    i18n::string("trusted.details.empty_title"),
                 )
+                .description(i18n::string("trusted.details.empty_copy"))
+                .size(EmptyStateSize::Panel)
+                .build_page()
                 .into_any_element()
             })
     }

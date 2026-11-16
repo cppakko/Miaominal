@@ -651,20 +651,15 @@ impl TableDelegate for SftpBrowserTableDelegate {
         _: &mut Window,
         _: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let material = miaominal_settings::current_theme().material;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
-
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(miaominal_settings::FontSize::Body.scaled())
-            .text_color(rgb(text_muted))
-            .child(self.empty_message.clone())
+        let title = match self.side {
+            SftpBrowserSide::Local => i18n::string("sftp_browser.empty.local_title"),
+            SftpBrowserSide::Remote => i18n::string("sftp_browser.empty.remote_title"),
+        };
+        crate::ui::components::empty_state::EmptyState::new(AppIcon::FolderOpen, title)
+            .description(self.empty_message.clone())
+            .size(crate::ui::components::empty_state::EmptyStateSize::Compact)
+            .min_height(0.0)
+            .build()
             .into_any_element()
     }
 

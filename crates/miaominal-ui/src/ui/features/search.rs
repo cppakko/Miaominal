@@ -556,10 +556,16 @@ impl Render for SearchView {
                             .ok();
                     })
                     .empty(move |_, _, _| {
-                        div()
-                            .p(space(24.0))
-                            .text_color(colors.muted)
-                            .child(i18n::string("search.empty"))
+                        div().py(space(12.0)).child(
+                            crate::ui::components::empty_state::EmptyState::new(
+                                AppIcon::Search,
+                                i18n::string("search.empty_title"),
+                            )
+                            .description(i18n::string("search.empty"))
+                            .size(crate::ui::components::empty_state::EmptyStateSize::Compact)
+                            .min_height(0.0)
+                            .build(),
+                        )
                     })
                     .footer(move |_, window, _| {
                         gpui_kit::component::h_flex()

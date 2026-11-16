@@ -791,10 +791,6 @@ impl WorkspacePanesAppViewExt for AppView {
     ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
-        let text_muted = crate::ui::theme::palette_tone_rgb(
-            material.palettes.neutral_variant,
-            if material.dark { 65 } else { 50 },
-        );
         let active_index = self.workspace.workspace.active_tab;
         let terminal_focused = self
             .workspace
@@ -924,30 +920,12 @@ impl WorkspacePanesAppViewExt for AppView {
             })
             .when(active_index.is_none(), |this| {
                 this.child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            v_flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_size(
-                                            miaominal_settings::FontSize::SectionTitle.scaled(),
-                                        )
-                                        .text_color(rgb(roles.on_surface))
-                                        .child(i18n::string("workspace.empty.open_ssh_tab_title")),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(miaominal_settings::FontSize::Input.scaled())
-                                        .text_color(rgb(text_muted))
-                                        .child(i18n::string("workspace.empty.open_ssh_tab_body")),
-                                ),
-                        ),
+                    crate::ui::components::empty_state::EmptyState::new(
+                        AppIcon::Computer,
+                        i18n::string("workspace.empty.open_ssh_tab_title"),
+                    )
+                    .description(i18n::string("workspace.empty.open_ssh_tab_body"))
+                    .build(),
                 )
             });
 

@@ -3,7 +3,7 @@ use crate::ui::components::catalog_card::{
     catalog_card_content, catalog_card_icon, catalog_card_subtitle, catalog_card_surface,
     catalog_card_title,
 };
-use crate::ui::components::empty_state::empty_page;
+use crate::ui::components::empty_state::{EmptyState, EmptyStateSize};
 use crate::ui::components::metrics::EDITOR_DRAWER_WIDTH;
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
 use crate::ui::components::{
@@ -624,10 +624,13 @@ impl ForwardingController {
                     .size_full()
                     .child(div().px_4().pt_4().pb_3().child(header))
                     .child(div().flex_1().min_h_0().child(if profiles.is_empty() {
-                        empty_page(
-                            AppIcon::Forward,
-                            i18n::string("forwarding.empty.no_hosts_available"),
+                        EmptyState::new(
+                            AppIcon::Computer,
+                            i18n::string("forwarding.empty.no_hosts_available_title"),
                         )
+                        .description(i18n::string("forwarding.empty.no_hosts_available"))
+                        .size(EmptyStateSize::Panel)
+                        .build_page()
                         .into_any_element()
                     } else {
                         div()
@@ -744,16 +747,23 @@ impl ForwardingController {
             .sum::<usize>();
 
         if profiles.is_empty() {
-            return empty_page(
-                AppIcon::Forward,
-                i18n::string("forwarding.empty.no_host_profiles"),
+            return EmptyState::new(
+                AppIcon::Computer,
+                i18n::string("forwarding.empty.no_host_profiles_title"),
             )
+            .description(i18n::string("forwarding.empty.no_host_profiles"))
+            .build_page()
             .into_any_element();
         }
 
         if total_rules == 0 {
-            return empty_page(AppIcon::Forward, i18n::string("forwarding.empty.no_rules"))
-                .into_any_element();
+            return EmptyState::new(
+                AppIcon::Forward,
+                i18n::string("forwarding.empty.no_rules_title"),
+            )
+            .description(i18n::string("forwarding.empty.no_rules"))
+            .build_page()
+            .into_any_element();
         }
 
         let header = v_flex()
