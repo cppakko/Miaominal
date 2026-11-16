@@ -4,6 +4,7 @@ use crate::ui::components::{
     HintedInput,
     forms::{new_input_state, set_input_value},
     shell_tokens::{ShellColors, ShellMetrics, ShellTypography, space},
+    tokens::color_with_alpha,
 };
 use crate::ui::contracts::search::SearchKind;
 use crate::ui::contracts::search::{SearchEntry, SearchTarget};
@@ -18,9 +19,10 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _,
-    IntoElement, MouseButton, Render, SharedString, Styled as _, Subscription, TestSupportExt as _,
-    WeakEntity, Window, div, prelude::*, px,
+    IntoElement, MouseButton, Pixels, Render, SharedString, Styled as _, Subscription,
+    TestSupportExt as _, WeakEntity, Window, div, prelude::*, px, rgb,
 };
+use miaominal_settings::theme::Md3Roles;
 use std::{cell::Cell, rc::Rc};
 
 pub(in crate::ui) enum SearchEvent {
@@ -183,33 +185,111 @@ impl SearchView {
         cx.notify();
     }
 }
+const SEARCH_CARD_RADIUS: f32 = 28.0;
+
+#[derive(Clone, Copy)]
+struct SearchSurfaceTheme {
+    colors: ShellColors,
+    roles: Md3Roles,
+    dark: bool,
+}
+
+impl SearchSurfaceTheme {
+    fn current() -> Self {
+        let material = miaominal_settings::current_theme().material;
+        Self {
+            colors: ShellColors::current(),
+            roles: material.roles,
+            dark: material.dark,
+        }
+    }
+
+    fn item_icon_tile_bg(&self, selected: bool) -> gpui_kit::Hsla {
+        if selected {
+            self.colors.primary
+        } else {
+            color_with_alpha(self.roles.primary, if self.dark { 0x2E } else { 0x22 }).into()
+        }
+    }
+}
+
 fn render_search_input_region(
     input: Entity<InputState>,
     query: String,
     open: bool,
-    colors: ShellColors,
+    focused: bool,
+    surface: SearchSurfaceTheme,
+    rem_size: Pixels,
     owner: WeakEntity<SearchView>,
 ) -> AnyElement {
+    let colors = surface.colors;
+    let caret_inset = space(4.0).to_pixels(rem_size);
     let input_view = HintedInput::new(&input)
         .appearance(false)
         .text_metrics(
             miaominal_settings::scaled_font_size(ShellTypography::TITLE_SIZE),
             miaominal_settings::scaled_line_height(ShellTypography::TITLE_LINE_HEIGHT),
         )
-        .hint_left(miaominal_settings::scaled_font_size(16.0))
+        .hint_left(caret_inset)
         .hint_color(colors.muted)
         .h(space(ShellMetrics::SEARCH_HEIGHT))
         .w_full()
         .p_0()
-        .px(space(16.0))
-        .when(!query.is_empty(), |input| {
+        .px(caret_inset);
+
+    let owner_for_open = owner.clone();
+    let region = div()
+        .id("search-input-region")
+        .test_support()
+        .capture_any_mouse_down(move |event, window, cx| {
+            if event.button == MouseButton::Left {
+                owner_for_open
+                    .update(cx, |search, cx| {
+                        search.open = true;
+                        if !search.input.focus_handle(cx).is_focused(window) {
+                            search.suppress_next_focus = false;
+                            search.input.update(cx, |input, cx| input.focus(window, cx));
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            }
+        })
+        .h(space(ShellMetrics::SEARCH_HEIGHT))
+        .w_full()
+        .relative()
+        .px(space(20.0))
+        .flex()
+        .items_center()
+        .gap(space(12.0))
+        .when(!open, |region| {
+            region
+                .rounded_full()
+                .bg(colors.card)
+                .hover(|style| style.bg(colors.hover))
+        })
+        .child(
+            Icon::new(IconName::Search)
+                .size(space(24.0))
+                .text_color(if open || focused {
+                    colors.primary
+                } else {
+                    colors.muted
+                }),
+        )
+        .child(div().flex_1().min_w_0().child(input_view))
+        .when(!query.is_empty(), |region| {
             let owner = owner.clone();
-            input.suffix(
+            region.child(
                 Button::new("search-clear")
                     .ghost()
-                    .child(Icon::new(IconName::Close).size(space(20.0)))
-                    .accessibility_label(i18n::string("search.clear"))
+                    .rounded_full()
+                    .p_0()
                     .size(space(32.0))
+                    .text_color(colors.muted)
+                    .tooltip(i18n::string("search.clear"))
+                    .accessibility_label(i18n::string("search.clear"))
+                    .child(Icon::new(IconName::Close).size(space(18.0)))
                     .on_click(move |_, window, cx| {
                         owner
                             .update(cx, |search, cx| {
@@ -221,43 +301,7 @@ fn render_search_input_region(
             )
         });
 
-    let owner_for_open = owner.clone();
-    div()
-        .id("search-input-region")
-        .test_support()
-        .capture_any_mouse_down(move |_, _, cx| {
-            owner_for_open
-                .update(cx, |search, cx| {
-                    search.open = true;
-                    cx.notify();
-                })
-                .ok();
-        })
-        .h(space(ShellMetrics::SEARCH_HEIGHT))
-        .relative()
-        .rounded_full()
-        .bg(if open { colors.hover } else { colors.card })
-        .px(space(20.0))
-        .flex()
-        .items_center()
-        .gap(space(12.0))
-        .child(
-            Icon::new(IconName::Search)
-                .size(space(24.0))
-                .text_color(colors.muted),
-        )
-        .child(div().flex_1().min_w_0().child(input_view))
-        .when(open, |region| {
-            region.child(
-                div()
-                    .absolute()
-                    .inset(space(-4.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(colors.primary),
-            )
-        })
-        .into_any_element()
+    region.into_any_element()
 }
 
 impl SearchView {
@@ -265,11 +309,12 @@ impl SearchView {
         &self,
         entry: &SearchEntry,
         path: IndexPath,
-        colors: ShellColors,
+        surface: SearchSurfaceTheme,
         command_state: Entity<CommandState>,
         selection: Rc<Cell<Option<IndexPath>>>,
         owner: WeakEntity<SearchView>,
     ) -> CommandItem {
+        let colors = surface.colors;
         let id = entry.id().to_owned();
         let title = entry.title().to_owned();
         let category = entry.category().to_owned();
@@ -287,12 +332,12 @@ impl SearchView {
                 let menu_target = menu_target.clone();
                 let selected = selection.get() == Some(path);
                 let foreground = if selected {
-                    colors.on_selected
+                    colors.on_primary_container
                 } else {
                     colors.foreground
                 };
                 let muted = if selected {
-                    colors.on_selected.opacity(0.82)
+                    colors.on_primary_container.opacity(0.78)
                 } else {
                     colors.muted
                 };
@@ -303,9 +348,8 @@ impl SearchView {
                     .id(SharedString::from(format!("search-result:{id}")))
                     .test_support()
                     .w_full()
-                    .min_h(space(56.0))
-                    .px(space(12.0))
-                    .py(space(8.0))
+                    .px(space(4.0))
+                    .py(space(4.0))
                     .capture_any_mouse_down(move |event: &gpui_kit::MouseDownEvent, window, cx| {
                         if event.button == MouseButton::Right {
                             let command_state = command_state_for_right_click.clone();
@@ -331,12 +375,15 @@ impl SearchView {
                         gpui_kit::component::h_flex()
                             .w_full()
                             .min_w_0()
-                            .gap(space(8.0))
+                            .items_center()
+                            .gap(space(12.0))
                             .text_color(foreground)
                             .child(
                                 div()
-                                    .size(space(32.0))
+                                    .size(space(36.0))
                                     .flex_shrink_0()
+                                    .rounded(space(10.0))
+                                    .bg(surface.item_icon_tile_bg(selected))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -349,8 +396,14 @@ impl SearchView {
                                             SearchKind::Trust => AppIcon::FingerPrint,
                                             SearchKind::Setting => AppIcon::Settings,
                                         })
-                                        .size(space(20.0))
-                                        .text_color(colors.primary),
+                                        .size(space(18.0))
+                                        .text_color(
+                                            if selected {
+                                                colors.on_primary
+                                            } else {
+                                                colors.primary
+                                            },
+                                        ),
                                     ),
                             )
                             .child(
@@ -380,7 +433,13 @@ impl SearchView {
                                             .child(category),
                                     ),
                             )
-                            .child(Icon::new(AppIcon::Next).size(space(20.0)).text_color(muted)),
+                            .child(Icon::new(AppIcon::Next).size(space(16.0)).text_color(
+                                if selected {
+                                    colors.on_primary_container
+                                } else {
+                                    colors.muted.opacity(0.65)
+                                },
+                            )),
                     )
                     .into_any_element()
             })
@@ -388,7 +447,7 @@ impl SearchView {
 
     fn command_entries(
         &self,
-        colors: ShellColors,
+        surface: SearchSurfaceTheme,
         command_state: Entity<CommandState>,
         selection: Rc<Cell<Option<IndexPath>>>,
         owner: WeakEntity<SearchView>,
@@ -403,7 +462,7 @@ impl SearchView {
                 self.command_item(
                     entry,
                     path,
-                    colors,
+                    surface,
                     command_state.clone(),
                     selection.clone(),
                     owner.clone(),
@@ -438,7 +497,7 @@ impl SearchView {
                     self.command_item(
                         entry,
                         path,
-                        colors,
+                        surface,
                         command_state.clone(),
                         selection.clone(),
                         owner.clone(),
@@ -458,16 +517,20 @@ impl SearchView {
 
 impl Render for SearchView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = ShellColors::current();
+        let surface = SearchSurfaceTheme::current();
+        let colors = surface.colors;
         let focus = self.input.focus_handle(cx);
         let owner = cx.weak_entity();
         let input = self.input.clone();
         let query = self.query.clone();
         let open = self.open;
         let command_state = self.command_state.clone();
+        let focused = focus.is_focused(window)
+            || (open && command_state.focus_handle(cx).contains_focused(window, cx));
+        let rem_size = window.rem_size();
         let selection = Rc::new(Cell::new(command_state.read(cx).selected_index()));
         let (entries, targets) = self.command_entries(
-            colors,
+            surface,
             command_state.clone(),
             selection.clone(),
             owner.clone(),
@@ -478,9 +541,8 @@ impl Render for SearchView {
         {
             selection.set(targets.first().map(|(path, _)| *path));
         }
-        let max_height = (f32::from(window.bounds().size.height)
-            - f32::from(window.rem_size()) * 17.0)
-            .max(100.0);
+        let max_height =
+            (f32::from(window.bounds().size.height) - f32::from(rem_size) * 17.0).max(100.0);
         let mut command = Command::new(&command_state)
             .searchable(false)
             .filterable(false)
@@ -494,8 +556,7 @@ impl Render for SearchView {
             })
             .bordered(false)
             .bg(colors.card)
-            .rounded(space(28.0))
-            .shadow_lg()
+            .rounded(space(SEARCH_CARD_RADIUS))
             .max_h(px(max_height));
         for entry in entries {
             command = match entry {
@@ -514,8 +575,7 @@ impl Render for SearchView {
             }))
             .w_full()
             .flex()
-            .flex_col()
-            .gap(space(8.0));
+            .flex_col();
 
         if open {
             let header_input = input.clone();
@@ -525,73 +585,86 @@ impl Render for SearchView {
             let target_map = targets.clone();
             let empty_owner = owner.clone();
             let footer_count = self.results.len().to_string();
+            let command_element = command
+                .header(move |_, _, _| {
+                    render_search_input_region(
+                        header_input.clone(),
+                        header_query.clone(),
+                        true,
+                        focused,
+                        surface,
+                        rem_size,
+                        header_owner.clone(),
+                    )
+                })
+                .on_confirm(move |index, _, cx| {
+                    let Some((_, target)) = target_map.iter().find(|(path, _)| *path == index)
+                    else {
+                        return;
+                    };
+                    let target = target.clone();
+                    target_owner
+                        .update(cx, |search, cx| {
+                            search.open = false;
+                            cx.emit(SearchEvent::Activate(target));
+                            cx.notify();
+                        })
+                        .ok();
+                })
+                .on_cancel(move |window, cx| {
+                    empty_owner
+                        .update(cx, |search, cx| search.dismiss(true, window, cx))
+                        .ok();
+                })
+                .empty(move |_, _, _| {
+                    div().py(space(12.0)).child(
+                        crate::ui::components::empty_state::EmptyState::new(
+                            AppIcon::Search,
+                            i18n::string("search.empty_title"),
+                        )
+                        .description(i18n::string("search.empty"))
+                        .size(crate::ui::components::empty_state::EmptyStateSize::Compact)
+                        .min_height(0.0)
+                        .build(),
+                    )
+                })
+                .footer(move |_, window, _| {
+                    gpui_kit::component::h_flex()
+                        .w_full()
+                        .min_h(space(36.0))
+                        .rounded_b(space(SEARCH_CARD_RADIUS))
+                        .bg(rgb(surface.roles.surface_container))
+                        .px(space(20.0))
+                        .py(space(8.0))
+                        .justify_between()
+                        .gap(space(12.0))
+                        .text_size(space(12.0))
+                        .line_height(space(16.0))
+                        .text_color(colors.muted)
+                        .child(i18n::string_args(
+                            "search.result_count",
+                            &[("count", &footer_count)],
+                        ))
+                        .when(
+                            f32::from(window.viewport_size().width)
+                                > f32::from(window.rem_size()) / 14.0 * 700.0,
+                            |row| row.child(i18n::string("search.shortcuts")),
+                        )
+                })
+                .w_full();
+
             content = content.child(
-                command
-                    .header(move |_, _, _| {
-                        render_search_input_region(
-                            header_input.clone(),
-                            header_query.clone(),
-                            true,
-                            colors,
-                            header_owner.clone(),
-                        )
-                    })
-                    .on_confirm(move |index, _, cx| {
-                        let Some((_, target)) = target_map.iter().find(|(path, _)| *path == index)
-                        else {
-                            return;
-                        };
-                        let target = target.clone();
-                        target_owner
-                            .update(cx, |search, cx| {
-                                search.open = false;
-                                cx.emit(SearchEvent::Activate(target));
-                                cx.notify();
-                            })
-                            .ok();
-                    })
-                    .on_cancel(move |window, cx| {
-                        empty_owner
-                            .update(cx, |search, cx| search.dismiss(true, window, cx))
-                            .ok();
-                    })
-                    .empty(move |_, _, _| {
-                        div().py(space(12.0)).child(
-                            crate::ui::components::empty_state::EmptyState::new(
-                                AppIcon::Search,
-                                i18n::string("search.empty_title"),
-                            )
-                            .description(i18n::string("search.empty"))
-                            .size(crate::ui::components::empty_state::EmptyStateSize::Compact)
-                            .min_height(0.0)
-                            .build(),
-                        )
-                    })
-                    .footer(move |_, window, _| {
-                        gpui_kit::component::h_flex()
-                            .min_h(space(32.0))
-                            .px(space(12.0))
-                            .py(space(8.0))
-                            .justify_between()
-                            .gap(space(12.0))
-                            .text_size(space(12.0))
-                            .line_height(space(16.0))
-                            .text_color(colors.muted)
-                            .child(i18n::string_args(
-                                "search.result_count",
-                                &[("count", &footer_count)],
-                            ))
-                            .when(
-                                f32::from(window.viewport_size().width)
-                                    > f32::from(window.rem_size()) / 14.0 * 700.0,
-                                |row| row.child(i18n::string("search.shortcuts")),
-                            )
-                    })
-                    .w_full(),
+                div()
+                    .id("search-results")
+                    .test_support()
+                    .w_full()
+                    .rounded(space(SEARCH_CARD_RADIUS))
+                    .shadow_lg()
+                    .child(command_element),
             );
         } else {
             content = content.child(render_search_input_region(
-                input, query, false, colors, owner,
+                input, query, false, focused, surface, rem_size, owner,
             ));
         }
 
