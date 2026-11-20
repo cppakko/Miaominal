@@ -238,6 +238,13 @@ impl OnboardingStep {
         let index = self.index(portable)?;
         Self::steps(portable).get(index + 1).copied()
     }
+
+    pub(in crate::ui) fn previous(self, portable: bool) -> Option<Self> {
+        let index = self.index(portable)?;
+        index
+            .checked_sub(1)
+            .and_then(|previous| Self::steps(portable).get(previous).copied())
+    }
 }
 
 fn portable_vault_is_required() -> bool {
@@ -2438,6 +2445,16 @@ impl SettingsController {
         true
     }
 
+    pub(in crate::ui) fn previous_onboarding_step(&mut self, cx: &mut Context<Self>) -> bool {
+        let portable = portable_vault_is_required();
+        let Some(previous_step) = self.onboarding.onboarding_step.previous(portable) else {
+            return false;
+        };
+        self.onboarding.onboarding_step = previous_step;
+        cx.notify();
+        true
+    }
+
     pub(in crate::ui) fn set_onboarding_step(
         &mut self,
         step: OnboardingStep,
@@ -2465,6 +2482,13 @@ impl SettingsController {
             .onboarding_step
             .next(portable)
             .is_some_and(|step| onboarding_step_is_allowed(portable, self.local_vault_status, step))
+    }
+
+    pub(in crate::ui) fn can_go_back_onboarding(&self) -> bool {
+        self.onboarding
+            .onboarding_step
+            .previous(portable_vault_is_required())
+            .is_some()
     }
 
     pub(in crate::ui) fn can_finish_onboarding(&self) -> bool {
@@ -3452,6 +3476,15 @@ mod tests {
         );
         assert_eq!(
             OnboardingStep::Preferences.next(true),
+            Some(OnboardingStep::Security)
+        );
+        assert_eq!(OnboardingStep::Welcome.previous(false), None);
+        assert_eq!(
+            OnboardingStep::Import.previous(false),
+            Some(OnboardingStep::Preferences)
+        );
+        assert_eq!(
+            OnboardingStep::Import.previous(true),
             Some(OnboardingStep::Security)
         );
     }

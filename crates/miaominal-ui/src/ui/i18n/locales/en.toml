@@ -410,28 +410,38 @@ message = "Local data was cleared, but the window could not be rebuilt automatic
 
 [onboarding.hero]
 title = "Welcome to Miaominal"
-
-[onboarding.welcome]
+subtitle = "A desktop terminal for SSH sessions, SFTP transfers, and encrypted configuration sync."
 
 [onboarding.import]
 title = "Import existing profiles"
-
-[onboarding.quick_start]
+subtitle = "Bring in hosts from another client, or skip and import later in Settings."
+supported_sources = "Supported formats"
 
 [onboarding.preferences]
 title = "Tune the basics"
+subtitle = "Pick a theme palette and comfortable fonts. Every change applies immediately."
+advanced_title = "More typography & mouse options"
+advanced_description = "Font fallbacks, terminal line height, and right-click behavior"
 
 [onboarding.security]
 title = "Protect your Portable data"
+subtitle = "Keep credentials encrypted inside this Portable instance."
 create_description = "Portable mode never uses the system credential store. Create a local secrets vault passphrase before continuing so passwords, private-key passphrases, API keys, sync credentials, and encrypted chat history can be stored safely inside this Portable instance."
 unlock_description = "This Portable instance already has a local secrets vault. Unlock it before continuing so encrypted credentials and chat history remain available."
 ready_description = "The local secrets vault is ready and unlocked for this session. Portable credentials will stay inside this data directory."
 create_action = "Create secrets vault"
 unlock_action = "Unlock secrets vault"
+status_setup_required = "Setup required"
+status_locked = "Locked"
+status_ready = "Unlocked"
 
 [onboarding.finish]
 title = "Ready to go"
-congratulations_description = "Your basic setup is complete. Ready to start your terminal journey."
+congratulations_description = "Your workspace basics are configured. Open Miaominal whenever you are ready."
+summary_language = "Language"
+summary_theme = "Appearance"
+summary_security = "Local vault"
+summary_security_ready = "Unlocked"
 
 [onboarding.steps]
 welcome = "Welcome"
@@ -439,6 +449,18 @@ preferences = "Preferences"
 security = "Security"
 import = "Import"
 finish = "Finish"
+
+[onboarding.rail]
+portable_badge = "Portable"
+step_optional = "Optional"
+
+[onboarding.navigation]
+step_counter = "Step {current} of {total}"
+back = "Back"
+next = "Continue"
+get_started = "Get started"
+finish = "Start using Miaominal"
+security_gate_hint = "Complete Security setup above to continue"
 
 [settings.key_bindings.workspace_group]
 title = "Workspace"

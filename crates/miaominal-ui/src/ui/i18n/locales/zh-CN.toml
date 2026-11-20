@@ -406,28 +406,38 @@ message = "本地数据已经清除，但当前窗口无法自动重建。"
 
 [onboarding.hero]
 title = "欢迎使用 Miaominal"
-
-[onboarding.welcome]
+subtitle = "集 SSH 会话、SFTP 传输与加密配置同步于一体的桌面终端。"
 
 [onboarding.import]
 title = "导入已有配置"
-
-[onboarding.quick_start]
+subtitle = "从其他终端导入已有主机配置，也可稍后在设置中导入。"
+supported_sources = "支持导入格式"
 
 [onboarding.preferences]
-title = "完成基础设置"
+title = "基础外观与排版"
+subtitle = "选择主题配色与常用字体，调整会立即生效。"
+advanced_title = "更多字体与鼠标选项"
+advanced_description = "字体回退、终端行高与右键菜单行为"
 
 [onboarding.security]
 title = "保护 Portable 数据"
+subtitle = "在当前便携实例目录内加密保管你的凭据与密钥。"
 create_description = "Portable 模式不会使用系统凭据存储。继续前请创建本地机密库口令，以便将密码、私钥口令、API Key、同步凭据和加密聊天历史安全地保存在当前 Portable 实例中。"
 unlock_description = "当前 Portable 实例已有本地机密库。继续前请先解锁，以便使用已加密的凭据和聊天历史。"
 ready_description = "本地机密库已就绪并在本次会话中解锁。Portable 凭据将始终保存在此数据目录内。"
 create_action = "创建机密库"
 unlock_action = "解锁机密库"
+status_setup_required = "需要创建"
+status_locked = "已锁定"
+status_ready = "已解锁"
 
 [onboarding.finish]
-title = "一切就绪！"
-congratulations_description = "基础设置已完成，开始你的终端之旅吧。"
+title = "一切就绪"
+congratulations_description = "基础设置已经完成，随时可以开始使用 Miaominal。"
+summary_language = "界面语言"
+summary_theme = "界面外观"
+summary_security = "本地机密库"
+summary_security_ready = "已解锁"
 
 [onboarding.steps]
 welcome = "欢迎"
@@ -435,6 +445,18 @@ preferences = "偏好"
 security = "安全"
 import = "导入"
 finish = "完成"
+
+[onboarding.rail]
+portable_badge = "便携模式"
+step_optional = "可选"
+
+[onboarding.navigation]
+step_counter = "第 {current} 步，共 {total} 步"
+back = "上一步"
+next = "下一步"
+get_started = "开始设置"
+finish = "开始使用 Miaominal"
+security_gate_hint = "请先完成上方安全存储配置"
 
 [settings.key_bindings.workspace_group]
 title = "工作区"

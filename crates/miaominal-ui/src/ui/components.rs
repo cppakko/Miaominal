@@ -69,10 +69,7 @@ pub(crate) use fab_button::{dock_action_button, dock_icon_action_button, fab_ico
 pub(crate) use font_family_picker::{
     FontFamilyPickerState, font_family_picker, new_font_family_picker, sync_font_family_picker,
 };
-pub(crate) use icon_button::{
-    IconButtonStyle, footer_tool_button, icon_button, icon_button_with_icon_size,
-    icon_button_with_tooltip,
-};
+pub(crate) use icon_button::{footer_tool_button, icon_button, icon_button_with_tooltip};
 pub(crate) use input_hint::{
     HintedEditor, HintedInput, HintedTextarea, register_code_editor_input_hint,
     register_input_hint, register_textarea_hint,

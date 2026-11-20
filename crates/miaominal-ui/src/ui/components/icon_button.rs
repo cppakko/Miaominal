@@ -56,14 +56,6 @@ impl IconButtonIcon {
     }
 }
 
-pub(crate) struct IconButtonStyle {
-    pub size: f32,
-    pub corner_radius: f32,
-    pub background: Option<u32>,
-    pub foreground: Option<u32>,
-    pub border: Option<u32>,
-}
-
 pub(crate) fn icon_button(
     icon: AppIcon,
     size: f32,
@@ -119,23 +111,6 @@ pub(crate) fn icon_button_with_tooltip(
     }
 
     div().size(px(size)).child(button)
-}
-
-pub(crate) fn icon_button_with_icon_size(
-    icon: AppIcon,
-    icon_size: f32,
-    style: IconButtonStyle,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> Div {
-    icon_button_base(
-        style.size,
-        style.corner_radius,
-        style.background,
-        style.foreground,
-        style.border,
-        on_click,
-    )
-    .child(Icon::new(icon).size(px(icon_size)))
 }
 
 fn icon_button_base(

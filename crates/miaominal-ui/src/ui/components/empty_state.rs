@@ -426,6 +426,22 @@ impl EmptyState {
 
 /// Renders a flat, minimalist two-plane Material 3 tonal emblem (soft organic halo + crisp
 /// circular tonal core + oversized vector glyph).
+pub(in crate::ui) fn m3_tonal_emblem(
+    icon: impl Into<Icon>,
+    outer_size: f32,
+    core_size: f32,
+    icon_size: f32,
+    tone: EmptyStateTone,
+) -> Div {
+    build_emblem(
+        icon.into(),
+        outer_size,
+        core_size,
+        icon_size,
+        tone.palette(),
+    )
+}
+
 fn build_emblem(
     icon: Icon,
     outer_size: f32,

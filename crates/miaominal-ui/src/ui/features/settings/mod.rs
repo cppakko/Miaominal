@@ -2,9 +2,7 @@
 use crate::ui::components::overlay_target::OverlayTarget;
 
 use crate::ui::assets::AppIcon;
-use crate::ui::components::animation::{
-    CONTAINER_TRANSITION_DURATION, render_basic_dialog, render_bottom_popup,
-};
+use crate::ui::components::animation::{render_basic_dialog, render_bottom_popup};
 use crate::ui::components::forms::{
     localized_secret_placeholder, new_input_state, set_input_placeholder, set_input_value,
 };
