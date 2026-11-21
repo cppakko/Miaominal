@@ -75,7 +75,7 @@ resvg = "0.47.0"
 rfd = "0.17.2"
 roxmltree = "0.21.1"
 rusqlite = { version = "0.41", features = ["bundled"] }
-russh = "0.65.1"
+russh = "0.65.2"
 rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs"] }
 webpki-roots = "1.0.10"
 russh-sftp = "2.3.0"
