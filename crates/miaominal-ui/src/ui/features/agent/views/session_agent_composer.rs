@@ -5,23 +5,12 @@ use crate::ui::contracts::preferences::ai_provider_kind_chat_supported;
 use crate::ui::i18n;
 use gpui_kit::component::{Disableable as _, menu::DropdownMenu as _};
 use gpui_kit::{Animation, AnimationExt as _, ClipboardEntry};
-use miaominal_agent::model::{AgentReasoningSupport, agent_reasoning_support};
+use miaominal_agent::model::{AgentReasoningSupport, agent_reasoning_support, supports_vision};
 use miaominal_agent::policy::ApprovalMode;
 use miaominal_settings::{AiProviderConfig, AiReasoningEffort};
 use std::time::Duration;
 
 const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);
-
-fn ai_provider_kind_supports_vision(kind: miaominal_settings::AiProviderKind) -> bool {
-    matches!(
-        kind,
-        miaominal_settings::AiProviderKind::OpenAi
-            | miaominal_settings::AiProviderKind::Anthropic
-            | miaominal_settings::AiProviderKind::Gemini
-            | miaominal_settings::AiProviderKind::OpenRouter
-            | miaominal_settings::AiProviderKind::Xai
-    )
-}
 
 fn selected_ai_provider(app_settings: &AgentPreferencesSnapshot) -> Option<AiProviderConfig> {
     app_settings
@@ -292,11 +281,12 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
     let pending_attachments = state.pending_attachments.clone();
     let exec_mode_is_pty = state.exec_mode.is_pty();
     let target_candidates = agent_controller.target_candidates();
-    let selected_provider_kind =
-        selected_ai_provider(&settings.snapshot(cx)).map(|provider| provider.kind);
-    let has_provider = selected_provider_kind.is_some();
+    let selected_provider = selected_ai_provider(&settings.snapshot(cx));
+    let has_provider = selected_provider.is_some();
     let image_text_fallback = has_pending_images
-        && selected_provider_kind.is_some_and(|kind| !ai_provider_kind_supports_vision(kind));
+        && selected_provider
+            .as_ref()
+            .is_some_and(|provider| !supports_vision(provider.kind, &provider.model));
 
     div()
         .flex_shrink_0()

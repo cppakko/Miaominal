@@ -757,12 +757,19 @@ impl SettingsController {
         _popup: PendingAiProviderPopupState,
         exit_progress: Option<f32>,
         bottom_popup_viewport_height: f32,
-        _cx: &App,
+        cx: &App,
     ) -> gpui_kit::AnyElement {
         let roles = miaominal_settings::current_theme().material.roles;
         let settings_controller = entity.clone();
         let settings_forms = presentation.forms.clone();
         let kind_select = settings_forms.ai_provider_kind_select.clone();
+        let selected_kind = kind_select
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or(miaominal_settings::AiProviderKind::OpenAi);
+        let base_url_required = selected_kind == miaominal_settings::AiProviderKind::Custom;
+        let api_key_required = selected_kind.requires_api_key();
         let name_input = settings_forms.ai_provider_name_input.clone();
         let model_input = settings_forms.ai_provider_model_input.clone();
         let base_url_input = settings_forms.ai_provider_base_url_input.clone();
@@ -818,7 +825,7 @@ impl SettingsController {
                 i18n::string("settings.ai_providers.base_url.label"),
                 base_url_input,
                 TextInputSurface::Low,
-                false,
+                base_url_required,
             ))
             .child(surface_secret_text_input_stack(
                 i18n::string("settings.ai_providers.api_key.label"),
@@ -826,7 +833,7 @@ impl SettingsController {
                 crate::ui::components::SecretTextInputStackOptions {
                     surface: TextInputSurface::Low,
                     size: gpui_kit::component::Size::Large,
-                    required: true,
+                    required: api_key_required,
                     disabled: operation_in_progress,
                     trailing: api_key_load_in_progress.then(|| {
                         div()

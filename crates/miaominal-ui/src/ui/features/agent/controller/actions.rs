@@ -1200,24 +1200,33 @@ impl AgentController {
     }
 
     fn resolve_ai_provider_api_key(&self, provider: &AiProviderConfig) -> anyhow::Result<String> {
-        if !provider.api_key_env.trim().is_empty()
-            && let Ok(value) = std::env::var(provider.api_key_env.trim())
-            && !value.trim().is_empty()
-        {
-            return Ok(value);
-        }
-        let api_key = self
-            .secrets()
-            .get(&provider.id, SecretKind::AiProviderApiKey)?
-            .unwrap_or_default();
-        if api_key.trim().is_empty() {
-            return Err(anyhow::anyhow!(i18n::string_args(
-                "workspace.panel.agent.api_key_missing",
-                &[("provider", &provider.name)],
-            )));
-        }
-        Ok(api_key)
+        resolve_provider_api_key(provider, &self.secrets())
     }
+}
+
+fn resolve_provider_api_key(
+    provider: &AiProviderConfig,
+    secrets: &miaominal_secrets::SecretStore,
+) -> anyhow::Result<String> {
+    if !provider.api_key_env.trim().is_empty()
+        && let Ok(value) = std::env::var(provider.api_key_env.trim())
+        && !value.trim().is_empty()
+    {
+        return Ok(value);
+    }
+    if !provider.kind.requires_api_key() && !provider.has_api_key {
+        return Ok(String::new());
+    }
+    let api_key = secrets
+        .get(&provider.id, SecretKind::AiProviderApiKey)?
+        .unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err(anyhow::anyhow!(i18n::string_args(
+            "workspace.panel.agent.api_key_missing",
+            &[("provider", &provider.name)],
+        )));
+    }
+    Ok(api_key)
 }
 
 #[cfg(test)]
@@ -1255,5 +1264,49 @@ mod tests {
         assert_eq!(snapshot.tail, "b\nc\nd");
         assert_eq!(snapshot.selection.as_deref(), Some("err"));
         assert_eq!(last_lines("x", 10), ("x".to_string(), false));
+    }
+
+    #[test]
+    fn keyless_custom_provider_resolves_empty_api_key() {
+        use miaominal_secrets::credential_backend::{CredentialBackend, CredentialStore};
+
+        struct EmptyBackend;
+        impl CredentialBackend for EmptyBackend {
+            fn name(&self) -> &'static str {
+                "empty"
+            }
+            fn get(&self, _: &str, _: &str) -> anyhow::Result<Option<String>> {
+                Ok(None)
+            }
+            fn set(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn delete(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut provider = AiProviderConfig::new(miaominal_settings::AiProviderKind::Custom);
+        provider.name = "Ollama".into();
+        provider.base_url = "http://localhost:11434/v1".into();
+        provider.model = "qwen2.5".into();
+        provider.has_api_key = false;
+
+        let locked = miaominal_secrets::SecretStore::new_locked_vault();
+        let resolved = resolve_provider_api_key(&provider, &locked)
+            .expect("keyless custom provider should resolve even while vault is locked");
+        assert!(resolved.is_empty());
+
+        let unlocked_empty = miaominal_secrets::SecretStore::with_credentials(
+            CredentialStore::with_backend("test", EmptyBackend),
+        );
+        assert!(
+            resolve_provider_api_key(&provider, &unlocked_empty)
+                .unwrap()
+                .is_empty()
+        );
+
+        let required_provider = AiProviderConfig::new(miaominal_settings::AiProviderKind::OpenAi);
+        assert!(resolve_provider_api_key(&required_provider, &unlocked_empty).is_err());
     }
 }

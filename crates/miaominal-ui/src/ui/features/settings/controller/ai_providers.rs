@@ -268,7 +268,7 @@ impl SettingsController {
             }
         };
 
-        if self.local_vault_status == LocalVaultStatus::Locked && !draft.api_key().is_empty() {
+        if self.local_vault_status == LocalVaultStatus::Locked && draft.requires_vault_unlock() {
             cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Settings(
                 SettingsDeferredCommand::SaveAiProvider(draft),
             )));
@@ -290,7 +290,7 @@ impl SettingsController {
             return;
         }
 
-        if self.local_vault_status == LocalVaultStatus::Locked {
+        if self.local_vault_status == LocalVaultStatus::Locked && draft.requires_vault_unlock() {
             cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Settings(
                 SettingsDeferredCommand::SaveAiProvider(draft),
             )));
@@ -397,7 +397,21 @@ impl SettingsController {
                 "settings.ai_providers.validation.name_required",
             )));
         }
-        if api_key.is_empty() {
+        let trimmed_base_url = base_url.trim();
+        if kind == AiProviderKind::Custom && trimmed_base_url.is_empty() {
+            return Err(ValidationFailure::required(i18n::string(
+                "settings.ai_providers.validation.base_url_required",
+            )));
+        }
+        if !trimmed_base_url.is_empty()
+            && !trimmed_base_url.starts_with("http://")
+            && !trimmed_base_url.starts_with("https://")
+        {
+            return Err(ValidationFailure::invalid(i18n::string(
+                "settings.ai_providers.validation.base_url_invalid",
+            )));
+        }
+        if kind.requires_api_key() && api_key.is_empty() {
             return Err(ValidationFailure::required(i18n::string(
                 "settings.ai_providers.validation.api_key_required",
             )));
@@ -407,6 +421,8 @@ impl SettingsController {
         let existing_has_api_key = existing
             .as_ref()
             .is_some_and(|provider| provider.has_api_key);
+        let clears_existing_api_key =
+            !kind.requires_api_key() && api_key.is_empty() && existing_has_api_key;
         let mut provider = existing.unwrap_or_else(|| AiProviderConfig::new(kind));
         provider.kind = kind;
         provider.name = name;
@@ -421,17 +437,74 @@ impl SettingsController {
             context_window,
             "settings.ai_providers.validation.context_window_range",
         )?;
-        if api_key.is_empty() && !existing_has_api_key {
+        if api_key.is_empty() && (!existing_has_api_key || clears_existing_api_key) {
             provider.api_key_env = provider.api_key_env.trim().to_string();
         }
-        provider.has_api_key = !api_key.is_empty() || existing_has_api_key;
+        provider.has_api_key =
+            !api_key.is_empty() || (kind.requires_api_key() && existing_has_api_key);
         provider.sanitize();
 
-        Ok(AiProviderSaveDraft::new(
-            provider,
-            api_key,
-            requires_existing_target,
-        ))
+        Ok(
+            AiProviderSaveDraft::new(provider, api_key, requires_existing_target)
+                .with_clears_existing_api_key(clears_existing_api_key),
+        )
+    }
+
+    pub(super) fn on_ai_provider_kind_changed(
+        &mut self,
+        kind: AiProviderKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editing_ai_provider_id.is_some() {
+            return;
+        }
+        let current_name = self
+            .forms
+            .ai_provider_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let name_is_default = current_name.is_empty()
+            || AiProviderKind::all().iter().any(|candidate| {
+                current_name == i18n::string(ai_provider_kind_label_key(*candidate))
+                    || current_name == miaominal_settings::ai_provider_kind_label(*candidate)
+            });
+        if name_is_default {
+            set_input_value(
+                &self.forms.ai_provider_name_input,
+                i18n::string(ai_provider_kind_label_key(kind)),
+                window,
+                cx,
+            );
+        }
+
+        let current_model = self
+            .forms
+            .ai_provider_model_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let model_is_default = current_model.is_empty()
+            || AiProviderKind::all()
+                .iter()
+                .any(|candidate| current_model == candidate.default_model());
+        if model_is_default {
+            set_input_value(
+                &self.forms.ai_provider_model_input,
+                kind.default_model(),
+                window,
+                cx,
+            );
+        }
+
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "settings.ai_providers.status.kind_selected",
+            &[("kind", &i18n::string(ai_provider_kind_label_key(kind)))],
+        )));
+        cx.notify();
     }
 
     fn refresh_ai_provider_select(
@@ -572,8 +645,13 @@ impl SettingsController {
         let spawn_result = std::thread::Builder::new()
             .name("ai-provider-save".to_string())
             .spawn(move || {
-                let (mut provider, api_key, editor_revision, requires_existing_target) =
-                    draft.into_parts();
+                let (
+                    mut provider,
+                    api_key,
+                    editor_revision,
+                    requires_existing_target,
+                    clears_existing_api_key,
+                ) = draft.into_parts();
                 let _sync_guard = miaominal_secrets::lock_sync_data();
                 let changed = (|| {
                     settings_store.reload_from_disk()?;
@@ -588,12 +666,16 @@ impl SettingsController {
                             "AI provider was deleted while its editor was waiting for vault unlock"
                         );
                     }
-                    SettingsService::persist_ai_provider(
+                    let changed = SettingsService::persist_ai_provider(
                         &mut settings_store,
                         &secrets,
                         &mut provider,
                         (!api_key.is_empty()).then_some(api_key.as_str()),
-                    )
+                    )?;
+                    if clears_existing_api_key {
+                        secrets.delete(&provider.id, SecretKind::AiProviderApiKey)?;
+                    }
+                    Ok(changed)
                 })();
                 let result = changed.map(|changed| AiProviderSaveTaskResult {
                     provider,
@@ -1377,5 +1459,153 @@ mod tests {
             .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn custom_provider_allows_empty_api_key_and_requires_http_base_url() {
+        let missing_url = SettingsController::validate_ai_provider_save_draft(
+            None,
+            AiProviderKind::Custom,
+            "Ollama".into(),
+            "qwen2.5".into(),
+            String::new(),
+            String::new(),
+            "",
+            "",
+            "",
+        );
+        assert!(missing_url.is_err());
+
+        let invalid_url = SettingsController::validate_ai_provider_save_draft(
+            None,
+            AiProviderKind::Custom,
+            "Ollama".into(),
+            "qwen2.5".into(),
+            "localhost:11434/v1".into(),
+            String::new(),
+            "",
+            "",
+            "",
+        );
+        assert!(invalid_url.is_err());
+
+        let valid = SettingsController::validate_ai_provider_save_draft(
+            None,
+            AiProviderKind::Custom,
+            "Ollama".into(),
+            "qwen2.5".into(),
+            "http://localhost:11434/v1".into(),
+            String::new(),
+            "",
+            "",
+            "",
+        )
+        .expect("keyless custom provider with HTTP base URL should validate");
+        assert!(!valid.requires_vault_unlock());
+        let (provider, api_key, _, _, clears_key) = valid.into_parts();
+        assert!(!provider.has_api_key);
+        assert!(api_key.is_empty());
+        assert!(!clears_key);
+
+        let openai_without_key = SettingsController::validate_ai_provider_save_draft(
+            None,
+            AiProviderKind::OpenAi,
+            "OpenAI".into(),
+            "gpt-4o".into(),
+            String::new(),
+            String::new(),
+            "",
+            "",
+            "",
+        );
+        assert!(openai_without_key.is_err());
+    }
+
+    #[test]
+    fn clearing_api_key_on_existing_custom_provider_marks_secret_deletion() {
+        let mut existing = AiProviderConfig::new(AiProviderKind::Custom);
+        existing.name = "Local vLLM".into();
+        existing.base_url = "http://127.0.0.1:8000/v1".into();
+        existing.model = "meta-llama/Llama-3-8B".into();
+        existing.has_api_key = true;
+
+        let draft = SettingsController::validate_ai_provider_save_draft(
+            Some(existing),
+            AiProviderKind::Custom,
+            "Local vLLM".into(),
+            "meta-llama/Llama-3-8B".into(),
+            "http://127.0.0.1:8000/v1".into(),
+            String::new(),
+            "",
+            "",
+            "",
+        )
+        .expect("clearing API key on custom provider should validate");
+        assert!(draft.requires_vault_unlock());
+        let (provider, _, _, requires_existing, clears_key) = draft.into_parts();
+        assert!(requires_existing);
+        assert!(!provider.has_api_key);
+        assert!(clears_key);
+    }
+
+    #[gpui_kit::test]
+    async fn switching_new_ai_provider_kind_updates_unmodified_defaults_only(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let settings_store =
+            SettingsStore::load_with_path(directory.path().join("settings.toml")).unwrap();
+        let args = test_settings_args(
+            directory.path(),
+            &runtime,
+            settings_store,
+            SettingsPersistencePort::new(|_| {}),
+        );
+
+        let (view, cx) = cx.add_window_view(move |window, cx| {
+            let owner = cx.new(|cx| {
+                SettingsController::new(
+                    args,
+                    CatalogQueryPort::new(Rc::new(EmptyCatalog)),
+                    window,
+                    cx,
+                )
+            });
+            AiEditorHarness {
+                owner,
+                retained: None,
+            }
+        });
+        let owner = view.read_with(cx, |view, _| view.owner.clone());
+
+        cx.update(|window, cx| {
+            owner.update(cx, |owner, cx| {
+                owner.start_new_ai_provider(window, cx);
+                owner.on_ai_provider_kind_changed(AiProviderKind::Anthropic, window, cx);
+                assert_eq!(
+                    owner.forms.ai_provider_name_input.read(cx).value(),
+                    i18n::string(ai_provider_kind_label_key(AiProviderKind::Anthropic))
+                );
+                assert_eq!(
+                    owner.forms.ai_provider_model_input.read(cx).value(),
+                    AiProviderKind::Anthropic.default_model()
+                );
+
+                // Custom name/model entered by the user must not be overwritten.
+                set_input_value(&owner.forms.ai_provider_name_input, "My Ollama", window, cx);
+                set_input_value(&owner.forms.ai_provider_model_input, "qwen2.5", window, cx);
+                owner.on_ai_provider_kind_changed(AiProviderKind::Custom, window, cx);
+                assert_eq!(
+                    owner.forms.ai_provider_name_input.read(cx).value(),
+                    "My Ollama"
+                );
+                assert_eq!(
+                    owner.forms.ai_provider_model_input.read(cx).value(),
+                    "qwen2.5"
+                );
+            });
+        });
     }
 }

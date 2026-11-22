@@ -71,21 +71,16 @@ impl SettingsController {
                     .collect::<Vec<_>>();
                 self.forms.ai_provider_kind_select =
                     cx.new(|cx| SelectState::new(options, None, window, cx));
-                subscriptions.push(cx.subscribe(
+                subscriptions.push(cx.subscribe_in(
                     &self.forms.ai_provider_kind_select,
-                    |this: &mut Self, source, event, cx| {
+                    window,
+                    |this: &mut Self, source, event, window, cx| {
                         if source.entity_id() != this.forms.ai_provider_kind_select.entity_id() {
                             return;
                         }
                         let SelectEvent::Confirm(selected) = event;
-                        if let Some(kind) = selected.as_ref().copied()
-                            && this.editing_ai_provider_id.is_none()
-                        {
-                            cx.emit(AppCommand::Feedback(i18n::string_args(
-                                "settings.ai_providers.status.kind_selected",
-                                &[("kind", &i18n::string(ai_provider_kind_label_key(kind)))],
-                            )));
-                            cx.notify();
+                        if let Some(kind) = selected.as_ref().copied() {
+                            this.on_ai_provider_kind_changed(kind, window, cx);
                         }
                     },
                 ));

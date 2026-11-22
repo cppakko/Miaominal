@@ -64,7 +64,9 @@ pub fn model_capabilities(profile: &ModelProfile) -> ModelCapabilities {
     }
 }
 
-fn supports_vision(kind: AiProviderKind, model: &str) -> bool {
+/// Whether `kind` + `model` supports multimodal image inputs.
+pub fn supports_vision(kind: AiProviderKind, model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
     match kind {
         AiProviderKind::OpenAi => {
             if ["o1-mini", "o1-preview", "o3-mini"]
@@ -76,7 +78,7 @@ fn supports_vision(kind: AiProviderKind, model: &str) -> bool {
             ["gpt-4o", "gpt-4.1", "gpt-5"]
                 .iter()
                 .any(|prefix| model.starts_with(prefix))
-                || is_o_series(model)
+                || is_o_series(&model)
         }
         AiProviderKind::Anthropic => {
             model.contains("claude") && !model.contains("claude-2") && !model.contains("instant")

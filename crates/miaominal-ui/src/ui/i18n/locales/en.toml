@@ -614,6 +614,8 @@ deleted_message = "Deleted AI provider and cleared its saved API key."
 
 [settings.ai_providers.validation]
 name_required = "Display name is required."
+base_url_required = "Base URL is required for custom providers."
+base_url_invalid = "Base URL must start with http:// or https://."
 api_key_required = "API key is required."
 temperature_range = "Temperature must be between {min} and {max}."
 max_tokens_range = "Max tokens must be at least {min}."

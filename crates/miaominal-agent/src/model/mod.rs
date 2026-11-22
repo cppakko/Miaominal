@@ -12,7 +12,7 @@ mod openai_chat;
 mod reasoning;
 mod sse;
 
-pub use capabilities::{ProviderPreset, model_capabilities, provider_preset};
+pub use capabilities::{ProviderPreset, model_capabilities, provider_preset, supports_vision};
 pub use reasoning::{AgentReasoningSupport, agent_reasoning_support};
 
 use crate::error::AgentResult;

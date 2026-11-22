@@ -29,6 +29,7 @@ pub(in crate::ui) struct AiProviderSaveDraft {
     api_key: String,
     editor_revision: u64,
     requires_existing_target: bool,
+    clears_existing_api_key: bool,
 }
 
 impl AiProviderSaveDraft {
@@ -42,25 +43,31 @@ impl AiProviderSaveDraft {
             api_key,
             editor_revision: 0,
             requires_existing_target,
+            clears_existing_api_key: false,
         }
     }
     pub(in crate::ui) fn with_editor_revision(mut self, revision: u64) -> Self {
         self.editor_revision = revision;
         self
     }
-    pub(in crate::ui) fn api_key(&self) -> &str {
-        &self.api_key
+    pub(in crate::ui) fn with_clears_existing_api_key(mut self, clears: bool) -> Self {
+        self.clears_existing_api_key = clears;
+        self
+    }
+    pub(in crate::ui) fn requires_vault_unlock(&self) -> bool {
+        !self.api_key.is_empty() || self.clears_existing_api_key
     }
 
     pub(in crate::ui) fn editor_revision(&self) -> u64 {
         self.editor_revision
     }
-    pub(in crate::ui) fn into_parts(self) -> (AiProviderConfig, String, u64, bool) {
+    pub(in crate::ui) fn into_parts(self) -> (AiProviderConfig, String, u64, bool, bool) {
         (
             self.provider,
             self.api_key,
             self.editor_revision,
             self.requires_existing_target,
+            self.clears_existing_api_key,
         )
     }
 }
