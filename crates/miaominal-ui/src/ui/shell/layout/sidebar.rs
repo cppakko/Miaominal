@@ -190,9 +190,6 @@ pub(in crate::ui::shell) fn render_sidebar(
                 .items_center()
                 .rounded(space(999.0))
                 .bg(colors.navigation_bar)
-                .border_1()
-                .border_color(colors.nav_dock_border)
-                .shadow_md()
                 .p(space(8.0))
                 .child(
                     h_flex()

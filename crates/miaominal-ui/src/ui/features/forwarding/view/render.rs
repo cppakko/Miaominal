@@ -810,7 +810,7 @@ impl ForwardingController {
                                         .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
                                         .mx_auto()
                                         .pt_5()
-                                        .pb(space(16.0))
+                                        .pb(space(112.0))
                                         .child(self.render_port_forward_saved_rules(
                                             controller,
                                             actions,

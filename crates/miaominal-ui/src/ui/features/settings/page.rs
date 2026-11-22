@@ -1,6 +1,6 @@
 use super::*;
 use crate::ui::assets::AppIcon;
-use crate::ui::components::shell_tokens::space;
+use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
     SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select, md3_spinner,
 };
@@ -169,8 +169,9 @@ pub(in crate::ui) fn render_settings_page(
 fn with_nav_clearance(mut groups: Vec<SettingGroup>) -> Vec<SettingGroup> {
     if let Some(last) = groups.pop() {
         groups.push(last.footer(|_, _| {
-            // The outer sidebar shell reserves the floating dock height; keep normal end padding.
-            div().h(space(16.0))
+            // The group's own vertical padding already provides part of the
+            // clearance.
+            div().h(space(ShellMetrics::NAV_CONTENT_SAFE_AREA - 32.0))
         }));
     }
     groups

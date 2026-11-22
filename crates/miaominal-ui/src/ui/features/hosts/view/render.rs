@@ -425,7 +425,7 @@ impl HostsController {
             .mx_auto()
             .gap(space(24.0))
             .when(visible.is_empty(), |content| content.h_full().min_h_0())
-            .when(!visible.is_empty(), |content| content.pb(space(16.0)));
+            .when(!visible.is_empty(), |content| content.pb(space(112.0)));
         if !quick_items.is_empty() {
             content = content.child(
                 v_flex()

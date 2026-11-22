@@ -745,7 +745,7 @@ impl TrustedHostsController {
                                                 .test_support()
                                                 .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
                                                 .mx_auto()
-                                                .pb(space(16.0))
+                                                .pb(space(112.0))
                                                 .children(filtered.into_iter().map(|view| {
                                                     trusted_host_card(controller.clone(), view)
                                                         .into_any_element()
