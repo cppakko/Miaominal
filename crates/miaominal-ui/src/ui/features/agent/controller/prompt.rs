@@ -79,6 +79,7 @@ impl AgentController {
         let state = &mut self.runtime.get_mut().foreground;
         state.at_mention_query = None;
         state.at_mention_anchor = 0;
+        state.at_mention_selected_index = 0;
         state.prompt_history_cursor = None;
         state.prompt_history_draft = None;
         cx.notify();
@@ -115,11 +116,28 @@ impl AgentController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let (current_value, cursor_line, total_lines, has_selection) = {
+            let input = self.forms.prompt_input.read(cx);
+            let value = input.value().to_string();
+            let total_lines = value.split('\n').count().max(1);
+            let cursor_line = input.cursor_position().line;
+            let has_selection = !input.selected_range().is_empty();
+            (value, cursor_line, total_lines, has_selection)
+        };
+        let active_cursor = self.session_agent().prompt_history_cursor;
+        if !should_browse_prompt_history(
+            direction,
+            cursor_line,
+            total_lines,
+            has_selection,
+            active_cursor,
+        ) {
+            return false;
+        }
         if self.runtime.get_mut().foreground.prompt_history.is_empty() {
             return false;
         }
 
-        let current_value = self.forms.prompt_input.read(cx).value().to_string();
         let next_value = {
             let state = &mut self.runtime.get_mut().foreground;
             let next_cursor = match (direction, state.prompt_history_cursor) {
@@ -134,7 +152,7 @@ impl AgentController {
                     Some(cursor + 1)
                 }
                 (PromptHistoryDirection::Next, Some(_)) => None,
-                (PromptHistoryDirection::Next, None) => return true,
+                (PromptHistoryDirection::Next, None) => return false,
             };
             let next_value = next_cursor
                 .and_then(|cursor| state.prompt_history.get(cursor).cloned())
@@ -142,7 +160,18 @@ impl AgentController {
             state.prompt_history_cursor = next_cursor;
             next_value
         };
+        let is_single_line = !next_value.contains('\n');
+        let end_utf16_col = next_value.encode_utf16().count() as u32;
         set_textarea_value(&self.forms.prompt_input, next_value, window, cx);
+        if is_single_line && end_utf16_col > 0 {
+            self.forms.prompt_input.update(cx, |input, cx| {
+                input.set_cursor_position(
+                    gpui_kit::component::input::Position::new(0, end_utf16_col),
+                    window,
+                    cx,
+                );
+            });
+        }
         let value = self.forms.prompt_input.read(cx).value().to_string();
         self.update_at_mention_state_from_value(&value);
         cx.notify();
@@ -164,7 +193,17 @@ impl AgentController {
             .min(value.len());
         let mut next = String::new();
         next.push_str(&value[..anchor]);
+        let end_utf16_col = next.encode_utf16().count() as u32;
         set_textarea_value(&self.forms.prompt_input, next, window, cx);
+        if end_utf16_col > 0 {
+            self.forms.prompt_input.update(cx, |input, cx| {
+                input.set_cursor_position(
+                    gpui_kit::component::input::Position::new(0, end_utf16_col),
+                    window,
+                    cx,
+                );
+            });
+        }
 
         let state = &mut self.runtime.get_mut().foreground;
         if !state
@@ -176,6 +215,7 @@ impl AgentController {
         }
         state.at_mention_query = None;
         state.at_mention_anchor = 0;
+        state.at_mention_selected_index = 0;
         cx.notify();
     }
 
@@ -195,6 +235,7 @@ impl AgentController {
         let state = &mut self.runtime.get_mut().foreground;
         state.at_mention_query = None;
         state.at_mention_anchor = 0;
+        state.at_mention_selected_index = 0;
         state.selected_at_targets.clear();
         cx.notify();
     }
@@ -211,12 +252,91 @@ impl AgentController {
     }
 }
 
+fn should_browse_prompt_history(
+    direction: PromptHistoryDirection,
+    cursor_line: u32,
+    total_lines: usize,
+    has_selection: bool,
+    active_history_cursor: Option<usize>,
+) -> bool {
+    if has_selection {
+        return false;
+    }
+    match direction {
+        PromptHistoryDirection::Previous => cursor_line == 0,
+        PromptHistoryDirection::Next => {
+            active_history_cursor.is_some() && cursor_line as usize + 1 >= total_lines.max(1)
+        }
+    }
+}
+
 fn update_at_mention_state(state: &mut super::SessionAgentState, value: &str) {
+    let previous_query = state.at_mention_query.clone();
     if let Some((anchor, query)) = trailing_at_mention_query(value) {
+        if previous_query.as_deref() != Some(query.as_str()) {
+            state.at_mention_selected_index = 0;
+        }
         state.at_mention_anchor = anchor;
         state.at_mention_query = Some(query);
     } else {
         state.at_mention_query = None;
         state.at_mention_anchor = 0;
+        state.at_mention_selected_index = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_history_navigation_respects_multiline_cursor_and_active_cursor() {
+        // Single-line empty/active prompt allows Up, but Down only does something while browsing history.
+        assert!(should_browse_prompt_history(
+            PromptHistoryDirection::Previous,
+            0,
+            1,
+            false,
+            None
+        ));
+        assert!(!should_browse_prompt_history(
+            PromptHistoryDirection::Next,
+            0,
+            1,
+            false,
+            None
+        ));
+        assert!(should_browse_prompt_history(
+            PromptHistoryDirection::Next,
+            0,
+            1,
+            false,
+            Some(0)
+        ));
+
+        // Multi-line draft with cursor on an interior line must move the cursor instead of hijacking history.
+        assert!(!should_browse_prompt_history(
+            PromptHistoryDirection::Previous,
+            1,
+            3,
+            false,
+            None
+        ));
+        assert!(!should_browse_prompt_history(
+            PromptHistoryDirection::Next,
+            1,
+            3,
+            false,
+            Some(0)
+        ));
+
+        // Active text selection lets arrow keys collapse the selection rather than wiping the prompt.
+        assert!(!should_browse_prompt_history(
+            PromptHistoryDirection::Previous,
+            0,
+            1,
+            true,
+            None
+        ));
     }
 }

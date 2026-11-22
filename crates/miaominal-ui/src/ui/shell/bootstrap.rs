@@ -131,11 +131,21 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
 
             match key {
                 "enter" if plain_key => {
-                    this.sync_session_port_snapshot(cx);
-                    agent.update(cx, |controller, cx| {
-                        controller.submit_session_agent_prompt(window, cx);
+                    let inserted_mention = agent.update(cx, |controller, cx| {
+                        controller.accept_at_mention_selection(window, cx, false)
                     });
+                    if !inserted_mention {
+                        this.sync_session_port_snapshot(cx);
+                        agent.update(cx, |controller, cx| {
+                            controller.submit_session_agent_prompt(window, cx);
+                        });
+                    }
                     handled_session_agent_prompt_shortcut = true;
+                }
+                "tab" if plain_key => {
+                    handled_session_agent_prompt_shortcut = agent.update(cx, |controller, cx| {
+                        controller.accept_at_mention_selection(window, cx, true)
+                    });
                 }
                 "k" if command_only => {
                     agent.update(cx, |controller, cx| {
@@ -152,16 +162,22 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
                 }
                 "up" if plain_key => {
                     handled_session_agent_prompt_shortcut = agent.update(cx, |controller, cx| {
-                        controller.browse_prompt_history(
-                            PromptHistoryDirection::Previous,
-                            window,
-                            cx,
-                        )
+                        controller.move_at_mention_selection(-1, cx)
+                            || controller.browse_prompt_history(
+                                PromptHistoryDirection::Previous,
+                                window,
+                                cx,
+                            )
                     });
                 }
                 "down" if plain_key => {
                     handled_session_agent_prompt_shortcut = agent.update(cx, |controller, cx| {
-                        controller.browse_prompt_history(PromptHistoryDirection::Next, window, cx)
+                        controller.move_at_mention_selection(1, cx)
+                            || controller.browse_prompt_history(
+                                PromptHistoryDirection::Next,
+                                window,
+                                cx,
+                            )
                     });
                 }
                 _ => {}

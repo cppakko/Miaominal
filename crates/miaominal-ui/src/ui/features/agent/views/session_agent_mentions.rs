@@ -6,6 +6,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_popup(
     controller: Entity<AgentController>,
     candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
+    selected_index: usize,
 ) -> gpui_kit::AnyElement {
     div()
         .id("agent-at-mention-popup")
@@ -15,7 +16,10 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_popup(
         .overflow_y_scroll()
         .occlude()
         .child(render_session_agent_at_mention_menu(
-            controller, candidates, query,
+            controller,
+            candidates,
+            query,
+            selected_index,
         ))
         .with_animation(
             "session-agent-at-mention-popup",
@@ -29,15 +33,11 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_menu(
     controller: Entity<AgentController>,
     candidates: Vec<SessionAgentTargetCandidate>,
     query: String,
+    selected_index: usize,
 ) -> gpui_kit::AnyElement {
     let roles = miaominal_settings::current_theme().material.roles;
-    let query = query.trim().to_ascii_lowercase();
-    let filtered = candidates
-        .into_iter()
-        .filter(|candidate| {
-            query.is_empty() || candidate.name.to_ascii_lowercase().contains(&query)
-        })
-        .collect::<Vec<_>>();
+    let filtered = super::super::controller::filter_at_mention_candidates(candidates, &query);
+    let selected_index = (!filtered.is_empty()).then(|| selected_index.min(filtered.len() - 1));
 
     v_flex()
         .w_full()
@@ -55,10 +55,11 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_menu(
                 .build(),
             )
         })
-        .children(filtered.into_iter().map(|candidate| {
+        .children(filtered.into_iter().enumerate().map(|(ix, candidate)| {
             let name = candidate.name.clone();
             let id_name = candidate.name.clone();
             let click_controller = controller.clone();
+            let is_selected = selected_index == Some(ix);
             h_flex()
                 .id(SharedString::from(format!(
                     "agent-at-mention-row-{id_name}"
@@ -69,7 +70,11 @@ pub(in crate::ui::features::agent) fn render_session_agent_at_mention_menu(
                 .px_2()
                 .py_1()
                 .rounded(px(6.0))
-                .bg(rgb(roles.surface_container_low))
+                .bg(rgb(if is_selected {
+                    roles.secondary_container
+                } else {
+                    roles.surface_container_low
+                }))
                 .cursor_pointer()
                 .hover(move |this| this.bg(rgb(roles.secondary_container)))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {

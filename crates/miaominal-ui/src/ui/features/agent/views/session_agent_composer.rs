@@ -277,6 +277,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
         .any(|attachment| attachment.is_image());
     let has_targets = !state.selected_at_targets.is_empty();
     let at_mention_query = state.at_mention_query.clone();
+    let at_mention_selected_index = state.at_mention_selected_index;
     let selected_at_targets = state.selected_at_targets.clone();
     let pending_attachments = state.pending_attachments.clone();
     let exec_mode_is_pty = state.exec_mode.is_pty();
@@ -311,6 +312,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                             mention_controller.clone(),
                             target_candidates.clone(),
                             query,
+                            at_mention_selected_index,
                         ),
                     )
                 })
@@ -404,77 +406,100 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                         .child(
                             h_flex()
                                 .w_full()
-                                .h(px(32.0))
+                                .min_h(px(32.0))
                                 .items_center()
+                                .justify_between()
                                 .gap_2()
                                 .child(
-                                    div().w(px(112.0)).min_w(px(0.0)).child(
-                                        render_session_agent_provider_menu(settings.clone(), cx),
-                                    ),
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .items_center()
+                                        .gap_1p5()
+                                        .flex_wrap()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(64.0))
+                                                .max_w(px(112.0))
+                                                .child(render_session_agent_provider_menu(
+                                                    settings.clone(),
+                                                    cx,
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w(px(64.0))
+                                                .max_w(px(112.0))
+                                                .child(render_session_agent_mode_menu(
+                                                    agent.clone(),
+                                                    selected_agent_mode,
+                                                )),
+                                        )
+                                        .when_some(context_usage_label, |this, label| {
+                                            this.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(
+                                                        miaominal_settings::FontSize::Body.scaled(),
+                                                    )
+                                                    .text_color(rgb(text_muted))
+                                                    .child(label),
+                                            )
+                                        }),
                                 )
                                 .child(
-                                    div().w(px(112.0)).min_w(px(0.0)).child(
-                                        render_session_agent_mode_menu(
-                                            agent.clone(),
-                                            selected_agent_mode,
-                                        ),
-                                    ),
-                                )
-                                .when_some(context_usage_label, |this, label| {
-                                    this.child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(miaominal_settings::FontSize::Body.scaled())
-                                            .text_color(rgb(text_muted))
-                                            .child(label),
-                                    )
-                                })
-                                .child(icon_button_with_tooltip(
-                                    AppIcon::Paperclip,
-                                    i18n::string("workspace.panel.agent.tooltips.attach_file"),
-                                    24.0,
-                                    8.0,
-                                    Some(roles.surface_container_high),
-                                    Some(text_muted),
-                                    None,
-                                    move |window, cx| {
-                                        let controller = attach_controller.clone();
-                                        controller.update(cx, |controller, cx| {
-                                            controller.open_attachment_picker(window, cx);
-                                        });
-                                    },
-                                ))
-                                .child(icon_button_with_tooltip(
-                                    AppIcon::LaptopMinimal,
-                                    i18n::string(if exec_mode_is_pty {
-                                        "workspace.panel.agent.tooltips.disable_pty"
-                                    } else {
-                                        "workspace.panel.agent.tooltips.enable_pty"
-                                    }),
-                                    24.0,
-                                    8.0,
-                                    Some(if exec_mode_is_pty {
-                                        roles.secondary_container
-                                    } else {
-                                        roles.surface_container_high
-                                    }),
-                                    Some(if exec_mode_is_pty {
-                                        roles.on_secondary_container
-                                    } else {
-                                        text_muted
-                                    }),
-                                    None,
-                                    move |_window, cx| {
-                                        let controller = pty_toggle_controller.clone();
-                                        controller.update(cx, |controller, cx| {
-                                            controller.toggle_execution_mode(cx);
-                                        });
-                                    },
-                                ))
-                                .child(div().flex_1())
-                                .child(
-                                    div()
-                                        .id("session-agent-send-action")
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(icon_button_with_tooltip(
+                                            AppIcon::Paperclip,
+                                            i18n::string(
+                                                "workspace.panel.agent.tooltips.attach_file",
+                                            ),
+                                            24.0,
+                                            8.0,
+                                            Some(roles.surface_container_high),
+                                            Some(text_muted),
+                                            None,
+                                            move |window, cx| {
+                                                let controller = attach_controller.clone();
+                                                controller.update(cx, |controller, cx| {
+                                                    controller.open_attachment_picker(window, cx);
+                                                });
+                                            },
+                                        ))
+                                        .child(icon_button_with_tooltip(
+                                            AppIcon::LaptopMinimal,
+                                            i18n::string(if exec_mode_is_pty {
+                                                "workspace.panel.agent.tooltips.disable_pty"
+                                            } else {
+                                                "workspace.panel.agent.tooltips.enable_pty"
+                                            }),
+                                            24.0,
+                                            8.0,
+                                            Some(if exec_mode_is_pty {
+                                                roles.secondary_container
+                                            } else {
+                                                roles.surface_container_high
+                                            }),
+                                            Some(if exec_mode_is_pty {
+                                                roles.on_secondary_container
+                                            } else {
+                                                text_muted
+                                            }),
+                                            None,
+                                            move |_window, cx| {
+                                                let controller = pty_toggle_controller.clone();
+                                                controller.update(cx, |controller, cx| {
+                                                    controller.toggle_execution_mode(cx);
+                                                });
+                                            },
+                                        ))
+                                        .child(
+                                            div().id("session-agent-send-action").flex_shrink_0()
                                         .child(
                                             Button::new("session-agent-send-button")
                                                 .text()
@@ -549,6 +574,7 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                                     element.opacity(0.64 + delta * 0.36)
                                                 }
                                             },
+                                        ),
                                         ),
                                 ),
                         ),

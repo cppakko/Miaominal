@@ -133,7 +133,7 @@ impl AgentController {
             });
             if sent {
                 self.record_prompt_history(&prompt);
-                self.clear_prompt_after_submission(window, cx);
+                self.clear_prompt_input(window, cx);
                 cx.emit(AppCommand::Feedback(i18n::string(
                     "workspace.panel.agent.messages.steer_queued",
                 )));

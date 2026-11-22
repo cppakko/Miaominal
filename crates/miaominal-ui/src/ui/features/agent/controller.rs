@@ -44,8 +44,8 @@ use runtime::AgentRuntimeStore;
 pub(in crate::ui) use runtime::{
     AgentExecMode, ChatPanelView, SessionAgentExecutionContext, SessionAgentMessage,
     SessionAgentMessageMotion, SessionAgentMessageRole, SessionAgentState, SessionAgentThinking,
-    SessionAgentToolCall, SessionAgentToolStatus, split_message_into_blocks,
-    trailing_at_mention_query,
+    SessionAgentToolCall, SessionAgentToolStatus, filter_at_mention_candidates,
+    split_message_into_blocks, step_at_mention_index, trailing_at_mention_query,
 };
 pub(in crate::ui) use session_ports::insertable_command;
 
@@ -839,7 +839,51 @@ impl AgentController {
             return false;
         }
         state.at_mention_anchor = 0;
+        state.at_mention_selected_index = 0;
         cx.notify();
+        true
+    }
+
+    pub(in crate::ui) fn move_at_mention_selection(
+        &mut self,
+        delta: isize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(query) = self.session_agent().at_mention_query.clone() else {
+            return false;
+        };
+        let count = filter_at_mention_candidates(self.target_candidates(), &query).len();
+        let state = &mut self.runtime.get_mut().foreground;
+        state.at_mention_selected_index =
+            step_at_mention_index(state.at_mention_selected_index, count, delta);
+        cx.notify();
+        true
+    }
+
+    pub(in crate::ui) fn accept_at_mention_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        dismiss_if_empty: bool,
+    ) -> bool {
+        let Some(query) = self.session_agent().at_mention_query.clone() else {
+            return false;
+        };
+        let filtered = filter_at_mention_candidates(self.target_candidates(), &query);
+        if filtered.is_empty() {
+            if dismiss_if_empty {
+                self.dismiss_at_mention(cx);
+                return true;
+            }
+            self.dismiss_at_mention(cx);
+            return false;
+        }
+        let selected_index = self
+            .session_agent()
+            .at_mention_selected_index
+            .min(filtered.len() - 1);
+        let name = filtered[selected_index].name.clone();
+        self.insert_at_mention(name, window, cx);
         true
     }
 

@@ -437,6 +437,9 @@ fn reset_session_agent_state(state: &mut SessionAgentState, agent_mode: Approval
     state.context_usage = None;
     state.last_usage = None;
     super::retire_session_agent_pty_leases(&std::mem::take(&mut state.turn_leases));
+    state.at_mention_query = None;
+    state.at_mention_anchor = 0;
+    state.at_mention_selected_index = 0;
     state.selected_at_targets.clear();
     state.active_at_targets.clear();
     state.active_exec_context = None;

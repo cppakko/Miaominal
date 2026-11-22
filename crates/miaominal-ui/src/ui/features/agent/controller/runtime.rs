@@ -281,6 +281,7 @@ pub(in crate::ui) struct SessionAgentState {
     pub(in crate::ui) exec_mode: AgentExecMode,
     pub(in crate::ui) at_mention_query: Option<String>,
     pub(in crate::ui) at_mention_anchor: usize,
+    pub(in crate::ui) at_mention_selected_index: usize,
     pub(in crate::ui) selected_at_targets: Vec<String>,
     pub(in crate::ui) active_at_targets: Vec<String>,
     pub(in crate::ui) prompt_history: Vec<String>,
@@ -557,6 +558,27 @@ impl SessionAgentState {
     }
 }
 
+pub(in crate::ui) fn filter_at_mention_candidates(
+    candidates: Vec<super::SessionAgentTargetCandidate>,
+    query: &str,
+) -> Vec<super::SessionAgentTargetCandidate> {
+    let query = query.trim().to_ascii_lowercase();
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            query.is_empty() || candidate.name.to_ascii_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+pub(in crate::ui) fn step_at_mention_index(current: usize, count: usize, delta: isize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let current = current.min(count - 1) as isize;
+    (current + delta).rem_euclid(count as isize) as usize
+}
+
 pub(in crate::ui) fn trailing_at_mention_query(value: &str) -> Option<(usize, String)> {
     let mut start = None;
     for (index, ch) in value.char_indices().rev() {
@@ -718,5 +740,36 @@ mod tests {
         assert!(!runtime.session_is_foreground("session-1"));
         runtime.remove_background_session("session-1");
         assert!(!runtime.background_session_is_busy("session-1"));
+    }
+
+    #[test]
+    fn at_mention_navigation_filters_and_wraps_cleanly() {
+        let candidates = vec![
+            super::super::SessionAgentTargetCandidate {
+                name: "web-prod".into(),
+                detail: "10.0.0.10".into(),
+                resolved: true,
+            },
+            super::super::SessionAgentTargetCandidate {
+                name: "db-primary".into(),
+                detail: "10.0.0.20".into(),
+                resolved: true,
+            },
+            super::super::SessionAgentTargetCandidate {
+                name: "web-staging".into(),
+                detail: "10.0.0.11".into(),
+                resolved: true,
+            },
+        ];
+
+        let filtered = filter_at_mention_candidates(candidates, "WEB");
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].name, "web-prod");
+        assert_eq!(filtered[1].name, "web-staging");
+
+        assert_eq!(step_at_mention_index(0, 2, -1), 1);
+        assert_eq!(step_at_mention_index(1, 2, 1), 0);
+        assert_eq!(step_at_mention_index(5, 2, -1), 0);
+        assert_eq!(step_at_mention_index(0, 0, 1), 0);
     }
 }
