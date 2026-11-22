@@ -313,6 +313,36 @@ mod tests {
         };
 
         assert_eq!(sftp_transfer_display_name(&transfer), "archive.zip");
+        assert_eq!(
+            sftp_transfer_route(&transfer),
+            r"C:\work\archive.zip → /srv/archive.zip"
+        );
+    }
+
+    #[test]
+    fn transfer_route_and_name_flip_source_destination_for_downloads() {
+        let transfer = SftpTransferRow {
+            transfer_id: TransferId(2),
+            direction: TransferDirection::Download,
+            source: PathBuf::from(r"D:\downloads\renamed.tar.gz"),
+            destination: "/var/backups/release.tar.gz".into(),
+            bytes_complete: 0,
+            bytes_total: None,
+            status: SftpTransferStatus::Queued,
+            bytes_per_second: None,
+            last_progress_at: None,
+            last_bytes_complete: 0,
+            is_directory: false,
+            expanded: false,
+            children: std::collections::VecDeque::new(),
+            child_count: 0,
+        };
+
+        assert_eq!(sftp_transfer_display_name(&transfer), "release.tar.gz");
+        assert_eq!(
+            sftp_transfer_route(&transfer),
+            r"/var/backups/release.tar.gz → D:\downloads\renamed.tar.gz"
+        );
     }
 }
 
@@ -1298,18 +1328,35 @@ fn sftp_transfer_child_status_label(status: &SftpTransferChildStatus) -> String 
 }
 
 fn sftp_transfer_display_name(transfer: &SftpTransferRow) -> String {
-    transfer
+    let remote_name = Path::new(&transfer.destination)
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string_lossy().into_owned());
+    let local_name = transfer
         .source
         .file_name()
         .filter(|name| !name.is_empty())
-        .map(|name| name.to_string_lossy().into_owned())
-        .or_else(|| {
-            Path::new(&transfer.destination)
-                .file_name()
-                .filter(|name| !name.is_empty())
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| transfer.source.display().to_string())
+        .map(|name| name.to_string_lossy().into_owned());
+
+    match transfer.direction {
+        TransferDirection::Upload => local_name.or(remote_name),
+        TransferDirection::Download => remote_name.or(local_name),
+    }
+    .unwrap_or_else(|| match transfer.direction {
+        TransferDirection::Upload => transfer.source.display().to_string(),
+        TransferDirection::Download => transfer.destination.clone(),
+    })
+}
+
+fn sftp_transfer_route(transfer: &SftpTransferRow) -> String {
+    match transfer.direction {
+        TransferDirection::Upload => {
+            format!("{} → {}", transfer.source.display(), transfer.destination)
+        }
+        TransferDirection::Download => {
+            format!("{} → {}", transfer.destination, transfer.source.display())
+        }
+    }
 }
 
 fn prioritize_sftp_transfer_tab<T>(items: &mut [(TabId, T)], preferred_tab_id: Option<TabId>) {
@@ -1406,12 +1453,7 @@ fn context_menu_local_sftp_entry(
         .row(row_ix)
         .map(|row| PathBuf::from(row.path.as_str()))?;
 
-    controller.read(cx).tab(tab_id).and_then(|tab| {
-        tab.local_entries
-            .iter()
-            .find(|entry| entry.path == path)
-            .cloned()
-    })
+    controller.read(cx).resolve_local_entry(tab_id, &path, cx)
 }
 
 fn context_menu_remote_sftp_entry(
@@ -1884,7 +1926,7 @@ impl SftpController {
             .unwrap_or_else(|| sftp_tab.profile_id.clone());
         let profile_display = truncate_with_ellipsis(&profile_label, 20);
         let display_name = sftp_transfer_display_name(transfer);
-        let route = format!("{} → {}", transfer.source.display(), transfer.destination);
+        let route = sftp_transfer_route(transfer);
         let direction_icon = match transfer.direction {
             TransferDirection::Upload => AppIcon::Upload,
             TransferDirection::Download => AppIcon::Download,
@@ -2618,6 +2660,7 @@ impl SftpController {
                     *remote_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
                         if table.delegate_mut().set_available_width(bounds.size.width) {
+                            table.refresh(cx);
                             cx.notify();
                         }
                     });
@@ -3073,6 +3116,7 @@ impl SftpController {
                     *local_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
                         if table.delegate_mut().set_available_width(bounds.size.width) {
+                            table.refresh(cx);
                             cx.notify();
                         }
                     });
@@ -3225,6 +3269,7 @@ impl SftpController {
                     *remote_table_bounds.borrow_mut() = Some(bounds);
                     table.update(cx, |table, cx| {
                         if table.delegate_mut().set_available_width(bounds.size.width) {
+                            table.refresh(cx);
                             cx.notify();
                         }
                     });

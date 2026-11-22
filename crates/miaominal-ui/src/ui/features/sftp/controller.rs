@@ -239,6 +239,7 @@ pub(in crate::ui) struct LocalSftpEntry {
     pub(in crate::ui) filename: String,
     pub(in crate::ui) path: PathBuf,
     pub(in crate::ui) is_directory: bool,
+    pub(in crate::ui) is_symlink: bool,
     pub(in crate::ui) size: Option<u64>,
     pub(in crate::ui) modified: Option<SystemTime>,
     pub(in crate::ui) attributes: Option<String>,
@@ -744,7 +745,7 @@ struct SftpInteractionState {
     prompt_revision: u64,
     prompt: Option<SftpPromptState>,
     inline_rename: Option<InlineRenameState>,
-    edit_pending_downloads: HashMap<TransferId, String>,
+    edit_pending_downloads: HashMap<TransferId, (String, PathBuf)>,
     edit_sessions: HashMap<String, SftpEditSession>,
     event_task: Option<gpui_kit::Task<()>>,
     progress_task: Option<gpui_kit::Task<()>>,
@@ -814,6 +815,37 @@ fn prepare_transferred_sftp_tab_for_window(state: &mut SftpTabState) {
     state.layout.local_breadcrumb_width = px(0.0);
     state.layout.remote_breadcrumb_width = px(0.0);
     state.layout.drag = None;
+}
+
+fn sftp_edit_temp_dir(tab_id: TabId) -> PathBuf {
+    std::env::temp_dir()
+        .join("miaominal_edit")
+        .join(tab_id.to_string())
+}
+
+fn sftp_edit_temp_path(tab_id: TabId, remote_path: &str) -> PathBuf {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in remote_path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    let filename = Path::new(remote_path)
+        .file_name()
+        .filter(|name| *name != "." && *name != "..")
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    sftp_edit_temp_dir(tab_id)
+        .join(format!("{hash:016x}"))
+        .join(filename)
+}
+
+fn is_relevant_edit_watch_event(
+    kind: &EventKind,
+    event_paths: &[PathBuf],
+    watch_path: &Path,
+) -> bool {
+    matches!(kind, EventKind::Modify(_) | EventKind::Create(_))
+        && event_paths.iter().any(|path| path == watch_path)
 }
 
 impl SftpController {
@@ -2247,17 +2279,27 @@ impl SftpController {
                 i18n::string_args("errors.sftp.local_read.entry", &[("path", &directory_path)])
             })?;
             let entry_path = entry.path();
-            let entry_path_text = entry_path.display().to_string();
-            let metadata = entry.metadata().with_context(|| {
-                i18n::string_args(
-                    "errors.sftp.local_read.metadata",
-                    &[("path", &entry_path_text)],
-                )
-            })?;
+            let (metadata, is_symlink) = match entry.metadata() {
+                Ok(metadata) => (metadata, false),
+                Err(meta_error) => match std::fs::symlink_metadata(&entry_path) {
+                    Ok(symlink_meta) => {
+                        let is_symlink = symlink_meta.file_type().is_symlink();
+                        (symlink_meta, is_symlink)
+                    }
+                    Err(symlink_error) => {
+                        log::debug!(
+                            "skipping unreadable local entry {}: metadata={meta_error:?}, symlink_metadata={symlink_error:?}",
+                            entry_path.display()
+                        );
+                        continue;
+                    }
+                },
+            };
             entries.push(LocalSftpEntry {
                 filename: entry.file_name().to_string_lossy().into_owned(),
-                is_directory: metadata.is_dir(),
-                size: metadata.is_file().then_some(metadata.len()),
+                is_directory: !is_symlink && metadata.is_dir(),
+                is_symlink,
+                size: (!is_symlink && metadata.is_file()).then_some(metadata.len()),
                 modified: metadata.modified().ok(),
                 attributes: Self::local_attributes(&metadata),
                 owner: Self::local_owner(&metadata),
@@ -3805,9 +3847,14 @@ impl SftpController {
             self.remote_table().read(cx).delegate().tab_id() == Some(tab_id);
         let remote_path_submit_pending =
             is_visible_browser_tab && self.remote_path_submit_pending();
-        let edit_remote_path = match &event {
+        let edit_download_target = match &event {
             SftpEvent::TransferDone { transfer_id } => {
                 self.take_edit_pending_download(tab_id, *transfer_id)
+            }
+            SftpEvent::TransferCancelled { transfer_id }
+            | SftpEvent::TransferFailed { transfer_id, .. } => {
+                let _ = self.take_edit_pending_download(tab_id, *transfer_id);
+                None
             }
             _ => None,
         };
@@ -4012,7 +4059,7 @@ impl SftpController {
                                 Some(Self::transfer_remote_parent_path(&transfer.destination));
                         }
                         TransferDirection::Download => {
-                            if edit_remote_path.is_none() {
+                            if edit_download_target.is_none() {
                                 refresh_local_directory = Some(
                                     transfer
                                         .source
@@ -4035,16 +4082,7 @@ impl SftpController {
                 tab.last_status =
                     i18n::string_args("sftp.messages.transfer_finished", &[("id", &transfer_id)]);
 
-                if let Some(remote_path) = edit_remote_path {
-                    let temp_path = std::env::temp_dir()
-                        .join("miaominal_edit")
-                        .join(tab_id.to_string())
-                        .join(
-                            Path::new(&remote_path)
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| "file".into()),
-                        );
+                if let Some((remote_path, temp_path)) = edit_download_target {
                     edit_complete = Some((temp_path, remote_path));
                 }
             }
@@ -4245,6 +4283,50 @@ impl SftpController {
             return;
         };
         transfer.apply_progress(progress);
+    }
+
+    pub(in crate::ui) fn resolve_local_entry(
+        &self,
+        tab_id: TabId,
+        path: &Path,
+        cx: &gpui_kit::App,
+    ) -> Option<LocalSftpEntry> {
+        if let Some(entry) = self.tab(tab_id).and_then(|tab| {
+            tab.local_entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .cloned()
+        }) {
+            return Some(entry);
+        }
+
+        let path_text = path.display().to_string();
+        let row = {
+            let table = self.local_table().read(cx);
+            let delegate = table.delegate();
+            let row_ix = delegate.row_index_by_path(&path_text)?;
+            delegate.row(row_ix)?.clone()
+        };
+
+        let resolved_path = PathBuf::from(row.path.as_str());
+        let fallback_name = resolved_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| row.path.clone());
+        Some(LocalSftpEntry {
+            filename: if row.name.as_ref().is_empty() {
+                fallback_name
+            } else {
+                row.name.as_ref().to_string()
+            },
+            path: resolved_path,
+            is_directory: row.is_directory,
+            is_symlink: row.kind == miaominal_sftp::SftpEntryKind::Symlink,
+            size: row.size,
+            modified: row.modified,
+            attributes: row.attributes.map(|value| value.to_string()),
+            owner: row.owner.map(|value| value.to_string()),
+        })
     }
 
     pub(in crate::ui) fn resolve_remote_entry(
@@ -5257,20 +5339,21 @@ impl SftpController {
         tab_id: TabId,
         transfer_id: TransferId,
         remote_path: String,
+        temp_path: PathBuf,
     ) {
         self.interactions
             .borrow_mut()
             .entry(tab_id)
             .or_default()
             .edit_pending_downloads
-            .insert(transfer_id, remote_path);
+            .insert(transfer_id, (remote_path, temp_path));
     }
 
     pub(in crate::ui) fn take_edit_pending_download(
         &self,
         tab_id: TabId,
         transfer_id: TransferId,
-    ) -> Option<String> {
+    ) -> Option<(String, PathBuf)> {
         self.interactions
             .borrow_mut()
             .get_mut(&tab_id)
@@ -5298,14 +5381,7 @@ impl SftpController {
         let Some(commands) = self.tab(tab_id).and_then(|tab| tab.commands.clone()) else {
             return;
         };
-        let filename = std::path::Path::new(&remote_path)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".into());
-        let temp_path = std::env::temp_dir()
-            .join("miaominal_edit")
-            .join(tab_id.to_string())
-            .join(filename);
+        let temp_path = sftp_edit_temp_path(tab_id, &remote_path);
 
         if let Some(parent) = temp_path.parent()
             && let Err(error) = std::fs::create_dir_all(parent)
@@ -5319,9 +5395,9 @@ impl SftpController {
             return;
         }
 
-        match commands.queue_download(remote_path.clone(), temp_path) {
+        match commands.queue_download(remote_path.clone(), temp_path.clone()) {
             Ok(transfer_id) => {
-                self.insert_edit_pending_download(tab_id, transfer_id, remote_path);
+                self.insert_edit_pending_download(tab_id, transfer_id, remote_path, temp_path);
                 cx.notify();
             }
             Err(error) => {
@@ -5382,11 +5458,7 @@ impl SftpController {
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
                 let Ok(event) = result else { return };
-                let is_relevant = matches!(
-                    event.kind,
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-                ) && event.paths.iter().any(|path| path == &watch_path);
-                if is_relevant {
+                if is_relevant_edit_watch_event(&event.kind, &event.paths, &watch_path) {
                     let _ = watch_sender.unbounded_send(());
                 }
             })
@@ -5465,6 +5537,9 @@ impl SftpController {
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
+                if !temp_path.is_file() {
+                    return;
+                }
                 if let Err(error) = commands.queue_upload(temp_path, remote_path_for_task) {
                     let error = error.to_string();
                     let message =
@@ -5521,7 +5596,9 @@ impl SftpController {
 
     pub(in crate::ui) fn close_tab(&self, tab_id: TabId) -> bool {
         self.retire_tab_resources(tab_id);
-        self.remove_tab_state(tab_id).is_some()
+        let removed = self.remove_tab_state(tab_id).is_some();
+        let _ = std::fs::remove_dir_all(sftp_edit_temp_dir(tab_id));
+        removed
     }
 
     fn remove_tab_state(&self, tab_id: TabId) -> Option<SftpTabState> {
@@ -6117,5 +6194,64 @@ mod tests {
         assert_eq!(transfers.len(), 2);
         assert!(matches!(transfers[0].status, SftpTransferStatus::Running));
         assert!(matches!(transfers[1].status, SftpTransferStatus::Paused));
+    }
+
+    #[test]
+    fn edit_temp_paths_isolate_same_filename_across_remote_directories() {
+        let tab_id = TabId::new(42);
+        let nginx = sftp_edit_temp_path(tab_id, "/etc/nginx/conf.d/default.conf");
+        let apache = sftp_edit_temp_path(tab_id, "/etc/apache2/sites-enabled/default.conf");
+
+        assert_ne!(nginx, apache);
+        assert_eq!(
+            nginx.file_name().and_then(|n| n.to_str()),
+            Some("default.conf")
+        );
+        assert_eq!(
+            apache.file_name().and_then(|n| n.to_str()),
+            Some("default.conf")
+        );
+        assert!(nginx.starts_with(sftp_edit_temp_dir(tab_id)));
+    }
+
+    #[test]
+    fn edit_watcher_ignores_remove_events() {
+        let watch_path = PathBuf::from(r"C:\temp\file.conf");
+        let paths = vec![watch_path.clone()];
+
+        assert!(is_relevant_edit_watch_event(
+            &EventKind::Modify(notify::event::ModifyKind::Any),
+            &paths,
+            &watch_path
+        ));
+        assert!(is_relevant_edit_watch_event(
+            &EventKind::Create(notify::event::CreateKind::Any),
+            &paths,
+            &watch_path
+        ));
+        assert!(!is_relevant_edit_watch_event(
+            &EventKind::Remove(notify::event::RemoveKind::Any),
+            &paths,
+            &watch_path
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_local_entries_skips_broken_symlink_target_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("valid.txt"), b"ok").expect("write valid file");
+        std::os::unix::fs::symlink(dir.path().join("missing-target"), dir.path().join("broken"))
+            .expect("create broken symlink");
+
+        let entries = SftpController::read_local_entries(dir.path()).expect("read local entries");
+        assert_eq!(entries.len(), 2);
+        let broken = entries
+            .iter()
+            .find(|entry| entry.filename == "broken")
+            .expect("broken symlink should still be listed");
+        assert!(!broken.is_directory);
+        assert!(broken.is_symlink);
+        assert_eq!(broken.size, None);
     }
 }

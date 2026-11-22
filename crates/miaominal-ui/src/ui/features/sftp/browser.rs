@@ -53,6 +53,8 @@ impl SftpBrowserTableRow {
     pub(in crate::ui) fn from_local(entry: &LocalSftpEntry) -> Self {
         let kind = if entry.is_directory {
             miaominal_sftp::SftpEntryKind::Directory
+        } else if entry.is_symlink {
+            miaominal_sftp::SftpEntryKind::Symlink
         } else {
             miaominal_sftp::SftpEntryKind::File
         };
@@ -506,6 +508,31 @@ impl SftpBrowserTableDelegate {
     }
 }
 
+const SFTP_BASE_COLUMN_WIDTHS: [f32; 6] = [240.0, 96.0, 92.0, 168.0, 120.0, 108.0];
+const SFTP_MIN_NAME_COLUMN_WIDTH: f32 = 140.0;
+const SFTP_TABLE_RESERVED_CHROME_WIDTH: f32 = 24.0;
+
+fn sftp_column_width(
+    orig_col_ix: usize,
+    available_width: Pixels,
+    hidden_columns: &HashSet<usize>,
+) -> Pixels {
+    let base = SFTP_BASE_COLUMN_WIDTHS[orig_col_ix];
+    if orig_col_ix != 0 || available_width <= px(0.0) {
+        return px(base);
+    }
+
+    let usable = (available_width.as_f32() - SFTP_TABLE_RESERVED_CHROME_WIDTH).max(0.0);
+    let metadata_total: f32 = SFTP_BASE_COLUMN_WIDTHS
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter(|(ix, _)| !hidden_columns.contains(ix))
+        .map(|(_, width)| *width)
+        .sum();
+    px((usable - metadata_total).max(SFTP_MIN_NAME_COLUMN_WIDTH))
+}
+
 impl TableDelegate for SftpBrowserTableDelegate {
     fn columns_count(&self, _: &App) -> usize {
         self.visible_col_map.len()
@@ -526,24 +553,7 @@ impl TableDelegate for SftpBrowserTableDelegate {
             .sort_state
             .and_then(|(sorted_orig_ix, sort)| (sorted_orig_ix == orig_col_ix).then_some(sort));
 
-        const BASE_WIDTHS: [f32; 6] = [240.0, 96.0, 96.0, 124.0, 120.0, 108.0];
-        let total_base: f32 = BASE_WIDTHS
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.hidden_columns.contains(i))
-            .map(|(_, w)| w)
-            .sum();
-        let base = px(BASE_WIDTHS[orig_col_ix]);
-        let width = if self.available_width > px(0.) {
-            let usable = (self.available_width - px(20.0)).max(px(0.0));
-            if usable < px(total_base) {
-                base * (usable / px(total_base))
-            } else {
-                base
-            }
-        } else {
-            base
-        };
+        let width = sftp_column_width(orig_col_ix, self.available_width, &self.hidden_columns);
 
         match orig_col_ix {
             0 => Column::new("name", Self::column_label(0))
@@ -1042,5 +1052,17 @@ mod tests {
         assert!(!delegate.select_context_path("/remote/second".into()));
         assert!(!delegate.has_single_selection());
         assert_eq!(delegate.selected_paths.len(), 2);
+    }
+
+    #[test]
+    fn modified_column_keeps_readable_width_in_narrow_and_wide_panes() {
+        let hidden = HashSet::from([4usize, 5usize]);
+        assert_eq!(sftp_column_width(3, px(340.0), &hidden), px(168.0));
+        assert_eq!(sftp_column_width(0, px(340.0), &hidden), px(140.0));
+        assert_eq!(sftp_column_width(3, px(900.0), &hidden), px(168.0));
+        assert_eq!(
+            sftp_column_width(0, px(900.0), &hidden),
+            px(900.0 - 24.0 - (96.0 + 92.0 + 168.0))
+        );
     }
 }

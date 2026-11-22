@@ -81,13 +81,11 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
                 } else if this.workspace.renaming_tab.is_some() {
                     this.cancel_rename_tab(cx);
                     consumed = true;
-                } else if this.workspace.active_topbar_tab.is_some_and(|tab_id| {
-                    this.workspace
-                        .tabs
-                        .get(tab_id)
-                        .is_some_and(|tab| tab.is_sftp())
-                        && this.controllers.sftp.read(cx).has_inline_rename(tab_id)
-                }) {
+                } else if this
+                    .active_sftp_tab_id()
+                    .or_else(|| this.session_side_panel_sftp_tab_id(cx))
+                    .is_some_and(|tab_id| this.controllers.sftp.read(cx).has_inline_rename(tab_id))
+                {
                     let controller = this.controllers.sftp.clone();
                     controller.update(cx, |controller, cx| {
                         controller.cancel_inline_rename(cx);
