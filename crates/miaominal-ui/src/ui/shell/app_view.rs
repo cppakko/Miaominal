@@ -39,6 +39,7 @@ pub(in crate::ui::shell) struct ShellUiState {
     pub(in crate::ui::shell) shell_state: ShellState,
     pub(in crate::ui::shell) overlay_state: super::overlays::WindowOverlayState,
     pub(in crate::ui::shell) status_message: String,
+    pub(in crate::ui::shell) last_keychain_status: String,
     pub(in crate::ui::shell) deferred_app_command: Option<DeferredAppCommand>,
     /// Motion of the bottom navigation dock's page command (width and enter).
     pub(in crate::ui::shell) dock_action_motion:

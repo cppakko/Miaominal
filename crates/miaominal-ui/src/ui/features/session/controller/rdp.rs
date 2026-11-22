@@ -169,6 +169,68 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn invalid_direct_port_disables_rdp_launch_submit(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (handle, fixture) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(800.), px(700.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| {
+                        let owner = cx.new(|_| {
+                            SessionController::new_for_test_with_profiles(vec![
+                                SessionProfile::blank("host", 1),
+                            ])
+                        });
+                        owner.update(cx, |owner, cx| owner.open_rdp_launch("host", cx));
+                        let snapshot = owner.read(cx).rdp_launch_overlay(owner.clone()).unwrap();
+                        let subscription = cx.observe(&owner, |_, _, cx| cx.notify());
+                        LaunchFixture {
+                            owner,
+                            snapshot,
+                            _owner_subscription: subscription,
+                        }
+                    })
+                },
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            let owner = fixture.read(cx).owner.clone();
+            window.render_frame(cx);
+            window.within("rdp-mode").click(1usize, cx);
+            owner.update(cx, |owner, cx| owner.sync_rdp_launch_input(window, cx));
+            let snapshot = owner.read(cx).rdp_launch_overlay(owner.clone()).unwrap();
+            fixture.update(cx, |fixture, cx| {
+                fixture.snapshot = snapshot;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let port_input = owner.read(cx).rdp_port_input().unwrap();
+            set_input_value(&port_input, "0", window, cx);
+            window.render_frame(cx);
+            assert_eq!(owner.read(cx).rdp_launch_port(cx), None);
+            assert_eq!(window.find("rdp-launch-submit").disabled(), Some(true));
+            window.click("rdp-launch-submit", cx);
+            assert!(owner.read(cx).rdp_launch_draft().is_some());
+
+            set_input_value(&port_input, "3390", window, cx);
+            window.render_frame(cx);
+            assert_eq!(owner.read(cx).rdp_launch_port(cx), Some(3390));
+            assert_ne!(window.find("rdp-launch-submit").disabled(), Some(true));
+            window.click("rdp-launch-submit", cx);
+            assert!(owner.read(cx).rdp_launch_draft().is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     fn launch_is_transient_and_old_generations_cannot_act(cx: &mut gpui_kit::TestAppContext) {
         cx.update(gpui_kit::init);
         let mut profile = SessionProfile::blank("host", 1);

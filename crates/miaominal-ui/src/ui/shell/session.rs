@@ -897,6 +897,7 @@ impl AppView {
         let target_is_sftp = target_tab.is_sftp();
 
         if self.workspace.active_topbar_tab != self.workspace.tabs.id_at(index) {
+            self.shell.status_message.clear();
             self.unload_active_topbar_workspace(cx);
             self.workspace.active_topbar_tab = self.workspace.tabs.id_at(index);
             if target_is_session {

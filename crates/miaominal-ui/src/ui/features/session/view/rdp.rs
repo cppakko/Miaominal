@@ -220,6 +220,7 @@ pub(in crate::ui::features::session) fn launch_overlay(
                         i18n::string("rdp.connect"),
                         BasicDialogActionTone::Default,
                     )
+                    .disabled(port.is_none())
                     .on_click(move |_, _, cx| {
                         launch_target.update(cx, |owner, cx| owner.submit_rdp_launch(cx));
                     }),

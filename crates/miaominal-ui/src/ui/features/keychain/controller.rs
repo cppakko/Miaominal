@@ -83,6 +83,7 @@ pub(in crate::ui) struct KeychainController {
     pub(super) editor_mode: KeychainEditorMode,
     pub(super) editor_open: bool,
     pub(super) generation_in_progress: bool,
+    pub(super) import_passphrase_visible: bool,
     pub(super) deploy_in_progress: bool,
     pub(super) editor_draft_source: Option<ManagedKeySource>,
     pub(super) deploy_key_id: Option<String>,
@@ -307,6 +308,7 @@ impl KeychainController {
             editor_mode: KeychainEditorMode::Import,
             editor_open: false,
             generation_in_progress: false,
+            import_passphrase_visible: false,
             deploy_in_progress: false,
             editor_draft_source: None,
             deploy_key_id: None,
@@ -339,6 +341,26 @@ impl KeychainController {
 
     pub(in crate::ui) fn editor_open(&self) -> bool {
         self.editor_open
+    }
+
+    pub(in crate::ui) fn import_passphrase_visible(&self) -> bool {
+        self.import_passphrase_visible
+    }
+
+    pub(in crate::ui) fn toggle_import_passphrase_visibility(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.import_passphrase_visible = !self.import_passphrase_visible;
+        set_input_masked(
+            &self.forms.import_passphrase_input,
+            !self.import_passphrase_visible,
+            false,
+            window,
+            cx,
+        );
+        cx.notify();
     }
 
     pub(in crate::ui) fn dismiss_editor(&mut self, cx: &mut Context<Self>) {

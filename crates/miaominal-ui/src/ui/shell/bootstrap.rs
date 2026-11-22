@@ -494,6 +494,7 @@ impl AppView {
                 shell_state: ShellState::default(),
                 overlay_state: super::overlays::WindowOverlayState::default(),
                 status_message,
+                last_keychain_status: String::new(),
                 deferred_app_command: None,
                 dock_action_motion: Default::default(),
             },

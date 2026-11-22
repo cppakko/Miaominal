@@ -314,7 +314,9 @@ impl KeychainController {
         set_input_value(&self.forms.import_path_input, "", window, cx);
         set_editor_value(&self.forms.import_private_key_input, "", window, cx);
         set_editor_value(&self.forms.import_public_key_input, "", window, cx);
+        self.import_passphrase_visible = false;
         set_input_value(&self.forms.import_passphrase_input, "", window, cx);
+        set_input_masked(&self.forms.import_passphrase_input, true, false, window, cx);
         set_input_value(
             &self.forms.deploy_location_input,
             KEYCHAIN_DEPLOY_DEFAULT_LOCATION,

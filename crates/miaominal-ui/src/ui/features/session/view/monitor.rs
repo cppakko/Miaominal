@@ -285,7 +285,7 @@ fn estimate_monitor_axis_label_width(labels: &[String; 3], font_size: f32) -> f3
         .max()
         .unwrap_or(0) as f32;
 
-    (max_chars * font_size * 0.72 + font_size).clamp(20.0, 48.0)
+    (max_chars * font_size * 0.72 + font_size).clamp(24.0, 96.0)
 }
 
 fn format_monitor_time_axis_label(total_seconds: usize) -> String {
@@ -1097,13 +1097,32 @@ impl SessionController {
                 .child(
                     v_flex()
                         .w(px(axis_label_width))
+                        .flex_shrink_0()
                         .h(px(SESSION_MONITOR_CHART_HEIGHT))
                         .justify_between()
                         .text_size(axis_label_font_size)
                         .text_color(rgb(roles.on_surface_variant))
-                        .child(div().w_full().text_right().child(top_tick_label))
-                        .child(div().w_full().text_right().child(middle_tick_label))
-                        .child(div().w_full().text_right().child(bottom_tick_label)),
+                        .child(
+                            div()
+                                .w_full()
+                                .whitespace_nowrap()
+                                .text_right()
+                                .child(top_tick_label),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .whitespace_nowrap()
+                                .text_right()
+                                .child(middle_tick_label),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .whitespace_nowrap()
+                                .text_right()
+                                .child(bottom_tick_label),
+                        ),
                 )
                 .child(
                     div()
@@ -1517,5 +1536,17 @@ mod monitor_layout_tests {
         assert_eq!(load_health(&windows), MonitorHealth::Warning);
         windows.load = 4.0;
         assert_eq!(load_health(&windows), MonitorHealth::Critical);
+    }
+
+    #[test]
+    fn monitor_axis_label_width_accommodates_bandwidth_units() {
+        let labels = [
+            "48.8 MB/s".to_string(),
+            "24.4 MB/s".to_string(),
+            "0 KB/s".to_string(),
+        ];
+        let width = estimate_monitor_axis_label_width(&labels, 11.0);
+        assert!(width > 48.0, "bandwidth labels need > 48px: {width}");
+        assert!(width <= 96.0);
     }
 }

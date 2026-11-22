@@ -462,15 +462,22 @@ impl RemoteMonitorCollector {
     }
 }
 
+fn monitor_retry_backoff(consecutive_failures: u32) -> Duration {
+    let shift = consecutive_failures.saturating_sub(1).min(3);
+    Duration::from_secs(4u64 << shift).min(Duration::from_secs(30))
+}
+
 pub(super) async fn run_monitor_loop(
     session: Arc<client::Handle<ClientHandler>>,
     event_sender: SessionEventSender,
     mut enabled_receiver: watch::Receiver<bool>,
 ) {
     let mut collector = RemoteMonitorCollector::default();
+    let mut consecutive_failures: u32 = 0;
 
     loop {
         if !*enabled_receiver.borrow() {
+            consecutive_failures = 0;
             collector.reset();
             if enabled_receiver.changed().await.is_err() {
                 break;
@@ -480,6 +487,7 @@ pub(super) async fn run_monitor_loop(
 
         match collector.poll(&session).await {
             Ok(snapshot) => {
+                consecutive_failures = 0;
                 if event_sender
                     .send(SessionEvent::MonitorUpdated(snapshot))
                     .await
@@ -497,8 +505,15 @@ pub(super) async fn run_monitor_loop(
                     break;
                 }
                 collector.reset();
-                if enabled_receiver.changed().await.is_err() {
-                    break;
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                let backoff = monitor_retry_backoff(consecutive_failures);
+                tokio::select! {
+                    changed = enabled_receiver.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(backoff) => {}
                 }
                 continue;
             }
@@ -1107,5 +1122,14 @@ mod tests {
         assert_eq!(parse_disk_percent("-1"), Some(0.0));
         assert_eq!(parse_disk_percent(""), None);
         assert_eq!(parse_disk_percent("n/a"), None);
+    }
+
+    #[test]
+    fn monitor_retry_backoff_caps_at_thirty_seconds() {
+        assert_eq!(monitor_retry_backoff(1), Duration::from_secs(4));
+        assert_eq!(monitor_retry_backoff(2), Duration::from_secs(8));
+        assert_eq!(monitor_retry_backoff(3), Duration::from_secs(16));
+        assert_eq!(monitor_retry_backoff(4), Duration::from_secs(30));
+        assert_eq!(monitor_retry_backoff(10), Duration::from_secs(30));
     }
 }

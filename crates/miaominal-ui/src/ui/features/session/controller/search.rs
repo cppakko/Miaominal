@@ -4,7 +4,6 @@ use gpui_kit::{Context, FocusHandle, Window};
 
 use super::SessionController;
 use crate::ui::components::animation::{OVERLAY_ENTER_DURATION, TerminalSearchAnimation};
-use crate::ui::components::forms::set_input_value;
 use crate::ui::contracts::workspace::TabId;
 use crate::ui::i18n;
 
@@ -51,9 +50,12 @@ impl SessionController {
             search.current = None;
             search.status = None;
         }
-        set_input_value(&search_input, "", window, cx);
-        self.clear_terminal_search_target();
+        let pattern = search_input.read(cx).value().to_string();
+        self.apply_terminal_search(&pattern);
         search_input.update(cx, |state, cx| state.focus(window, cx));
+        if !pattern.is_empty() {
+            window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
+        }
         cx.notify();
     }
 
@@ -104,7 +106,7 @@ impl SessionController {
         let mut next_total = 0;
         let mut next_current = None;
         let mut next_status = None;
-        let escaped = regex_escape(pattern.trim());
+        let escaped = build_terminal_search_pattern(pattern);
         if escaped.is_empty() {
             session.terminal.clear_search();
         } else {
@@ -188,6 +190,10 @@ impl SessionController {
     }
 }
 
+fn build_terminal_search_pattern(pattern: &str) -> String {
+    regex_escape(pattern)
+}
+
 fn regex_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for character in input.chars() {
@@ -201,4 +207,16 @@ fn regex_escape(input: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_search_preserves_leading_and_trailing_whitespace() {
+        assert_eq!(build_terminal_search_pattern("  error "), "  error ");
+        assert_eq!(build_terminal_search_pattern("[warn] "), r"\[warn\] ");
+        assert!(build_terminal_search_pattern("").is_empty());
+    }
 }

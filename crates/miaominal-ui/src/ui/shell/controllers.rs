@@ -283,9 +283,20 @@ impl ControllerSet {
             window,
             |this, controller, window, cx| {
                 this.sync_window_overlays(window, cx);
-                let status_message = controller.read(cx).status_message();
-                if !status_message.is_empty() {
-                    this.shell.status_message = status_message.to_string();
+                let status_message = controller.read(cx).status_message().to_string();
+                let changed =
+                    !status_message.is_empty() && status_message != this.shell.last_keychain_status;
+                if changed {
+                    this.shell.last_keychain_status = status_message.clone();
+                    let on_keychain_section = this
+                        .workspace
+                        .active_topbar_tab
+                        .and_then(|id| this.workspace.tabs.get(id))
+                        .is_none_or(|tab| tab.is_hosts())
+                        && this.shell.shell_state.sidebar_section == SidebarSection::Keychain;
+                    if on_keychain_section {
+                        this.shell.status_message = status_message;
+                    }
                 }
 
                 cx.notify();

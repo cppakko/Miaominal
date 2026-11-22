@@ -525,11 +525,29 @@ impl KeychainController {
                             TextInputSurface::Low,
                         )),
                 )
-                .child(surface_text_input_stack(
+                .child(surface_secret_text_input_stack(
                     i18n::string("keychain.editor.import_passphrase"),
                     forms.import_passphrase_input.clone(),
-                    TextInputSurface::Low,
-                    false,
+                    SecretTextInputStackOptions {
+                        surface: TextInputSurface::Low,
+                        size: gpui_kit::component::Size::Large,
+                        required: false,
+                        disabled: self.generation_in_progress,
+                        trailing: None,
+                        reveal_icon: if self.import_passphrase_visible() {
+                            AppIcon::EyeOff
+                        } else {
+                            AppIcon::Eye
+                        },
+                    },
+                    {
+                        let entity = entity.clone();
+                        move |window, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.toggle_import_passphrase_visibility(window, cx);
+                            });
+                        }
+                    },
                 )),
         );
 

@@ -5,17 +5,18 @@ use crate::ui::components::overlay_target::OverlayTarget;
 use crate::ui::assets::AppIcon;
 use crate::ui::components::animation::render_basic_dialog;
 use crate::ui::components::forms::{
-    new_input_state, set_code_editor_input_placeholder, set_editor_value, set_input_placeholder,
-    set_input_value,
+    new_input_state, set_code_editor_input_placeholder, set_editor_value, set_input_masked,
+    set_input_placeholder, set_input_value,
 };
 use crate::ui::components::notifications::{
     ValidationNotificationKind, error_notification, success_notification, validation_notification,
 };
 use crate::ui::components::selection::ProfileSelectItem;
 use crate::ui::components::{
-    BasicDialogActionTone, TextInputSurface, badge, basic_dialog_action_button, dock_action_button,
-    dock_icon_action_button, editor_footer_actions, field_label, icon_button, md3_select,
-    page_section_title, surface_text_editor, surface_text_input, surface_text_input_stack,
+    BasicDialogActionTone, SecretTextInputStackOptions, TextInputSurface, badge,
+    basic_dialog_action_button, dock_action_button, dock_icon_action_button, editor_footer_actions,
+    field_label, icon_button, md3_select, page_section_title, surface_secret_text_input_stack,
+    surface_text_editor, surface_text_input, surface_text_input_stack,
 };
 use crate::ui::contracts::catalog::CatalogQueryPort;
 use crate::ui::contracts::commands::{

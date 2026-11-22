@@ -294,24 +294,17 @@ impl HostsController {
             .hosts_group_filter
             .as_deref()
             .filter(|_| !remote.is_empty());
-        let visible: Vec<_> = remote
-            .iter()
-            .copied()
-            .filter(|profile| selected.is_none_or(|group| profile.group.trim() == group))
-            .collect();
-        let favorites: Vec<_> = visible
-            .iter()
-            .copied()
-            .filter(|profile| profile.is_favorite)
-            .collect();
-        let mut recent: Vec<_> = remote
-            .iter()
-            .copied()
-            .filter(|profile| profile.last_connected_at.is_some())
-            .collect();
-        recent.sort_by_key(|profile| std::cmp::Reverse(profile.last_connected_at));
-        recent.truncate(miaominal_settings::current_settings().recent_connections_count as usize);
-        recent.extend(profiles.iter().filter(|profile| profile.is_local()));
+        let (recent, local, visible, favorites) = hosts_page_collections(
+            &profiles,
+            selected,
+            miaominal_settings::current_settings().recent_connections_count as usize,
+        );
+        let quick_items = hosts_quick_connect_profiles(
+            recent,
+            local,
+            selected,
+            self.editor_state().host_editor_open,
+        );
         let mut groups = BTreeMap::<String, usize>::new();
         for profile in &remote {
             if !profile.group.trim().is_empty() {
@@ -433,13 +426,13 @@ impl HostsController {
             .gap(space(24.0))
             .when(visible.is_empty(), |content| content.h_full().min_h_0())
             .when(!visible.is_empty(), |content| content.pb(space(16.0)));
-        if selected.is_none() && !self.editor_state().host_editor_open && !recent.is_empty() {
+        if !quick_items.is_empty() {
             content = content.child(
                 v_flex()
                     .gap(space(12.0))
                     .child(section_heading(i18n::string("hosts.home.quick")))
                     .child(div().py(space(4.0)).child(render_collection(
-                        &recent,
+                        &quick_items,
                         true,
                         "quick-host",
                     ))),
@@ -569,6 +562,58 @@ impl HostsController {
     }
 }
 
+fn hosts_page_collections<'a>(
+    profiles: &'a [SessionProfile],
+    selected_group: Option<&str>,
+    recent_limit: usize,
+) -> (
+    Vec<&'a SessionProfile>,
+    Vec<&'a SessionProfile>,
+    Vec<&'a SessionProfile>,
+    Vec<&'a SessionProfile>,
+) {
+    let remote: Vec<_> = profiles
+        .iter()
+        .filter(|profile| !profile.is_local())
+        .collect();
+    let local: Vec<_> = profiles
+        .iter()
+        .filter(|profile| profile.is_local())
+        .collect();
+    let visible: Vec<_> = remote
+        .iter()
+        .copied()
+        .filter(|profile| selected_group.is_none_or(|group| profile.group.trim() == group))
+        .collect();
+    let favorites: Vec<_> = visible
+        .iter()
+        .copied()
+        .filter(|profile| profile.is_favorite)
+        .collect();
+    let mut recent: Vec<_> = remote
+        .iter()
+        .copied()
+        .filter(|profile| profile.last_connected_at.is_some())
+        .collect();
+    recent.sort_by_key(|profile| std::cmp::Reverse(profile.last_connected_at));
+    recent.truncate(recent_limit);
+    recent.extend(local.iter().copied());
+    (recent, local, visible, favorites)
+}
+
+fn hosts_quick_connect_profiles<'a>(
+    recent: Vec<&'a SessionProfile>,
+    local: Vec<&'a SessionProfile>,
+    selected_group: Option<&str>,
+    host_editor_open: bool,
+) -> Vec<&'a SessionProfile> {
+    if selected_group.is_none() && !host_editor_open {
+        recent
+    } else {
+        local
+    }
+}
+
 fn section_heading(text: String) -> impl IntoElement {
     div()
         .min_w_0()
@@ -591,5 +636,35 @@ mod tests {
         assert_eq!(collection_columns(921.0, true), 4);
         assert_eq!(collection_columns(920.0, true), 2);
         assert_eq!(collection_columns(520.0, true), 1);
+    }
+
+    #[test]
+    fn quick_connect_keeps_local_terminals_under_group_filter_and_editor() {
+        let mut prod = SessionProfile::blank("prod", 1);
+        prod.group = "Prod".into();
+        prod.last_connected_at = Some(100);
+        let local = SessionProfile::blank_local("local-shell", 2);
+        let profiles = vec![prod, local];
+
+        let (recent, local_only, visible, _) = hosts_page_collections(&profiles, Some("Other"), 4);
+        assert!(visible.is_empty());
+        let with_filter = hosts_quick_connect_profiles(recent, local_only, Some("Other"), false);
+        assert_eq!(
+            with_filter
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-shell"]
+        );
+
+        let (recent, local_only, _, _) = hosts_page_collections(&profiles, None, 4);
+        let with_editor = hosts_quick_connect_profiles(recent, local_only, None, true);
+        assert_eq!(
+            with_editor
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-shell"]
+        );
     }
 }
