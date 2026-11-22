@@ -193,6 +193,25 @@ mod tests {
     }
 
     #[test]
+    fn locale_catalogs_do_not_contain_double_brace_placeholders() {
+        for (locale, catalog) in [
+            ("en", &CATALOGS.english),
+            ("zh-CN", &CATALOGS.simplified_chinese),
+        ] {
+            let malformed: Vec<_> = catalog
+                .iter()
+                .filter(|(_, value)| value.contains("{{") || value.contains("}}"))
+                .map(|(key, _)| key.as_str())
+                .collect();
+            assert!(
+                malformed.is_empty(),
+                "{locale} catalog contains double-brace placeholders: {}",
+                malformed.join(", ")
+            );
+        }
+    }
+
+    #[test]
     fn catalog_loader_parses_toml_document_tables() {
         let catalog = load_catalog(
             r#"

@@ -2223,7 +2223,7 @@ confirm = "Keep remote configuration"
 [settings.sync.dialogs.unsafe_write_consent]
 title = "Turn on auto-sync anyway?"
 message = "This sync service cannot confirm, before an upload, that the remote configuration has not just been changed by another device. If two devices upload at almost the same time, the later upload overwrites the earlier one and those changes are lost."
-defect = "Service limitation: {{defect}}"
+defect = "Service limitation: {defect}"
 defect_missing = "returns no ETag, so configuration versions cannot be marked"
 defect_weak = "returns only a weak ETag, so configuration versions cannot be marked"
 defect_invalid = "returns an invalid ETag"

@@ -772,7 +772,18 @@ impl SyncEngine {
             RemotePayloadState::BindingRequired(provider) => {
                 return Ok(SyncStatus::RemoteBindingRequired { provider });
             }
-            RemotePayloadState::Missing { .. } | RemotePayloadState::NotModified => {
+            RemotePayloadState::Missing { .. } => {
+                anyhow::bail!(match self.config_store.config.provider {
+                    SyncProvider::WebDav => {
+                        "WebDAV remote sync file not found (HTTP 404)"
+                    }
+                    SyncProvider::GithubGist => {
+                        "GitHub Gist does not contain a Miaominal sync file"
+                    }
+                    SyncProvider::None => "sync provider not configured",
+                });
+            }
+            RemotePayloadState::NotModified => {
                 return Ok(SyncStatus::UpToDate {
                     at: self.config_store.config.last_sync_at,
                 });
@@ -2691,5 +2702,198 @@ mod tests {
             Some(payload_revision)
         );
         server.join().expect("payload server should finish");
+    }
+
+    fn status_server(status_line: &'static str) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let address = listener.local_addr().expect("test address should resolve");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should connect");
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).expect("request should read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("response should write");
+            vec![String::from_utf8(request).expect("request should be UTF-8")]
+        });
+        (format!("http://{address}/missing/sync.json"), handle)
+    }
+
+    #[tokio::test]
+    async fn pull_and_force_pull_fail_when_webdav_file_returns_404() {
+        for force in [false, true] {
+            let temp = tempdir().expect("temporary directory should exist");
+            let (url, server) = status_server("404 Not Found");
+            let credentials = memory_credentials();
+            let mut engine = SyncEngine {
+                last_capability_report: None,
+                config_store: SyncConfigStore::with_credentials(
+                    temp.path().join("sync_config.toml"),
+                    crate::SyncConfig {
+                        provider: SyncProvider::WebDav,
+                        webdav_url: url,
+                        webdav_username: "user".into(),
+                        ..crate::SyncConfig::default()
+                    },
+                    credentials.clone(),
+                ),
+            };
+            engine
+                .config_store
+                .set_webdav_password("password")
+                .expect("password should persist");
+            engine
+                .config_store
+                .set_passphrase("missing-remote-passphrase")
+                .expect("passphrase should persist");
+            let before_config = engine.config_store.config.clone();
+
+            let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+            let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+            let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+            let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+            let secret_store = SecretStore::with_credentials(credentials);
+            let mut settings_store =
+                SettingsStore::load_with_path(temp.path().join("settings.toml"))
+                    .expect("settings store should load");
+            save_local_fixture(&session_store, &proxy_store, &snippet_store, &key_store);
+
+            let error = if force {
+                engine
+                    .pull_force(
+                        &session_store,
+                        &proxy_store,
+                        &snippet_store,
+                        &key_store,
+                        &secret_store,
+                        &mut settings_store,
+                    )
+                    .await
+                    .expect_err("force pull from missing WebDAV path must return an error")
+            } else {
+                engine
+                    .pull(
+                        &session_store,
+                        &proxy_store,
+                        &snippet_store,
+                        &key_store,
+                        &secret_store,
+                        &mut settings_store,
+                    )
+                    .await
+                    .expect_err("pull from missing WebDAV path must return an error")
+            };
+
+            assert!(
+                error.to_string().contains("404"),
+                "unexpected error message: {error}"
+            );
+            assert_eq!(engine.config_store.config, before_config);
+            assert_eq!(session_store.load(&secret_store).unwrap().len(), 1);
+            let requests = server.join().expect("404 server should finish");
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].starts_with("GET "));
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_push_still_creates_missing_webdav_file_on_404() {
+        let temp = tempdir().expect("temporary directory should exist");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+        let url = format!("http://{}/new-sync.json", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut methods = Vec::new();
+            for step in 0..2 {
+                let (mut stream, _) = listener.accept().expect("request should connect");
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).expect("request should read");
+                    assert_ne!(read, 0);
+                    request.extend_from_slice(&buffer[..read]);
+                    if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                        let length = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let text = String::from_utf8(request).unwrap();
+                methods.push(text.split_whitespace().next().unwrap().to_string());
+                if step == 0 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        stream,
+                        "HTTP/1.1 201 Created\r\nETag: \"created-etag\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                }
+            }
+            methods
+        });
+
+        let credentials = memory_credentials();
+        let mut engine = SyncEngine {
+            last_capability_report: None,
+            config_store: SyncConfigStore::with_credentials(
+                temp.path().join("sync_config.toml"),
+                crate::SyncConfig {
+                    provider: SyncProvider::WebDav,
+                    webdav_url: url,
+                    webdav_username: "user".into(),
+                    ..crate::SyncConfig::default()
+                },
+                credentials.clone(),
+            ),
+        };
+        engine.config_store.set_webdav_password("password").unwrap();
+        engine
+            .config_store
+            .set_passphrase("push-passphrase")
+            .unwrap();
+
+        let session_store = SessionStore::with_path(temp.path().join("sessions.toml"));
+        let proxy_store = ProxyStore::with_path(temp.path().join("proxies.toml"));
+        let snippet_store = SnippetStore::with_path(temp.path().join("snippets.toml"));
+        let key_store = ManagedKeyStore::with_path(temp.path().join("managed_keys.toml"));
+        let secret_store = SecretStore::with_credentials(credentials);
+        let settings_store =
+            SettingsStore::load_with_path(temp.path().join("settings.toml")).unwrap();
+
+        let status = engine
+            .push_manual(
+                &session_store,
+                &proxy_store,
+                &snippet_store,
+                &key_store,
+                &secret_store,
+                &settings_store,
+            )
+            .await
+            .expect("manual push should create missing WebDAV resource");
+
+        assert!(matches!(status, SyncStatus::Pushed { .. }), "{status:?}");
+        assert_eq!(server.join().unwrap(), vec!["GET", "PUT"]);
     }
 }
