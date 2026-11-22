@@ -152,13 +152,31 @@ pub async fn system_auth_available() -> bool {
 }
 
 #[cfg(windows)]
-pub async fn verify_system_auth(reason: &str) -> SystemAuthVerification {
+pub fn window_hwnd(window: &gpui_kit::Window) -> Option<isize> {
+    use raw_window_handle::RawWindowHandle;
+
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .ok()?
+        .as_raw();
+    match handle {
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn window_hwnd(_window: &gpui_kit::Window) -> Option<isize> {
+    None
+}
+
+#[cfg(windows)]
+pub async fn verify_system_auth(reason: &str, owner_hwnd: Option<isize>) -> SystemAuthVerification {
     let reason = reason.to_string();
     let (sender, receiver) = futures::channel::oneshot::channel();
     if std::thread::Builder::new()
         .name("miaominal-system-auth".into())
         .spawn(move || {
-            let _ = sender.send(verify_system_auth_blocking(&reason));
+            let _ = sender.send(verify_system_auth_blocking(&reason, owner_hwnd));
         })
         .is_err()
     {
@@ -183,15 +201,49 @@ fn system_auth_available_blocking() -> bool {
 }
 
 #[cfg(windows)]
-fn verify_system_auth_blocking(reason: &str) -> SystemAuthVerification {
+fn request_verification_for_window<T: windows::core::Interface>(
+    _marker: fn(&windows::core::HSTRING) -> windows::core::Result<T>,
+    hwnd: windows::Win32::Foundation::HWND,
+    reason: &windows::core::HSTRING,
+) -> windows::core::Result<T> {
     use windows::Security::Credentials::UI::UserConsentVerifier;
+    use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
+
+    let interop: IUserConsentVerifierInterop =
+        windows::core::factory::<UserConsentVerifier, IUserConsentVerifierInterop>()?;
+    unsafe { interop.RequestVerificationForWindowAsync::<T>(hwnd, reason) }
+}
+
+#[cfg(windows)]
+fn verify_system_auth_blocking(reason: &str, owner_hwnd: Option<isize>) -> SystemAuthVerification {
+    use windows::Security::Credentials::UI::UserConsentVerifier;
+    use windows::Win32::Foundation::HWND;
     use windows::core::HSTRING;
 
     let Ok(_apartment) = enter_winrt_apartment() else {
         return SystemAuthVerification::Failed;
     };
-    let Ok(operation) = UserConsentVerifier::RequestVerificationAsync(&HSTRING::from(reason))
-    else {
+    let message = HSTRING::from(reason);
+    let operation = match owner_hwnd.filter(|hwnd| *hwnd != 0) {
+        Some(raw_hwnd) => {
+            let hwnd = HWND(raw_hwnd as *mut core::ffi::c_void);
+            match request_verification_for_window(
+                UserConsentVerifier::RequestVerificationAsync,
+                hwnd,
+                &message,
+            ) {
+                Ok(operation) => Ok(operation),
+                Err(error) => {
+                    log::debug!(
+                        "IUserConsentVerifierInterop::RequestVerificationForWindowAsync failed, falling back: {error:?}"
+                    );
+                    UserConsentVerifier::RequestVerificationAsync(&message)
+                }
+            }
+        }
+        None => UserConsentVerifier::RequestVerificationAsync(&message),
+    };
+    let Ok(operation) = operation else {
         return SystemAuthVerification::Failed;
     };
     operation
@@ -225,7 +277,10 @@ fn map_system_auth_result(
 }
 
 #[cfg(not(windows))]
-pub async fn verify_system_auth(_reason: &str) -> SystemAuthVerification {
+pub async fn verify_system_auth(
+    _reason: &str,
+    _owner_hwnd: Option<isize>,
+) -> SystemAuthVerification {
     SystemAuthVerification::Unavailable
 }
 

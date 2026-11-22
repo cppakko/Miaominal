@@ -1031,11 +1031,12 @@ fn render_ssh_bridge_security_health(controller: &SettingsController) -> AnyElem
 }
 
 fn render_ssh_bridge_pending(entity: Entity<SettingsController>, cx: &App) -> AnyElement {
-    let (pending, system_auth_available) = {
+    let (pending, system_auth_available, auth_in_flight) = {
         let controller = entity.read(cx);
         (
             controller.ssh_bridge_security().pending.clone(),
             controller.ssh_bridge_security().system_auth_available,
+            controller.ssh_bridge_auth_in_flight(),
         )
     };
     if pending.is_empty() {
@@ -1129,10 +1130,16 @@ fn render_ssh_bridge_pending(entity: Entity<SettingsController>, cx: &App) -> An
                             i18n::string("settings.openssh_integration.security.authenticate"),
                             true,
                             false,
-                            !system_auth_available,
-                            move |_, cx| {
+                            !system_auth_available || auth_in_flight,
+                            move |window, cx| {
+                                let owner_hwnd =
+                                    crate::ui::bridge_security_platform::window_hwnd(window);
                                 auth_entity.update(cx, |controller, cx| {
-                                    controller.authenticate_ssh_bridge_request(auth_id.clone(), cx);
+                                    controller.authenticate_ssh_bridge_request(
+                                        auth_id.clone(),
+                                        owner_hwnd,
+                                        cx,
+                                    );
                                 });
                             },
                         )

@@ -84,6 +84,13 @@ fn bridge_security_rank(level: BridgeSecurityLevel) -> u8 {
     }
 }
 
+fn begin_ssh_bridge_auth(in_flight: &mut HashSet<String>, request_id: &str) -> bool {
+    if !in_flight.is_empty() {
+        return false;
+    }
+    in_flight.insert(request_id.to_string())
+}
+
 fn bridge_system_auth_decision(
     outcome: crate::ui::bridge_security_platform::SystemAuthVerification,
 ) -> BridgeAuthorizationDecision {
@@ -662,6 +669,7 @@ pub(in crate::ui) struct SettingsController {
     ssh_bridge_status: SshBridgeStatus,
     ssh_bridge_sync_result: Option<SshBridgeSyncResult>,
     ssh_bridge_security: BridgeSecuritySnapshot,
+    ssh_bridge_auth_in_flight: HashSet<String>,
     ssh_bridge_notification_main_window: AnyWindowHandle,
     ssh_bridge_notification_state: BridgeSecurityNotificationState,
     ssh_bridge_notification_window: Option<(
@@ -1897,6 +1905,7 @@ impl SettingsController {
             ssh_bridge_status,
             ssh_bridge_sync_result,
             ssh_bridge_security,
+            ssh_bridge_auth_in_flight: HashSet::new(),
             ssh_bridge_notification_main_window,
             ssh_bridge_notification_state: BridgeSecurityNotificationState::default(),
             ssh_bridge_notification_window: None,
@@ -2194,9 +2203,18 @@ impl SettingsController {
         cx.notify();
     }
 
+    pub(in crate::ui) fn ssh_bridge_auth_in_flight(&self) -> bool {
+        !self.ssh_bridge_auth_in_flight.is_empty()
+    }
+
+    fn try_begin_ssh_bridge_auth(&mut self, request_id: &str) -> bool {
+        begin_ssh_bridge_auth(&mut self.ssh_bridge_auth_in_flight, request_id)
+    }
+
     pub(in crate::ui) fn authenticate_ssh_bridge_request(
         &mut self,
         request_id: String,
+        owner_hwnd: Option<isize>,
         cx: &mut Context<Self>,
     ) {
         let Some(request) = self
@@ -2204,12 +2222,17 @@ impl SettingsController {
             .pending
             .iter()
             .find(|request| request.request_id == request_id)
+            .cloned()
         else {
             cx.emit(AppCommand::Feedback(i18n::string(
                 "settings.openssh_integration.security.request_expired",
             )));
             return;
         };
+        if !self.try_begin_ssh_bridge_auth(&request_id) {
+            return;
+        }
+        cx.notify();
         let source = bridge_security_display_text(
             request
                 .peer
@@ -2222,12 +2245,18 @@ impl SettingsController {
             request.request_id, profile_name, source
         );
         let service = self.ssh_bridge_service.clone();
-        cx.spawn(async move |_this, _cx| {
-            let outcome = crate::ui::bridge_security_platform::verify_system_auth(&reason).await;
+        cx.spawn(async move |this, cx| {
+            let outcome =
+                crate::ui::bridge_security_platform::verify_system_auth(&reason, owner_hwnd).await;
             let decision = bridge_system_auth_decision(outcome);
             if let Err(error) = service.decide_authorization(&request_id, decision) {
                 log::debug!("failed to finish SSH Bridge system authentication: {error:?}");
             }
+            let _ = this.update(cx, |controller, cx| {
+                controller.ssh_bridge_auth_in_flight.remove(&request_id);
+                controller.ssh_bridge_security = controller.ssh_bridge_service.security_snapshot();
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -3447,6 +3476,17 @@ mod tests {
                 BridgeAuthorizationDecision::SystemAuthFailed
             );
         }
+    }
+
+    #[test]
+    fn ssh_bridge_auth_guard_blocks_double_clicks_and_overlapping_prompts() {
+        let mut in_flight = HashSet::new();
+        assert!(begin_ssh_bridge_auth(&mut in_flight, "req-1"));
+        assert!(!begin_ssh_bridge_auth(&mut in_flight, "req-1"));
+        assert!(!begin_ssh_bridge_auth(&mut in_flight, "req-2"));
+
+        assert!(in_flight.remove("req-1"));
+        assert!(begin_ssh_bridge_auth(&mut in_flight, "req-2"));
     }
 
     #[test]
