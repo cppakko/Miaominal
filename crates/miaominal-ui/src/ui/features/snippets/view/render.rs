@@ -280,7 +280,7 @@ impl SnippetsController {
             .mx_auto()
             .gap_6()
             .when(empty_results, |content| content.h_full().min_h_0())
-            .when(!empty_results, |content| content.pb(space(112.0)))
+            .when(!empty_results, |content| content.pb(space(16.0)))
             .when(!package_summaries.is_empty(), |this| {
                 this.child(
                     v_flex()

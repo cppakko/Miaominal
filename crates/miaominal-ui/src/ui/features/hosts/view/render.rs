@@ -432,7 +432,7 @@ impl HostsController {
             .mx_auto()
             .gap(space(24.0))
             .when(visible.is_empty(), |content| content.h_full().min_h_0())
-            .when(!visible.is_empty(), |content| content.pb(space(112.0)));
+            .when(!visible.is_empty(), |content| content.pb(space(16.0)));
         if selected.is_none() && !self.editor_state().host_editor_open && !recent.is_empty() {
             content = content.child(
                 v_flex()

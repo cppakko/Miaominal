@@ -566,6 +566,12 @@ impl AppView {
                 render_state.has_active_sftp_tab = false;
                 (
                     {
+                        let sidebar_visibility = editor_sidebar_visibility.unwrap_or_else(|| {
+                            self.page_editor_sidebar_for_view(PrimaryViewKind::Sidebar(section), cx)
+                                .map_or(0.0, |_| 1.0)
+                        });
+                        let nav_clearance = ShellMetrics::NAV_CONTENT_SAFE_AREA
+                            * (1.0 - sidebar_visibility).clamp(0.0, 1.0);
                         let panel = self.render_sidebar_primary_panel(
                             section,
                             editor_sidebar_visibility,
@@ -580,6 +586,7 @@ impl AppView {
                             .when(section != SidebarSection::Settings, |panel| {
                                 panel.pt(space(88.0))
                             })
+                            .when(nav_clearance > 0.0, |panel| panel.pb(space(nav_clearance)))
                             .child(panel)
                             .into_any_element()
                     },

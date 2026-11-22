@@ -1,5 +1,6 @@
 //! Product presentation projected from Material 3 roles. Geometry uses the
 //! interface font as its scale, matching the React reference at the default size.
+use crate::ui::components::tokens::color_with_alpha;
 use gpui_kit::{Hsla, Rems, rems, rgb};
 
 pub(in crate::ui) fn space(value: f32) -> Rems {
@@ -26,6 +27,7 @@ pub(in crate::ui) struct ShellColors {
     pub navigation: Hsla,
     pub navigation_bar: Hsla,
     pub on_navigation_bar: Hsla,
+    pub nav_dock_border: Hsla,
     pub selected: Hsla,
     pub on_selected: Hsla,
     pub card: Hsla,
@@ -42,15 +44,37 @@ pub(in crate::ui) struct ShellColors {
     pub scrim: Hsla,
 }
 
+fn navigation_bar_colors(
+    material: &miaominal_settings::theme::MaterialTheme,
+) -> (Hsla, Hsla, Hsla) {
+    let roles = material.roles;
+    if material.dark {
+        (
+            rgb(roles.surface_container_highest).into(),
+            rgb(roles.on_surface).into(),
+            color_with_alpha(roles.outline_variant, 0x99).into(),
+        )
+    } else {
+        (
+            rgb(roles.inverse_surface).into(),
+            rgb(roles.inverse_on_surface).into(),
+            Hsla::transparent_black(),
+        )
+    }
+}
+
 impl ShellColors {
     pub fn current() -> Self {
-        let roles = miaominal_settings::current_theme().material.roles;
+        let material = miaominal_settings::current_theme().material;
+        let roles = material.roles;
+        let (navigation_bar, on_navigation_bar, nav_dock_border) = navigation_bar_colors(&material);
         Self {
             chrome: rgb(roles.surface_container_high).into(),
             canvas: rgb(roles.surface).into(),
             navigation: rgb(roles.surface_container).into(),
-            navigation_bar: rgb(roles.inverse_surface).into(),
-            on_navigation_bar: rgb(roles.inverse_on_surface).into(),
+            navigation_bar,
+            on_navigation_bar,
+            nav_dock_border,
             selected: rgb(roles.secondary_container).into(),
             on_selected: rgb(roles.on_secondary_container).into(),
             card: rgb(roles.surface_container_high).into(),
@@ -124,4 +148,30 @@ impl ShellMetrics {
     pub const VIEW_MODE_ITEM_WIDTH: f32 = 44.0;
     pub const VIEW_MODE_ITEM_HEIGHT: f32 = 32.0;
     pub const VIEW_MODE_ICON_SIZE: f32 = 20.0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use miaominal_settings::theme::{build_theme, default_seed_argb};
+
+    #[test]
+    fn dark_theme_navigation_bar_avoids_light_inverse_surface() {
+        let dark_material = build_theme(default_seed_argb(), true);
+        let (bg, fg, border) = navigation_bar_colors(&dark_material);
+        assert!(bg.l < 0.35, "dark mode nav dock should stay dark: {bg:?}");
+        assert!(
+            fg.l > 0.7,
+            "dark mode nav dock icons should stay light: {fg:?}"
+        );
+        assert!(
+            border.a > 0.0,
+            "dark mode nav dock should keep a subtle border"
+        );
+
+        let light_material = build_theme(default_seed_argb(), false);
+        let (light_bg, light_fg, _) = navigation_bar_colors(&light_material);
+        assert!(light_bg.l < 0.35);
+        assert!(light_fg.l > 0.8);
+    }
 }

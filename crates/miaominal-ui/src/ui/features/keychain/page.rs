@@ -267,7 +267,7 @@ impl KeychainController {
             .max_w(space(ShellMetrics::CONTENT_MAX_WIDTH))
             .mx_auto()
             .gap_6()
-            .pb(space(112.0))
+            .pb(space(16.0))
             .when(show_managed_keys, |this| {
                 this.child(
                     v_flex()
