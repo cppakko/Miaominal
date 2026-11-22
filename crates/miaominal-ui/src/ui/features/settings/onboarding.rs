@@ -2418,15 +2418,16 @@ mod tests {
     use crate::ui::contracts::catalog::CatalogReader;
     use crate::ui::contracts::proxies::{ProxyCommitOperation, ProxyCommitter};
     use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{
-        AppContext as _, Bounds, Render, TestAppContext, WindowBounds, WindowOptions, size,
-    };
-    use miaominal_core::profile::{ProxyProfile, SessionProfile};
+    use gpui_kit::{Bounds, Render, TestAppContext, WindowBounds, WindowOptions, size};
+    use miaominal_core::profile::SessionProfile;
+    use miaominal_core::proxy::ProxyProfile;
     use miaominal_secrets::{CredentialStore, LockedCredentialBackend, SecretStore};
     use miaominal_services::{OpenSshIntegrationService, SshBridgeService};
-    use miaominal_settings::{SettingsStore, SshBridgeConfig};
+    use miaominal_settings::SshBridgeConfig;
     use miaominal_ssh::SshBridgeEndpoint;
-    use miaominal_storage::{BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore};
+    use miaominal_storage::{
+        BridgeAuditLog, BridgeSecuritySettingsStore, KnownHostsStore, SettingsStore,
+    };
     use miaominal_sync::{SyncConfig, SyncConfigStore, SyncEngine};
 
     struct OnboardingStepperHarness {
