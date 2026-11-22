@@ -1951,7 +1951,6 @@ directory_name_invalid = "Enter a folder name without path separators."
 [errors.sftp.local_read]
 directory = "Failed to read {path}"
 entry = "Failed to read an entry in {path}"
-metadata = "Failed to read metadata for {path}"
 
 [settings.sync]
 save_action = "Save"

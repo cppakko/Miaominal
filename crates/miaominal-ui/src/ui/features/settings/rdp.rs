@@ -57,7 +57,7 @@ impl SettingsController {
         let revision = self.rdp_detection_revision;
         self.rdp_detection = i18n::string("rdp.detecting");
         let settings = self.settings().rdp_client.clone();
-        let work = self.runtime.spawn_blocking(move || {
+        let work = cx.background_executor().spawn(async move {
             miaominal_services::resolve_rdp_client(&settings)
                 .map(|client| client.path().display().to_string())
                 .map_err(|e| e.to_string())
@@ -69,9 +69,8 @@ impl SettingsController {
                     return;
                 }
                 owner.rdp_detection = match result {
-                    Ok(Ok(path)) => i18n::string_args("rdp.detected", &[("path", &path)]),
-                    Ok(Err(error)) => error,
-                    Err(error) => error.to_string(),
+                    Ok(path) => i18n::string_args("rdp.detected", &[("path", &path)]),
+                    Err(error) => error,
                 };
                 cx.notify();
             });
