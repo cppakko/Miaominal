@@ -712,6 +712,11 @@ impl AgentController {
         self.runtime.borrow().foreground.context_usage
     }
 
+    /// Token breakdown (input, output, cached input) reported by the latest completion.
+    pub(in crate::ui) fn last_token_usage(&self) -> Option<miaominal_agent::model::TokenUsage> {
+        self.runtime.borrow().foreground.last_usage
+    }
+
     pub(in crate::ui) fn editing_title(&self) -> bool {
         self.forms.editing_title
     }

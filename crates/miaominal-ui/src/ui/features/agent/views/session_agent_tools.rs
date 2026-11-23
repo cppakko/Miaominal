@@ -209,6 +209,21 @@ fn render_file_change_tool_body(
     let args = tool_arguments_value(&tool_call.arguments);
     let path =
         string_field(args.as_ref(), "path").unwrap_or_else(|| tool_placeholder("unknown_path"));
+    let non_completed_note = (tool_call.status != SessionAgentToolStatus::Completed)
+        .then_some(tool_call.confirmation_note.as_deref())
+        .flatten()
+        .map(str::trim)
+        .filter(|note| !note.is_empty())
+        .map(ToOwned::to_owned);
+    let note_label = if tool_call.status == SessionAgentToolStatus::WaitingForConfirmation {
+        tool_field_label("approval")
+    } else {
+        tool_field_label("result")
+    };
+    let note_is_error = matches!(
+        tool_call.status,
+        SessionAgentToolStatus::Failed | SessionAgentToolStatus::Rejected
+    );
     v_flex()
         .w_full()
         .gap_2()
@@ -218,6 +233,16 @@ fn render_file_change_tool_body(
             colors,
         ))
         .child(render_patch_review(&tool_call.id, state, height))
+        .when_some(non_completed_note, |this, note| {
+            this.child(render_tool_terminal_block(
+                &tool_call.id,
+                note_label,
+                None,
+                note,
+                colors,
+                note_is_error,
+            ))
+        })
         .into_any_element()
 }
 

@@ -5,12 +5,55 @@ use crate::ui::contracts::preferences::ai_provider_kind_chat_supported;
 use crate::ui::i18n;
 use gpui_kit::component::{Disableable as _, menu::DropdownMenu as _};
 use gpui_kit::{Animation, AnimationExt as _, ClipboardEntry};
-use miaominal_agent::model::{AgentReasoningSupport, agent_reasoning_support, supports_vision};
+use miaominal_agent::model::{
+    AgentReasoningSupport, TokenUsage, agent_reasoning_support, supports_vision,
+};
 use miaominal_agent::policy::ApprovalMode;
 use miaominal_settings::{AiProviderConfig, AiReasoningEffort};
 use std::time::Duration;
 
 const SESSION_AGENT_SEND_PULSE_DURATION: Duration = Duration::from_millis(1100);
+
+pub(in crate::ui::features::agent) fn format_context_usage_tooltip(
+    context_usage: Option<(u64, u64)>,
+    last_usage: Option<TokenUsage>,
+) -> Option<String> {
+    let mut lines = Vec::new();
+    if let Some((used, window)) = context_usage.filter(|(_, window)| *window > 0) {
+        let percent = (used.saturating_mul(100) / window).min(100);
+        lines.push(i18n::string_args(
+            "workspace.panel.agent.context_usage_detail",
+            &[
+                ("used", &used.to_string()),
+                ("window", &window.to_string()),
+                ("percent", &percent.to_string()),
+            ],
+        ));
+    }
+    if let Some(usage) = last_usage.filter(|usage| {
+        usage.input_tokens > 0 || usage.output_tokens > 0 || usage.cached_input_tokens > 0
+    }) {
+        if usage.cached_input_tokens > 0 {
+            lines.push(i18n::string_args(
+                "workspace.panel.agent.token_usage_detail_cached",
+                &[
+                    ("input", &usage.input_tokens.to_string()),
+                    ("cached", &usage.cached_input_tokens.to_string()),
+                    ("output", &usage.output_tokens.to_string()),
+                ],
+            ));
+        } else {
+            lines.push(i18n::string_args(
+                "workspace.panel.agent.token_usage_detail",
+                &[
+                    ("input", &usage.input_tokens.to_string()),
+                    ("output", &usage.output_tokens.to_string()),
+                ],
+            ));
+        }
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
 
 fn selected_ai_provider(app_settings: &AgentPreferencesSnapshot) -> Option<AiProviderConfig> {
     app_settings
@@ -252,16 +295,21 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
     let state = agent_controller.session_agent();
     let prompt_input = agent_controller.prompt_input();
     let selected_agent_mode = agent_controller.agent_mode();
-    let context_usage_label = agent_controller
+    let context_usage = agent_controller
         .context_usage()
-        .filter(|(_, window)| *window > 0)
-        .map(|(used, window)| {
-            let percent = (used.saturating_mul(100) / window).min(100);
-            i18n::string_args(
-                "workspace.panel.agent.context_usage",
-                &[("percent", &percent.to_string())],
-            )
-        });
+        .filter(|(_, window)| *window > 0);
+    let last_token_usage = agent_controller.last_token_usage();
+    let can_compact_context = agent_controller.can_compact_session_agent_context();
+    let context_usage_label = context_usage.map(|(used, window)| {
+        let percent = (used.saturating_mul(100) / window).min(100);
+        i18n::string_args(
+            "workspace.panel.agent.context_usage",
+            &[("percent", &percent.to_string())],
+        )
+    });
+    let context_usage_tooltip = format_context_usage_tooltip(context_usage, last_token_usage)
+        .unwrap_or_else(|| i18n::string("workspace.panel.agent.compact_context"));
+    let compact_controller = agent.clone();
     let prompt_menu_input = prompt_input.clone();
     let pty_toggle_controller = agent.clone();
     let attach_controller = agent.clone();
@@ -437,15 +485,49 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
                                                     selected_agent_mode,
                                                 )),
                                         )
-                                        .when_some(context_usage_label, |this, label| {
+                                        .when_some(context_usage_label, move |this, label| {
+                                            let compact_controller = compact_controller.clone();
+                                            let tooltip_text = context_usage_tooltip.clone();
                                             this.child(
-                                                div()
+                                                Button::new("session-agent-context-usage")
+                                                    .ghost()
+                                                    .small()
+                                                    .compact()
+                                                    .dropdown_caret(true)
+                                                    .label(label)
+                                                    .tooltip(tooltip_text.clone())
                                                     .flex_shrink_0()
-                                                    .text_size(
-                                                        miaominal_settings::FontSize::Body.scaled(),
-                                                    )
+                                                    .rounded(px(14.0))
+                                                    .bg(rgb(roles.surface_container_high))
                                                     .text_color(rgb(text_muted))
-                                                    .child(label),
+                                                    .dropdown_menu(move |menu, _, _| {
+                                                        let mut menu = menu.min_w(220.0);
+                                                        for line in tooltip_text.lines() {
+                                                            menu = menu.item(
+                                                                PopupMenuItem::new(line.to_string())
+                                                                    .disabled(true),
+                                                            );
+                                                        }
+                                                        let compact_controller =
+                                                            compact_controller.clone();
+                                                        menu.item(PopupMenuItem::separator()).item(
+                                                            PopupMenuItem::new(i18n::string(
+                                                                "workspace.panel.agent.compact_context",
+                                                            ))
+                                                            .disabled(!can_compact_context)
+                                                            .on_click(move |_, _, cx| {
+                                                                compact_controller.update(
+                                                                    cx,
+                                                                    |controller, cx| {
+                                                                        controller
+                                                                            .compact_session_agent_context(
+                                                                                cx,
+                                                                            );
+                                                                    },
+                                                                );
+                                                            }),
+                                                        )
+                                                    }),
                                             )
                                         }),
                                 )
@@ -803,5 +885,41 @@ mod reasoning_menu_tests {
                 *effort
             ));
         }
+    }
+
+    #[test]
+    fn format_context_usage_tooltip_includes_context_and_token_breakdowns() {
+        assert_eq!(format_context_usage_tooltip(None, None), None);
+
+        let uncached = format_context_usage_tooltip(
+            Some((12_800, 128_000)),
+            Some(TokenUsage {
+                input_tokens: 12_500,
+                output_tokens: 300,
+                cached_input_tokens: 0,
+            }),
+        )
+        .expect("context and uncached token usage tooltip");
+        assert!(
+            uncached.contains("12800 / 128000 (10%)") || uncached.contains("12800 / 128000（10%）")
+        );
+        assert!(uncached.contains("12500"));
+        assert!(uncached.contains("300"));
+
+        let cached = format_context_usage_tooltip(
+            Some((64_000, 128_000)),
+            Some(TokenUsage {
+                input_tokens: 60_000,
+                output_tokens: 4_000,
+                cached_input_tokens: 48_000,
+            }),
+        )
+        .expect("context and cached token usage tooltip");
+        assert!(
+            cached.contains("64000 / 128000 (50%)") || cached.contains("64000 / 128000（50%）")
+        );
+        assert!(cached.contains("60000"));
+        assert!(cached.contains("48000"));
+        assert!(cached.contains("4000"));
     }
 }

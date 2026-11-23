@@ -169,6 +169,12 @@ const GROUPS: &[SearchGroup] = &[
         ],
     },
     SearchGroup {
+        page: SettingsPageId::AiProviders,
+        group: SettingsGroupId::AgentSafety,
+        title: "settings.agent_safety.group.title",
+        items: &["settings.agent_safety.auto_approve_dangerous.label"],
+    },
+    SearchGroup {
         page: SettingsPageId::Sync,
         group: SettingsGroupId::SyncStatus,
         title: "settings.sync.status_group.title",
@@ -336,5 +342,13 @@ mod tests {
                 "missing label {key}"
             );
         }
+        assert_eq!(
+            search_destination("settings.agent_safety.group.title"),
+            Some((SettingsPageId::AiProviders, SettingsGroupId::AgentSafety))
+        );
+        assert_eq!(
+            search_destination("settings.agent_safety.auto_approve_dangerous.label"),
+            Some((SettingsPageId::AiProviders, SettingsGroupId::AgentSafety))
+        );
     }
 }

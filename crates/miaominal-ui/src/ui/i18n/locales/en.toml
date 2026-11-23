@@ -911,6 +911,10 @@ axis_minutes_ago = "-{minutes}m"
 
 [workspace.panel.agent]
 context_usage = "Context {percent}%"
+context_usage_detail = "Context: {used} / {window} ({percent}%)"
+token_usage_detail = "Tokens: {input} in · {output} out"
+token_usage_detail_cached = "Tokens: {input} in ({cached} cached) · {output} out"
+compact_context = "Compact conversation history"
 sidebar_title = "Chat"
 chat = "Conversations"
 empty_title = "Start working with AI Assistant"
@@ -976,6 +980,7 @@ file_too_large = "File is too large: {filename}"
 invalid_text_file = "File is not valid UTF-8: {filename}"
 approval_needed = "Needs approval ({level}): {reason}"
 steer_queued = "Added to the running task; it applies at the next step."
+nothing_to_compact = "No earlier conversation turns to compact yet."
 engine_unavailable = "Couldn’t start the assistant. Try again."
 turn_failed = "The assistant couldn’t finish this turn. Send “continue” to resume."
 

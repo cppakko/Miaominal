@@ -210,3 +210,62 @@ fn completed_write_file_uses_the_returned_diff(cx: &mut TestAppContext) {
     });
     assert!(message.read_with(cx, |view, _| view.patch_diff().is_some()));
 }
+
+#[gpui_kit::test]
+fn pending_approval_edit_file_and_write_file_synthesize_diff_previews(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let edit_message = cx.new(|cx| {
+        SessionAgentMessageView::new(
+            SessionAgentMessage::tool_call(SessionAgentToolCall {
+                id: "edit-pending-fixture".into(),
+                name: "edit_file".into(),
+                arguments: serde_json::json!({
+                    "path": "config.toml",
+                    "old_string": "port = 22\n",
+                    "new_string": "port = 2222\n"
+                })
+                .to_string(),
+                summary: "Edit config.toml".into(),
+                status: SessionAgentToolStatus::WaitingForConfirmation,
+                requires_confirmation: true,
+                confirmation_note: Some("Needs approval (L1): modifies remote file".into()),
+                expanded: true,
+            }),
+            cx,
+        )
+    });
+    edit_message.read_with(cx, |view, cx| {
+        let (diff_state, _) = view.patch_diff().expect("edit_file preview diff");
+        let files = diff_state.read(cx).files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].additions(), 1);
+        assert_eq!(files[0].deletions(), 1);
+    });
+
+    let write_message = cx.new(|cx| {
+        SessionAgentMessageView::new(
+            SessionAgentMessage::tool_call(SessionAgentToolCall {
+                id: "write-pending-fixture".into(),
+                name: "write_file".into(),
+                arguments: serde_json::json!({
+                    "path": "deploy.sh",
+                    "content": "#!/bin/sh\necho ok\n"
+                })
+                .to_string(),
+                summary: "Write deploy.sh".into(),
+                status: SessionAgentToolStatus::WaitingForConfirmation,
+                requires_confirmation: true,
+                confirmation_note: Some("Needs approval (L1): creates remote file".into()),
+                expanded: true,
+            }),
+            cx,
+        )
+    });
+    write_message.read_with(cx, |view, cx| {
+        let (diff_state, _) = view.patch_diff().expect("write_file preview diff");
+        let files = diff_state.read(cx).files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].additions(), 2);
+        assert_eq!(files[0].deletions(), 0);
+    });
+}

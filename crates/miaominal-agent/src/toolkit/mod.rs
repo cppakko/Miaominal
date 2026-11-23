@@ -11,6 +11,7 @@ mod terminal;
 #[cfg(test)]
 mod ssh_exec_tests;
 
+pub use edit::{new_file_diff, replace_exact, split_parent, unified_diff};
 pub use exec::ChannelToolRuntime;
 pub use runtime::{
     ProgressSender, ToolAssessment, ToolInvocation, ToolOutcome, ToolProgress, ToolRuntime,

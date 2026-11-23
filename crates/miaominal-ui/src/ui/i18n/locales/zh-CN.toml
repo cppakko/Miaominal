@@ -771,6 +771,10 @@ axis_minutes_ago = "-{minutes}分"
 
 [workspace.panel.agent]
 context_usage = "上下文 {percent}%"
+context_usage_detail = "上下文：{used} / {window}（{percent}%）"
+token_usage_detail = "Token：输入 {input} · 输出 {output}"
+token_usage_detail_cached = "Token：输入 {input}（缓存 {cached}）· 输出 {output}"
+compact_context = "压缩对话历史"
 sidebar_title = "聊天"
 chat = "对话"
 empty_title = "开始与 AI 助手协作"
@@ -836,6 +840,7 @@ file_too_large = "文件过大：{filename}"
 invalid_text_file = "文件不是有效的 UTF-8 文本：{filename}"
 approval_needed = "需要确认（{level}）：{reason}"
 steer_queued = "已追加到当前任务，将在下一步生效。"
+nothing_to_compact = "还没有可压缩的较早对话轮次。"
 engine_unavailable = "无法启动 AI 助手，请重试。"
 turn_failed = "AI 助手未能完成本轮任务，发送“继续”可接着执行。"
 

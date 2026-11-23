@@ -159,6 +159,13 @@ impl AgentController {
             target_names,
         } = draft;
 
+        if !has_pending_attachments && prompt.eq_ignore_ascii_case("/compact") {
+            self.record_prompt_history(&prompt);
+            self.clear_prompt_after_submission(window, cx);
+            self.compact_session_agent_context(cx);
+            return;
+        }
+
         let Some(provider_id) = self.selected_ai_provider_id() else {
             let message = i18n::string("workspace.panel.agent.no_provider_configured");
             self.record_prompt_submission_error(message, false, cx);
@@ -237,6 +244,76 @@ impl AgentController {
             "workspace.panel.agent.send_pending",
         )));
         cx.notify();
+    }
+
+    /// True when the foreground conversation is idle and has enough user turns
+    /// for manual context compaction.
+    pub(in crate::ui) fn can_compact_session_agent_context(&self) -> bool {
+        let state = self.session_agent();
+        !state.is_busy()
+            && state
+                .messages
+                .iter()
+                .filter(|message| message.role == SessionAgentMessageRole::User)
+                .count()
+                >= 2
+    }
+
+    /// Manually compact older turns in the foreground conversation using
+    /// [`AgentCommand::Compact`].
+    pub(in crate::ui) fn compact_session_agent_context(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.session_agent().is_busy() {
+            return false;
+        }
+        if !self.can_compact_session_agent_context() {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "workspace.panel.agent.messages.nothing_to_compact",
+            )));
+            cx.notify();
+            return false;
+        }
+        let Some(provider_id) = self.selected_ai_provider_id() else {
+            let message = i18n::string("workspace.panel.agent.no_provider_configured");
+            self.record_prompt_submission_error(message, false, cx);
+            return false;
+        };
+        if self.session_agent_requires_local_vault_unlock(&provider_id) {
+            cx.emit(AppCommand::vault_unlock(DeferredAppCommand::Agent(
+                AgentDeferredCommand::ResumeRequest,
+            )));
+            return false;
+        }
+        if self.session_agent().engine.is_none() {
+            let prepared = match self.prepare_turn(&provider_id, &[], None) {
+                Ok(prepared) => prepared,
+                Err(message) => {
+                    self.record_prompt_submission_error(message, true, cx);
+                    return false;
+                }
+            };
+            let session_id = self.ensure_foreground_session(cx);
+            if !self.dispatch_turn(&session_id, prepared, cx) {
+                self.record_prompt_submission_error(
+                    i18n::string("workspace.panel.agent.messages.engine_unavailable"),
+                    true,
+                    cx,
+                );
+                return false;
+            }
+        }
+        let sent = self
+            .session_agent()
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.send(AgentCommand::Compact));
+        if sent {
+            let state = &mut self.runtime.get_mut().foreground;
+            state.engine_busy = true;
+            state.last_error = None;
+            self.sync_conversation_generating_view(cx);
+            cx.notify();
+        }
+        sent
     }
 
     /// Ensure the session engine exists and push the current model, tools

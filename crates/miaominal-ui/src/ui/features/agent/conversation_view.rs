@@ -258,27 +258,67 @@ impl SessionAgentMessageView {
         }
         let arguments =
             tool.and_then(|tool| serde_json::from_str::<serde_json::Value>(&tool.arguments).ok());
-        let patch = tool.and_then(|tool| match tool.name.as_str() {
-            "apply_patch" => arguments
-                .as_ref()
-                .and_then(|value| value.get("patch"))
-                .and_then(serde_json::Value::as_str),
-            // edit_file/write_file return the generated unified diff as their
-            // completed result note. Reuse the same retained DiffState so all
-            // file mutations get one review surface.
-            "edit_file" | "write_file" if tool.status == SessionAgentToolStatus::Completed => {
-                tool.confirmation_note.as_deref()
-            }
-            _ => None,
-        });
-        if patch == self.patch_source.as_deref() {
+        let patch: Option<std::borrow::Cow<'_, str>> =
+            tool.and_then(|tool| match tool.name.as_str() {
+                "apply_patch" => arguments
+                    .as_ref()
+                    .and_then(|value| value.get("patch"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(std::borrow::Cow::Borrowed),
+                // edit_file/write_file return the generated unified diff as their
+                // completed result note. Before execution (e.g. while awaiting user
+                // approval), synthesize a unified diff preview from the arguments
+                // so the user can review the exact lines before approving.
+                "edit_file" => {
+                    if tool.status == SessionAgentToolStatus::Completed {
+                        tool.confirmation_note
+                            .as_deref()
+                            .map(std::borrow::Cow::Borrowed)
+                    } else {
+                        let args = arguments
+                            .as_ref()
+                            .map(|value| value.get("arguments").unwrap_or(value))?;
+                        let path = args.get("path").and_then(serde_json::Value::as_str)?;
+                        let old_string =
+                            args.get("old_string").and_then(serde_json::Value::as_str)?;
+                        let new_string =
+                            args.get("new_string").and_then(serde_json::Value::as_str)?;
+                        (!path.trim().is_empty() && old_string != new_string).then(|| {
+                            std::borrow::Cow::Owned(miaominal_agent::toolkit::unified_diff(
+                                path, old_string, new_string, 3,
+                            ))
+                        })
+                    }
+                }
+                "write_file" => {
+                    if tool.status == SessionAgentToolStatus::Completed {
+                        tool.confirmation_note
+                            .as_deref()
+                            .map(std::borrow::Cow::Borrowed)
+                    } else {
+                        let args = arguments
+                            .as_ref()
+                            .map(|value| value.get("arguments").unwrap_or(value))?;
+                        let path = args.get("path").and_then(serde_json::Value::as_str)?;
+                        let content = args.get("content").and_then(serde_json::Value::as_str)?;
+                        (!path.trim().is_empty()).then(|| {
+                            std::borrow::Cow::Owned(miaominal_agent::toolkit::new_file_diff(
+                                path, content,
+                            ))
+                        })
+                    }
+                }
+                _ => None,
+            });
+        if patch.as_deref() == self.patch_source.as_deref() {
             return;
         }
-        self.patch_source = patch.map(ToOwned::to_owned);
+        self.patch_source = patch.as_deref().map(ToOwned::to_owned);
         let files = patch
+            .as_deref()
             .and_then(|patch| DiffFile::parse(patch).ok())
             .filter(|files| !files.is_empty() && files.iter().all(|file| !file.is_truncated()));
-        if let (Some(patch), Some(files)) = (patch, files) {
+        if let (Some(patch), Some(files)) = (patch.as_deref(), files) {
             self.patch_height_rem =
                 ((patch.lines().count() + files.len()) as f32 * 1.25).clamp(6.0, 22.0);
             if let Some(state) = &self.patch_diff {

@@ -21,7 +21,7 @@ use miaominal_settings::{self, KeyBinding, OpenSshIntegrationMode, ThemeId};
 use miaominal_ssh::SshBridgeStatus;
 use miaominal_sync::SyncProvider;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SettingsPageId {
     Appearance,
     Connections,
@@ -33,7 +33,7 @@ pub(super) enum SettingsPageId {
     About,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SettingsGroupId {
     Language,
     Typography,
@@ -52,6 +52,7 @@ pub(super) enum SettingsGroupId {
     Mouse,
     AiProviders,
     WebSearch,
+    AgentSafety,
     SyncStatus,
     AutoSync,
     SyncEncryption,
