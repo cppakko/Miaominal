@@ -1269,6 +1269,7 @@ value_label = "值"
 add_to_favorites = "加入收藏"
 remove_from_favorites = "移出收藏"
 open_sftp = "打开 SFTP"
+add_port_forwarding = "添加端口转发"
 duplicate_profile = "复制配置"
 delete_profile = "删除配置"
 

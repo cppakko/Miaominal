@@ -112,6 +112,9 @@ pub(in crate::ui) enum TabOpenRequest {
         profile_id: String,
         rule_id: String,
     },
+    NewPortForwardRule {
+        profile_id: String,
+    },
 }
 
 #[derive(Clone, Debug)]

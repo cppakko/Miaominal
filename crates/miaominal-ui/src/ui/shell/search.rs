@@ -37,7 +37,8 @@ impl AppView {
             match target {
                 SearchTarget::Host(profile_id) | SearchTarget::Rdp(profile_id) => {
                     let hosts = controllers.hosts.clone();
-                    let (connect, edit, sftp) = (view.clone(), view.clone(), view.clone());
+                    let (connect, edit, sftp, port_forwarding) =
+                        (view.clone(), view.clone(), view.clone(), view.clone());
                     hosts.read(cx).build_search_context_menu(
                         hosts.clone(),
                         menu,
@@ -66,6 +67,16 @@ impl AppView {
                                 this.controllers.hosts.update(cx, |controller, cx| {
                                     if let Some(index) = controller.profile_index(&id) {
                                         controller.request_sftp_at_profile_index(index, cx);
+                                    }
+                                });
+                            })
+                        },
+                        move |id, window, cx| {
+                            leave_search(&port_forwarding, window, cx, |this, _, cx| {
+                                this.controllers.hosts.update(cx, |controller, cx| {
+                                    if let Some(index) = controller.profile_index(&id) {
+                                        controller
+                                            .request_port_forwarding_at_profile_index(index, cx);
                                     }
                                 });
                             })

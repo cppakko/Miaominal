@@ -632,19 +632,53 @@ impl ForwardingController {
         cx.notify();
     }
 
+    pub(in crate::ui) fn open_port_forward_panel_for_profile(
+        &self,
+        profile_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile) = self
+            .catalog
+            .profile(profile_id)
+            .filter(SessionProfile::is_ssh)
+        else {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "forwarding.messages.profile_not_found",
+            )));
+            return;
+        };
+        self.open_new_port_forward_editor(Some(profile), window, cx);
+    }
+
     fn open_port_forward_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_port_forward_editor_state(true, None, None, PortForwardKind::Local);
+        self.open_new_port_forward_editor(None, window, cx);
+    }
+
+    fn open_new_port_forward_editor(
+        &self,
+        profile: Option<SessionProfile>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profile_id = profile.as_ref().map(|item| item.id.clone());
+        self.set_port_forward_editor_state(true, profile_id.clone(), None, PortForwardKind::Local);
         let forms = self.forms.clone();
         set_input_value(&forms.label_input, "", window, cx);
         set_input_value(&forms.listen_host_input, "", window, cx);
         set_input_value(&forms.listen_port_input, "", window, cx);
         set_input_value(&forms.target_host_input, "", window, cx);
         set_input_value(&forms.target_port_input, "", window, cx);
-        self.sync_port_forward_profile_select(None, window, cx);
+        self.sync_port_forward_profile_select(profile_id.as_deref(), window, cx);
         cx.emit(AppCommand::SidebarEditorStateChanged(Some(
             PageEditorSidebarKind::PortForwarding,
         )));
-        let message = if self.catalog.profiles().is_empty() {
+        let message = if let Some(profile) = profile {
+            i18n::string_args(
+                "forwarding.messages.creating_rule_for_profile",
+                &[("profile", &profile.name)],
+            )
+        } else if self.catalog.profiles().is_empty() {
             i18n::string("forwarding.messages.create_host_profile_before_adding")
         } else {
             i18n::string("forwarding.messages.choose_host_profile_for_new_rule")
@@ -1595,5 +1629,133 @@ mod tests {
         });
         assert_eq!(catalog.1.get(), 0);
         assert!(runtime.synced.borrow().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn opening_panel_for_ssh_profile_prefills_profile_and_allows_creating_rule(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let mut local = SessionProfile::blank_local("local-shell", 0);
+        local.name = "Local".into();
+        let mut telnet = SessionProfile::blank("telnet-host", 1);
+        telnet.kind = miaominal_core::profile::ProfileKind::Telnet;
+        telnet.name = "Telnet".into();
+        let catalog = Catalog(
+            Rc::new(RefCell::new(vec![
+                local,
+                telnet,
+                profile("alpha"),
+                profile("beta"),
+            ])),
+            Rc::new(Cell::new(0)),
+        );
+        let runtime = Rc::new(Runtime::default());
+        let path = std::env::temp_dir().join(format!(
+            "miaominal-forward-prefill-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let (window_handle, harness) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(480.), px(1200.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    cx.new(|cx| {
+                        let controller = cx.new(|cx| {
+                            ForwardingController::new(
+                                ForwardingControllerArgs {
+                                    catalog: CatalogQueryPort::new(Rc::new(catalog.clone())),
+                                    profile_commit: ProfileCommitPort::new(Rc::new(
+                                        catalog.clone(),
+                                    )),
+                                    store: Some(SessionStore::with_path(path.clone())),
+                                    secrets: SecretStore::new_locked_vault(),
+                                    vault_status: LocalVaultStatus::Disabled,
+                                    manager: None,
+                                    runtime: ForwardingRuntimePort::new(runtime.clone()),
+                                },
+                                window,
+                                cx,
+                            )
+                        });
+                        Harness { controller }
+                    })
+                },
+            )
+            .expect("open forwarding prefill test window")
+        });
+        let controller = cx.update(|cx| harness.read(cx).controller.clone());
+        let emitted = Rc::new(RefCell::new(Vec::<String>::new()));
+        let recorded = emitted.clone();
+        let _sub = cx.update(|cx| {
+            cx.subscribe(&controller, move |_, command: &AppCommand, _| {
+                if let AppCommand::Feedback(message) = command {
+                    recorded.borrow_mut().push(message.clone());
+                }
+            })
+        });
+
+        // Non-SSH profiles and unknown IDs must not open the rule composer.
+        cx.update_window(window_handle, |_, window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.open_port_forward_panel_for_profile("local-shell", window, cx);
+                assert!(!controller.editor_open());
+                controller.open_port_forward_panel_for_profile("telnet-host", window, cx);
+                assert!(!controller.editor_open());
+                controller.open_port_forward_panel_for_profile("missing", window, cx);
+                assert!(!controller.editor_open());
+            });
+        })
+        .unwrap();
+        assert_eq!(emitted.borrow().len(), 3);
+
+        // Opening for an SSH profile pre-selects it in state and SelectState, clears fields, and saves a new rule on it.
+        cx.update_window(window_handle, |_, window, cx| {
+            controller.update(cx, |controller, cx| {
+                controller.edit_port_forward_rule("alpha".into(), "rule-a".into(), window, cx);
+                controller.open_port_forward_panel_for_profile("beta", window, cx);
+                let editor = controller.editor_state();
+                assert!(editor.port_forward_editor_open);
+                assert_eq!(
+                    editor.port_forward_editor_profile_id.as_deref(),
+                    Some("beta")
+                );
+                assert_eq!(editor.port_forward_editor_rule_id, None);
+                assert_eq!(editor.port_forward_kind, PortForwardKind::Local);
+                assert_eq!(
+                    controller.forms.profile_select.read(cx).selected_value(),
+                    Some(&"beta".to_string())
+                );
+                assert_eq!(controller.forms.label_input.read(cx).value(), "");
+                assert_eq!(controller.forms.listen_host_input.read(cx).value(), "");
+                assert_eq!(controller.forms.listen_port_input.read(cx).value(), "");
+                assert_eq!(controller.forms.target_host_input.read(cx).value(), "");
+                assert_eq!(controller.forms.target_port_input.read(cx).value(), "");
+
+                set_input_value(&controller.forms.label_input, "Redis", window, cx);
+                set_input_value(&controller.forms.listen_host_input, "127.0.0.1", window, cx);
+                set_input_value(&controller.forms.listen_port_input, "16379", window, cx);
+                set_input_value(&controller.forms.target_host_input, "127.0.0.1", window, cx);
+                set_input_value(&controller.forms.target_port_input, "6379", window, cx);
+                controller.save_port_forward_rule(false, window, cx);
+                assert!(!controller.editor_open());
+            });
+        })
+        .unwrap();
+
+        let beta = catalog
+            .profile("beta")
+            .expect("beta profile must still exist");
+        assert_eq!(beta.port_forwarding_rules.len(), 2);
+        assert_eq!(beta.port_forwarding_rules[1].label, "Redis");
+        assert_eq!(beta.port_forwarding_rules[1].listen_port, 16379);
+        assert_eq!(beta.port_forwarding_rules[1].target_port, 6379);
+        std::fs::remove_file(path).unwrap();
     }
 }

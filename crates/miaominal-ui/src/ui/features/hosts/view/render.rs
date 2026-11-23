@@ -25,6 +25,7 @@ struct HostPageActions {
     connect: HostPageAction,
     edit: HostPageAction,
     open_sftp: HostPageAction,
+    add_port_forwarding: HostPageAction,
 }
 
 impl HostPageActions {
@@ -32,11 +33,13 @@ impl HostPageActions {
         connect: impl Fn(String, &mut Window, &mut App) + 'static,
         edit: impl Fn(String, &mut Window, &mut App) + 'static,
         open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
+        add_port_forwarding: impl Fn(String, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             connect: Rc::new(connect),
             edit: Rc::new(edit),
             open_sftp: Rc::new(open_sftp),
+            add_port_forwarding: Rc::new(add_port_forwarding),
         }
     }
 
@@ -50,6 +53,10 @@ impl HostPageActions {
 
     fn open_sftp(&self, index: String, window: &mut Window, cx: &mut App) {
         (self.open_sftp)(index, window, cx);
+    }
+
+    fn add_port_forwarding(&self, index: String, window: &mut Window, cx: &mut App) {
+        (self.add_port_forwarding)(index, window, cx);
     }
 }
 
@@ -69,6 +76,7 @@ fn build_host_context_menu(
     let favorite_id = profile_id.clone();
     let duplicate_id = profile_id.clone();
     let sftp_id = profile_id.clone();
+    let forward_id = profile_id.clone();
 
     let fav_label = if is_favorite {
         i18n::string("hosts.menu.remove_from_favorites")
@@ -96,21 +104,17 @@ fn build_host_context_menu(
             }
         });
     }));
-    // SFTP needs an SSH connection; local and Telnet hosts have no file channel.
-    let menu = if !is_ssh {
-        menu
-    } else {
+    // SFTP, Remote desktop, and port forwarding are SSH-only capabilities; local and Telnet hosts do not expose them.
+    let menu = if is_ssh {
+        let sftp_actions = actions.clone();
         menu.item(
             PopupMenuItem::new(i18n::string("hosts.menu.open_sftp")).on_click(
                 move |_, window, cx| {
-                    actions.open_sftp(sftp_id.clone(), window, cx);
+                    sftp_actions.open_sftp(sftp_id.clone(), window, cx);
                 },
             ),
         )
-    };
-
-    let menu = if is_ssh {
-        menu.item(
+        .item(
             PopupMenuItem::new(i18n::string("rdp.open_menu")).on_click(move |_, _, cx| {
                 rdp_controller.update(cx, |_, cx| {
                     cx.emit(crate::ui::contracts::AppCommand::OpenTab(
@@ -120,6 +124,13 @@ fn build_host_context_menu(
                     ));
                 });
             }),
+        )
+        .item(
+            PopupMenuItem::new(i18n::string("hosts.menu.add_port_forwarding")).on_click(
+                move |_, window, cx| {
+                    actions.add_port_forwarding(forward_id.clone(), window, cx);
+                },
+            ),
         )
     } else {
         menu
@@ -237,6 +248,7 @@ fn profile_item(
 
 impl HostsController {
     /// The host card's context menu, for a profile shown outside this page.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn build_search_context_menu(
         &self,
         controller: Entity<Self>,
@@ -245,6 +257,7 @@ impl HostsController {
         on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
         on_edit: impl Fn(String, &mut Window, &mut App) + 'static,
         on_open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_add_port_forwarding: impl Fn(String, &mut Window, &mut App) + 'static,
     ) -> PopupMenu {
         let Some(profile) = self
             .profiles()
@@ -257,7 +270,7 @@ impl HostsController {
         build_host_context_menu(
             menu,
             controller,
-            HostPageActions::new(on_connect, on_edit, on_open_sftp),
+            HostPageActions::new(on_connect, on_edit, on_open_sftp, on_add_port_forwarding),
             profile.id.clone(),
             profile.is_favorite,
             profile.is_ssh(),
@@ -271,12 +284,14 @@ impl HostsController {
         on_connect: impl Fn(String, &mut Window, &mut App) + 'static,
         on_edit: impl Fn(String, &mut Window, &mut App) + 'static,
         on_open_sftp: impl Fn(String, &mut Window, &mut App) + 'static,
+        on_add_port_forwarding: impl Fn(String, &mut Window, &mut App) + 'static,
         available_width: f32,
         inset: f32,
         cx: &App,
     ) -> gpui_kit::AnyElement {
         let colors = ShellColors::current();
-        let actions = HostPageActions::new(on_connect, on_edit, on_open_sftp);
+        let actions =
+            HostPageActions::new(on_connect, on_edit, on_open_sftp, on_add_port_forwarding);
         let catalog = self.catalog_view();
         let profiles = self.profiles();
         if profiles.is_empty() {

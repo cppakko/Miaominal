@@ -1409,6 +1409,7 @@ value_label = "Value"
 add_to_favorites = "Add to favorites"
 remove_from_favorites = "Remove from favorites"
 open_sftp = "Open SFTP"
+add_port_forwarding = "Add port forwarding"
 duplicate_profile = "Duplicate profile"
 delete_profile = "Delete profile"
 

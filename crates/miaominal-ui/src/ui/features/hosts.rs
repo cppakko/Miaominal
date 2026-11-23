@@ -1283,6 +1283,25 @@ impl HostsController {
         }));
     }
 
+    pub(in crate::ui) fn request_port_forwarding_at_profile_index(
+        &self,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile_id) = self
+            .profiles
+            .borrow()
+            .get(index)
+            .filter(|profile| profile.is_ssh())
+            .map(|profile| profile.id.clone())
+        else {
+            return;
+        };
+        cx.emit(AppCommand::OpenTab(TabOpenRequest::NewPortForwardRule {
+            profile_id,
+        }));
+    }
+
     pub(in crate::ui) fn request_session_at_profile_index(
         &self,
         index: usize,
@@ -3125,6 +3144,7 @@ mod tests {
                     |_, _, _| {},
                     |_, _, _| {},
                     |_, _, _| {},
+                    |_, _, _| {},
                     window.viewport_size().width.as_f32(),
                     20.0,
                     cx,
@@ -3765,5 +3785,225 @@ mod tests {
         let reordered = vec![profiles[1].clone(), profiles[0].clone()];
         assert_eq!(resolve_profile_index(&reordered, "beta"), Some(0));
         assert_eq!(resolve_profile_index(&reordered, "missing"), None);
+    }
+
+    #[gpui_kit::test]
+    fn ssh_profile_context_menu_exposes_add_port_forwarding_shortcut(cx: &mut TestAppContext) {
+        use gpui_kit::MouseButton;
+        use gpui_kit::component::{Root, menu::ContextMenuExt as _};
+        use gpui_kit::test::{TestEventExt as _, TestQueryExt as _, TestSupportExt as _};
+
+        cx.update(gpui_kit::init);
+        let mut ssh = SessionProfile::blank("ssh-host", 0);
+        ssh.name = "Prod SSH".into();
+        ssh.host = "prod.example".into();
+        ssh.username = "ops".into();
+
+        let mut telnet = SessionProfile::blank("telnet-host", 1);
+        telnet.kind = ProfileKind::Telnet;
+        telnet.name = "Core Switch".into();
+        telnet.host = "switch.lan".into();
+
+        let local = SessionProfile::blank_local("local-shell", 2);
+
+        let catalog = Rc::new(CatalogFixture::default());
+        catalog.profiles.replace(vec![ssh, telnet, local]);
+        let emitted = Rc::new(RefCell::new(Vec::<TabOpenRequest>::new()));
+        let captured_controller = Rc::new(RefCell::new(None));
+        let recorded_commands = emitted.clone();
+        let output_controller = captured_controller.clone();
+        let search_triggered = Rc::new(RefCell::new(Vec::<String>::new()));
+        let search_triggered_for_view = search_triggered.clone();
+
+        struct HostMenuPageHarness {
+            controller: Entity<HostsController>,
+            search_triggered: Rc<RefCell<Vec<String>>>,
+            _subscription: Subscription,
+        }
+
+        impl Render for HostMenuPageHarness {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let forwarding_controller = self.controller.clone();
+                let search_controller = self.controller.clone();
+                let search_triggered = self.search_triggered.clone();
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id("search-ssh-menu-probe")
+                            .test_support()
+                            .h(px(24.0))
+                            .w(px(120.0))
+                            .context_menu(move |menu, _, cx| {
+                                let search_triggered = search_triggered.clone();
+                                search_controller.read(cx).build_search_context_menu(
+                                    search_controller.clone(),
+                                    menu,
+                                    "ssh-host",
+                                    |_, _, _| {},
+                                    |_, _, _| {},
+                                    |_, _, _| {},
+                                    move |id, _, _| search_triggered.borrow_mut().push(id),
+                                )
+                            }),
+                    )
+                    .child(div().flex_1().min_h_0().child(
+                        self.controller.read(cx).render_hosts_page(
+                            self.controller.clone(),
+                            |_, _, _| {},
+                            |_, _, _| {},
+                            |_, _, _| {},
+                            move |id, _, cx| {
+                                forwarding_controller.update(cx, |controller, cx| {
+                                    if let Some(index) = controller.profile_index(&id) {
+                                        controller
+                                            .request_port_forwarding_at_profile_index(index, cx);
+                                    }
+                                });
+                            },
+                            window.viewport_size().width.as_f32(),
+                            20.0,
+                            cx,
+                        ),
+                    ))
+            }
+        }
+
+        let (handle, _) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(1000.0), px(760.0)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    let profiles = catalog.profiles();
+                    let controller = cx
+                        .new(|cx| HostsController::new(test_args(&catalog, profiles), window, cx));
+                    output_controller.replace(Some(controller.clone()));
+                    let subscription =
+                        cx.subscribe(&controller, move |_, command: &AppCommand, _| {
+                            if let AppCommand::OpenTab(request) = command {
+                                recorded_commands.borrow_mut().push(request.clone());
+                            }
+                        });
+                    let view = cx.new(|_| HostMenuPageHarness {
+                        controller,
+                        search_triggered: search_triggered_for_view,
+                        _subscription: subscription,
+                    });
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
+            )
+            .expect("open host menu test window")
+        });
+
+        let add_forwarding_label = i18n::string("hosts.menu.add_port_forwarding");
+
+        // 1. Right-click on the SSH card shows "Add port forwarding" and triggers the command.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.right_click("library-host-ssh-host:connect", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("popup-menu").is_some());
+            assert!(
+                window.try_find_by_label(&add_forwarding_label).is_some(),
+                "SSH profile right-click menu must offer Add port forwarding"
+            );
+            let target = window
+                .find_by_label(&add_forwarding_label)
+                .bounds()
+                .center();
+            window.pointer_move(target, None, cx);
+            window.pointer_down(target, MouseButton::Left, cx);
+            window.pointer_up(target, MouseButton::Left, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(emitted.borrow().len(), 1);
+        assert!(matches!(
+            &emitted.borrow()[0],
+            TabOpenRequest::NewPortForwardRule { profile_id } if profile_id == "ssh-host"
+        ));
+
+        // 2. The card's More (...) dropdown also exposes it for SSH profiles.
+        cx.update_window(handle, |_, window, cx| {
+            window.click("library-host-ssh-host:more", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find_by_label(&add_forwarding_label).is_some(),
+                "SSH profile more dropdown must offer Add port forwarding"
+            );
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        // 3. Non-SSH profiles (Telnet and Local) must not expose Add port forwarding.
+        for non_ssh_button in [
+            "library-host-telnet-host:connect",
+            "quick-host-local-shell:connect",
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.right_click(non_ssh_button, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.try_find("popup-menu").is_some());
+                assert!(
+                    window.try_find_by_label(&add_forwarding_label).is_none(),
+                    "{non_ssh_button} must not expose Add port forwarding"
+                );
+                window.press("escape", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        }
+
+        // Calling request_port_forwarding_at_profile_index on non-SSH profiles is a no-op.
+        let controller = captured_controller.borrow().as_ref().unwrap().clone();
+        cx.update(|cx| {
+            controller.update(cx, |controller, cx| {
+                controller.request_port_forwarding_at_profile_index(1, cx);
+                controller.request_port_forwarding_at_profile_index(2, cx);
+            });
+        });
+        assert_eq!(emitted.borrow().len(), 1);
+
+        // 4. Search context menu reuses the SSH-only shortcut and triggers its callback.
+        cx.update_window(handle, |_, window, cx| {
+            window.right_click("search-ssh-menu-probe", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find_by_label(&add_forwarding_label).is_some());
+            let target = window
+                .find_by_label(&add_forwarding_label)
+                .bounds()
+                .center();
+            window.pointer_move(target, None, cx);
+            window.pointer_down(target, MouseButton::Left, cx);
+            window.pointer_up(target, MouseButton::Left, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*search_triggered.borrow(), vec!["ssh-host".to_string()]);
     }
 }

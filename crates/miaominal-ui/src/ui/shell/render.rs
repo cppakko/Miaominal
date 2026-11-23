@@ -473,6 +473,7 @@ impl AppView {
                 let connect_controller = controller.clone();
                 let edit_controller = controller.clone();
                 let sftp_controller = controller.clone();
+                let forwarding_controller = controller.clone();
                 controller.read(cx).render_hosts_page(
                     controller.clone(),
                     move |index, _window, cx| {
@@ -493,6 +494,13 @@ impl AppView {
                         sftp_controller.update(cx, |controller, cx| {
                             if let Some(index) = controller.profile_index(&index) {
                                 controller.request_sftp_at_profile_index(index, cx);
+                            }
+                        });
+                    },
+                    move |profile_id, _window, cx| {
+                        forwarding_controller.update(cx, |controller, cx| {
+                            if let Some(index) = controller.profile_index(&profile_id) {
+                                controller.request_port_forwarding_at_profile_index(index, cx);
                             }
                         });
                     },

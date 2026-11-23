@@ -772,6 +772,43 @@ impl AppView {
                     });
                 });
             }
+            TabOpenRequest::NewPortForwardRule { profile_id } => {
+                let profile_id = profile_id.clone();
+                let entity = cx.entity();
+                let window_handle = self.controllers.hosts.read(cx).owner_window();
+                cx.defer(move |cx| {
+                    let entity_for_window = entity.clone();
+                    if let Err(error) =
+                        window_handle.update(cx, move |_, window, cx| {
+                            entity_for_window.update(cx, |this, cx| {
+                                let is_ssh =
+                                    this.controllers.hosts.read(cx).profiles().iter().any(
+                                        |profile| profile.id == profile_id && profile.is_ssh(),
+                                    );
+                                if !is_ssh {
+                                    this.shell.status_message =
+                                        i18n::string("forwarding.messages.profile_not_found");
+                                    cx.notify();
+                                    return;
+                                }
+                                this.set_sidebar_section(super::SidebarSection::PortForwarding, cx);
+                                this.controllers.forwarding.update(cx, |controller, cx| {
+                                    controller.open_port_forward_panel_for_profile(
+                                        &profile_id,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                                this.remember_active_page_editor_sidebar(Some(
+                                    PageEditorSidebarKind::PortForwarding,
+                                ));
+                            });
+                        })
+                    {
+                        log::debug!("failed to open new port forwarding rule editor: {error:?}");
+                    }
+                });
+            }
         }
     }
 
