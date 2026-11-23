@@ -646,12 +646,7 @@ fn build_onboarding_stepper(
                     .child(i18n::string(step_label_key(step))),
             );
 
-            let mut item = StepperItem::new()
-                .disabled(matches!(
-                    status,
-                    OnboardingStepStatus::Current | OnboardingStepStatus::PendingBlocked
-                ))
-                .child(content);
+            let mut item = StepperItem::new().child(content);
 
             match status {
                 OnboardingStepStatus::Completed => {
@@ -674,7 +669,14 @@ fn build_onboarding_stepper(
         }))
         .on_click(move |step_index, _, cx| {
             if let Some(&step) = steps.get(*step_index) {
-                on_select(step, cx);
+                let status =
+                    onboarding_step_status(step, active_step, portable, portable_vault_ready);
+                if matches!(
+                    status,
+                    OnboardingStepStatus::Completed | OnboardingStepStatus::PendingReachable
+                ) {
+                    on_select(step, cx);
+                }
             }
         })
 }
@@ -2445,6 +2447,8 @@ mod tests {
 
             div().size_full().child(
                 div()
+                    .id("onboarding-stepper")
+                    .test_support()
                     .w_full()
                     .max_w(rems(48.0))
                     .mx_auto()
@@ -2828,7 +2832,7 @@ mod tests {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                         Default::default(),
-                        size(px(1040.0), px(760.0)),
+                        size(px(1040.0), px(920.0)),
                     ))),
                     ..Default::default()
                 },
@@ -2851,6 +2855,7 @@ mod tests {
 
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
+            cx.set_reduce_motion(true);
             assert!(window.find("onboarding-stepper-bar").visible());
             assert!(window.try_find("onboarding-rail").is_none());
             assert!(window.find("onboarding-footer").visible());

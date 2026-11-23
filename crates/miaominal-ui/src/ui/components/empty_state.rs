@@ -300,7 +300,7 @@ impl EmptyState {
     }
 
     pub fn build_page(self) -> Div {
-        scrollable_empty_page(self.build())
+        scrollable_empty_page(self.build().min_h_0().p_0())
     }
 
     fn build_compact(self, on_surface: u32, on_surface_variant: u32, palette: TonePalette) -> Div {
@@ -559,7 +559,7 @@ pub(in crate::ui) fn scrollable_empty_page(content: Div) -> Div {
         .size_full()
         .min_w_0()
         .min_h_0()
-        .child(content.min_h_0().px_5().py_4().overflow_y_scrollbar())
+        .child(content.min_h_0().px_5().overflow_y_scrollbar())
 }
 
 #[cfg(test)]

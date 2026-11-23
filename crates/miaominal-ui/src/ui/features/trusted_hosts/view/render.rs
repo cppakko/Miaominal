@@ -718,6 +718,7 @@ impl TrustedHostsController {
                                     i18n::string("trusted.page.no_matches_title"),
                                 )
                                 .description(i18n::string("trusted.page.no_matches"))
+                                .size(EmptyStateSize::Compact)
                                 .action(empty_state_tonal_action(
                                     "trusted-clear-filter",
                                     Some(AppIcon::Rotate),
