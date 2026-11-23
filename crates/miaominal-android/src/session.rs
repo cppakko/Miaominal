@@ -70,9 +70,10 @@ pub enum SshRequestKind {
 }
 
 /// Sampling state of the remote monitor; refreshed through `monitor_snapshot`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
 pub enum MonitorStatus {
     /// Sampling is paused; no new samples are requested.
+    #[default]
     Disabled,
     /// Enabled, waiting for the first sample.
     Waiting,
@@ -83,8 +84,9 @@ pub enum MonitorStatus {
 }
 
 /// Stable classification of a monitoring failure (never a log string).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
 pub enum MonitorFailureKind {
+    #[default]
     None,
     /// The remote OS has no supported sampling script.
     UnsupportedPlatform,
@@ -460,18 +462,6 @@ struct MonitorState {
     metrics: Option<MonitorMetricsDto>,
     sample_sequence: u64,
     updated_at_ms: u64,
-}
-
-impl Default for MonitorStatus {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
-
-impl Default for MonitorFailureKind {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 struct FrameCache {
@@ -1071,7 +1061,6 @@ impl SshSessionInner {
             .map(|row| build_row(row, &snapshot.cells[row]))
             .collect::<Vec<_>>();
 
-        let next_cache;
         let (version, full, rows) = {
             let cache = lock(&self.frame);
             match cache.as_ref() {
@@ -1088,7 +1077,7 @@ impl SshSessionInner {
             }
         };
         let (search_total, search_current) = self.terminal.search_status();
-        next_cache = FrameCache {
+        let next_cache = FrameCache {
             version,
             generation,
             columns: snapshot.columns,
@@ -1207,13 +1196,12 @@ impl SshSessionInner {
 
     pub(crate) async fn wait_for_task(&self) {
         let handle = lock(&self.consumer).take();
-        if let Some(mut handle) = handle {
-            if tokio::time::timeout(DISCONNECT_GRACE, &mut handle)
+        if let Some(mut handle) = handle
+            && tokio::time::timeout(DISCONNECT_GRACE, &mut handle)
                 .await
                 .is_err()
-            {
-                handle.abort();
-            }
+        {
+            handle.abort();
         }
         // The event task ends when the SSH worker drops its sender; joining the
         // worker proves no connection task outlives `disconnect`.
@@ -1896,8 +1884,8 @@ mod tests {
         let first = inner.render_frame(0);
         let initial = TerminalTheme::from_settings();
         let next = TerminalTheme {
-            default_fg: initial.default_fg ^ 0x00ff_ff,
-            default_bg: initial.default_bg ^ 0x00ff_ff,
+            default_fg: initial.default_fg ^ 0x0000_ffff,
+            default_bg: initial.default_bg ^ 0x0000_ffff,
             ..initial
         };
 

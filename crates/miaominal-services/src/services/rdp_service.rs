@@ -543,16 +543,16 @@ impl RdpService {
                     _ => {}
                 }
             });
-            if let Ok(mut entries) = service.inner.entries.lock() {
-                if entries.get(&id).is_some_and(|entry| {
+            if let Ok(mut entries) = service.inner.entries.lock()
+                && entries.get(&id).is_some_and(|entry| {
                     entry.generation == generation
                         && (entry.forget
                             || entry.snapshot.mode == RdpConnectionMode::Direct
                                 && !matches!(entry.snapshot.state, RdpRuntimeState::Failed(_)))
-                }) {
-                    entries.remove(&id);
-                    service.publish(&entries);
-                }
+                })
+            {
+                entries.remove(&id);
+                service.publish(&entries);
             }
         });
         Ok(snapshot)
@@ -696,15 +696,14 @@ impl RdpService {
             .map(|entry| entry.snapshot.release_in)
     }
     fn update(&self, id: &str, generation: u64, update: impl FnOnce(&mut Entry)) {
-        if let Ok(mut entries) = self.inner.entries.lock() {
-            if let Some(entry) = entries
+        if let Ok(mut entries) = self.inner.entries.lock()
+            && let Some(entry) = entries
                 .get_mut(id)
                 .filter(|entry| entry.generation == generation)
-            {
-                update(entry);
-                entry.snapshot.revision += 1;
-                self.publish(&entries);
-            }
+        {
+            update(entry);
+            entry.snapshot.revision += 1;
+            self.publish(&entries);
         }
     }
     fn publish(&self, entries: &HashMap<String, Entry>) {

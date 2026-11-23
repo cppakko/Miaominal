@@ -545,7 +545,7 @@ fn local_forward_runs_relays_and_restarts() {
         .push(local_rule("rule-1", 0, echo.port));
     manager.replace_catalogs(vec![profile], Vec::new());
 
-    assert!(matches!(manager.start("host-1", "rule-1"), Ok(_)));
+    assert!(manager.start("host-1", "rule-1").is_ok());
     let snapshot = wait_for_state(
         &runtime,
         &manager,

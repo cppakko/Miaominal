@@ -2021,6 +2021,7 @@ fn parse_input(shared: &TerminalShared, input: ParserInput) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_cell(
     cell: &Cell,
     colors: &Colors,
@@ -3269,8 +3270,8 @@ mod tests {
         assert_eq!(terminal.generation(), before);
 
         let next = TerminalTheme {
-            default_fg: initial.default_fg ^ 0x00ff_ff,
-            default_bg: initial.default_bg ^ 0x00ff_ff,
+            default_fg: initial.default_fg ^ 0x0000_ffff,
+            default_bg: initial.default_bg ^ 0x0000_ffff,
             ..initial
         };
         assert!(

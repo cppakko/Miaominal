@@ -906,7 +906,6 @@ impl AppView {
                     animation.to_flex_b,
                 );
             }
-            return;
         }
     }
 

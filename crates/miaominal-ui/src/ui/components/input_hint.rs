@@ -553,7 +553,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
         });
 
         let caret = state.read_with(cx, |state, _| {
@@ -597,7 +597,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
         });
 
         let caret = state.read_with(cx, |state, _| {
@@ -641,7 +641,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
         });
 
         let caret = state.read_with(cx, |state, _| {

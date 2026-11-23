@@ -694,6 +694,10 @@ fn style_notification(notification: Notification) -> Notification {
         .rounded(px(NOTIFICATION_CORNER_RADIUS))
 }
 
+pub(crate) type StatusCenterOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+pub(crate) type StatusCenterContentRenderer =
+    Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>;
+
 /// Live activity a feature shows above the notification history, e.g. running remote
 /// desktops. The status center only places it; the feature owns its content and state.
 pub(crate) struct StatusCenterActivity {
@@ -701,9 +705,9 @@ pub(crate) struct StatusCenterActivity {
     pub(crate) indicator: Option<u32>,
     /// The center is controlled so a feature can open it when its state needs attention.
     pub(crate) open: bool,
-    pub(crate) on_open_change: Rc<dyn Fn(bool, &mut Window, &mut App)>,
+    pub(crate) on_open_change: StatusCenterOpenChangeHandler,
     /// Section content; `None` when there is nothing live to show.
-    pub(crate) content: Rc<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>,
+    pub(crate) content: StatusCenterContentRenderer,
 }
 
 /// Footer status center: live activity (when given) above the notification history.

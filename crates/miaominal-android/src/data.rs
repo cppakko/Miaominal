@@ -2411,6 +2411,7 @@ mod tests {
         assert!(VaultCredentialBackend::default_store_exists().unwrap());
 
         let mut permissions = fs::metadata(&settings_file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         fs::set_permissions(&settings_file, permissions).unwrap();
         data.disable_vault().unwrap();

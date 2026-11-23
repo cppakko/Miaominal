@@ -346,7 +346,9 @@ mod tests {
                 completion_id: "c2".into(),
             },
         );
-        service.append_transcript("new", &[first.clone()]).unwrap();
+        service
+            .append_transcript("new", std::slice::from_ref(&first))
+            .unwrap();
         assert_eq!(service.load_transcript("new").unwrap(), vec![first]);
         assert!(service.load_transcript("missing").unwrap().is_empty());
     }

@@ -147,14 +147,14 @@ async fn serve(
             respond(&mut stream, status, &[("ETag", &tag)], "").await
         }
         "DELETE" => {
-            if mode == Mode::Conforming {
-                if let Some(expected) = headers.get("if-match") {
-                    let matches = current
-                        .as_ref()
-                        .is_some_and(|(_, generation)| expected == &tag_of(*generation));
-                    if !matches {
-                        return respond(&mut stream, 412, &[], "").await;
-                    }
+            if mode == Mode::Conforming
+                && let Some(expected) = headers.get("if-match")
+            {
+                let matches = current
+                    .as_ref()
+                    .is_some_and(|(_, generation)| expected == &tag_of(*generation));
+                if !matches {
+                    return respond(&mut stream, 412, &[], "").await;
                 }
             }
             if current.is_none() {

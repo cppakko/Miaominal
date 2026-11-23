@@ -145,7 +145,7 @@ fn duplicate_os_handle(
     let duplicated_ok = unsafe {
         DuplicateHandle(
             GetCurrentProcess(),
-            handle as *mut c_void,
+            handle,
             GetCurrentProcess(),
             &mut duplicated,
             0,
@@ -221,7 +221,7 @@ impl LocalFileHandle {
         file.try_clone()
             .and_then(|mut probe| {
                 use std::io::Seek;
-                probe.seek(std::io::SeekFrom::Current(0)).map(|_| ())
+                probe.stream_position().map(|_| ())
             })
             .map_err(|error| BackendError::Unsupported {
                 capability: format!("local document does not support seeking: {error}"),

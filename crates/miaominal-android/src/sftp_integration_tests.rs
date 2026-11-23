@@ -1817,20 +1817,26 @@ fn pause_and_resume_finish_the_transfer_from_its_position() {
             .expect("queue download");
 
         // Wait until some progress accumulated, then pause.
-        let running = wait_for_transfer(
+        let _running = wait_for_transfer(
             &transfer,
             |snapshot| snapshot.bytes_complete > 1024 * 1024,
             Duration::from_secs(20),
         )
         .await;
         transfer.pause().expect("pause");
-        let paused = wait_for_transfer(
+        let _paused = wait_for_transfer(
             &transfer,
             |snapshot| snapshot.state == SftpTransferState::Paused,
             Duration::from_secs(10),
         )
         .await;
-        let paused_bytes = paused.bytes_complete.max(running.bytes_complete);
+        // An in-flight chunk read that started before pause() may finish its
+        // progress update before the loop parks at wait_until_active; after
+        // settling, no further progress may occur while paused.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let settled = transfer.snapshot().expect("transfer snapshot");
+        assert_eq!(settled.state, SftpTransferState::Paused);
+        let paused_bytes = settled.bytes_complete;
         tokio::time::sleep(Duration::from_millis(150)).await;
         let still_paused = transfer.snapshot().expect("transfer snapshot");
         assert_eq!(still_paused.state, SftpTransferState::Paused);
@@ -2110,7 +2116,7 @@ fn at_most_two_transfers_run_concurrently() {
             if running >= 1 && queued_idle >= 1 {
                 observed_queued_behind_limit = true;
             }
-            if snapshots.iter().all(|snapshot| finished(snapshot)) {
+            if snapshots.iter().all(finished) {
                 break;
             }
             assert!(

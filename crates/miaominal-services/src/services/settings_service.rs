@@ -772,8 +772,10 @@ mod tests {
         let (secrets, _, _, secrets_path, sync_path) =
             test_keyring_like_backend("persist-web-search");
         ui_store.update(|settings| settings.interface_font_size = 19.0);
-        let mut config = WebSearchConfig::default();
-        config.enabled = true;
+        let mut config = WebSearchConfig {
+            enabled: true,
+            ..Default::default()
+        };
 
         SettingsService::persist_web_search(
             &mut worker_store,

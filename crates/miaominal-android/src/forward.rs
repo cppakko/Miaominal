@@ -647,13 +647,12 @@ impl ForwardSessionInner {
     /// Bounded wait for the consumer task and the forwarding worker thread.
     pub(crate) async fn wait_for_task(&self) {
         let handle = lock(&self.consumer).take();
-        if let Some(mut handle) = handle {
-            if tokio::time::timeout(DISCONNECT_GRACE, &mut handle)
+        if let Some(mut handle) = handle
+            && tokio::time::timeout(DISCONNECT_GRACE, &mut handle)
                 .await
                 .is_err()
-            {
-                handle.abort();
-            }
+        {
+            handle.abort();
         }
         self.wait_for_worker(DISCONNECT_GRACE);
     }

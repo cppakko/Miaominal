@@ -625,16 +625,14 @@ async fn apply_channel_command(
             }
         },
         ChannelCommand::Signal { channel_id, signal } => {
-            if let Some(writer) = writers.get(&channel_id) {
-                if let Err(error) = writer.signal(parse_signal(&signal)).await {
-                    let _ = send_event(
-                        event_sender,
-                        ChannelEvent::Error(format!(
-                            "failed to signal channel {channel_id}: {error}"
-                        )),
-                    )
-                    .await;
-                }
+            if let Some(writer) = writers.get(&channel_id)
+                && let Err(error) = writer.signal(parse_signal(&signal)).await
+            {
+                let _ = send_event(
+                    event_sender,
+                    ChannelEvent::Error(format!("failed to signal channel {channel_id}: {error}")),
+                )
+                .await;
             }
         }
         ChannelCommand::CloseChannel { channel_id } => {
@@ -882,6 +880,7 @@ async fn forward_connection_event(
     }
 }
 
+#[allow(clippy::result_large_err)]
 async fn send_event(
     event_sender: &tokio::sync::mpsc::Sender<ChannelEvent>,
     event: ChannelEvent,

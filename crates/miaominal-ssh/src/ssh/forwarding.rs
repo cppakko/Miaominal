@@ -835,6 +835,7 @@ async fn wait_for_reconnect_delay(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn supervise_connected_forward(
     session: &Arc<client::Handle<ClientHandler>>,
     configured_rules: &mut Vec<PortForwardRule>,
@@ -929,6 +930,7 @@ async fn stop_active_forwards(
     route.disconnect().await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_port_forward_session(
     profile: SessionProfile,
     all_profiles: Vec<SessionProfile>,

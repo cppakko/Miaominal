@@ -233,14 +233,10 @@ impl LocalWriteFinalize for PathWriteFinalize {
                     self.target.display()
                 )
             })?);
-            if let Err(error) = handle
-                .sync_all()
-                .await
-                .with_context(|| format!("failed to sync temporary file {}", temporary.display()))
-            {
-                // `temporary` is dropped here, which removes the incomplete file.
-                return Err(error);
-            }
+            // `temporary` is dropped on error, which removes the incomplete file.
+            handle.sync_all().await.with_context(|| {
+                format!("failed to sync temporary file {}", temporary.display())
+            })?;
             drop(handle);
             if let Err(error) = temporary.persist(&self.target) {
                 // A failed persist consumed the `TempPath`; remove the

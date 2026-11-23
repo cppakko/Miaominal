@@ -1009,13 +1009,12 @@ impl SftpSessionInner {
 
     pub(crate) async fn wait_for_task(&self) {
         let handle = lock(&self.consumer).take();
-        if let Some(mut handle) = handle {
-            if tokio::time::timeout(CLOSE_GRACE, &mut handle)
+        if let Some(mut handle) = handle
+            && tokio::time::timeout(CLOSE_GRACE, &mut handle)
                 .await
                 .is_err()
-            {
-                handle.abort();
-            }
+        {
+            handle.abort();
         }
         self.wait_for_worker(CLOSE_GRACE);
     }
@@ -1098,7 +1097,7 @@ impl SftpSessionInner {
     fn transfers_snapshot(&self) -> Vec<SftpTransferSnapshot> {
         let transfers = lock(&self.transfers);
         let mut snapshots: Vec<_> = transfers.values().map(|record| record.snapshot()).collect();
-        snapshots.sort_by(|left, right| right.transfer_id.cmp(&left.transfer_id));
+        snapshots.sort_by_key(|left| std::cmp::Reverse(left.transfer_id));
         snapshots
     }
 

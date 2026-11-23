@@ -264,6 +264,7 @@ impl HostsController {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::ui) fn render_hosts_page(
         &self,
         controller: Entity<Self>,

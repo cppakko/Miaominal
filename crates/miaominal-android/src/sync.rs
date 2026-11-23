@@ -551,6 +551,10 @@ impl SyncCoordinator {
             );
             return Ok(self.into_run_result(handles));
         }
+        if self.lock_state().pending_conflict.is_some() {
+            self.set_phase(SyncPhaseDto::Conflict);
+            return Ok(self.into_run_result(handles));
+        }
         if trigger == AutoTrigger::Debounced {
             self.set_phase(SyncPhaseDto::Pushing);
             let result = self.push_inner(handles, generation, false).await;
@@ -960,6 +964,7 @@ impl SyncCoordinator {
         });
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn into_run_result(&self, handles: &SyncHandles) -> SyncRunResult {
         SyncRunResult {
             status: self.lock_state().status.clone(),

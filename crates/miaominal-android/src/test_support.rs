@@ -399,12 +399,16 @@ pub(crate) fn cache_root() -> &'static PathBuf {
     })
 }
 
+pub(crate) struct SharedTestLockGuard(#[allow(dead_code)] MutexGuard<'static, ()>);
+
 /// Serialize tests that read or write the shared embedded root.
-pub(crate) fn shared_test_lock() -> MutexGuard<'static, ()> {
+pub(crate) fn shared_test_lock() -> SharedTestLockGuard {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    SharedTestLockGuard(
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    )
 }
 
 /// Initialize the embedded runtime for the shared test root.

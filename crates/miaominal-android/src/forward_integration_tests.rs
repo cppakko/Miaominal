@@ -791,7 +791,7 @@ async fn concurrent_starts_of_the_same_rule_share_one_session() {
 
         if round == 0 {
             let snapshot = wait_for_phase(
-                &sessions[0].as_ref().unwrap(),
+                sessions[0].as_ref().unwrap(),
                 ForwardPhase::Listening,
                 Duration::from_secs(20),
             )

@@ -380,6 +380,7 @@ async fn serve_gist(mut stream: TcpStream, state: Arc<GistState>) -> std::io::Re
 
     // Build the response while holding the state lock, then release it before
     // any await (the guard is not `Send`).
+    #[allow(clippy::type_complexity)]
     let response: Option<(u16, Vec<(String, String)>, String)> = {
         let mut inner = state.inner.lock().expect("gist state");
         match inner.as_mut() {
@@ -683,7 +684,7 @@ async fn capability_check_accepts_a_conforming_webdav_server() {
         snapshot.capability.state,
         crate::sync_dto::SyncCapabilityStateDto::Supported
     );
-    assert!(snapshot.capability.cleanup_pending == false);
+    assert!(!snapshot.capability.cleanup_pending);
     backend.shutdown();
 }
 
