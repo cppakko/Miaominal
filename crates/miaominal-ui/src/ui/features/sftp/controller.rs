@@ -1934,6 +1934,29 @@ impl SftpController {
         self.request_remote_directory(tab_id, Self::remote_parent_path(&current_path), cx);
     }
 
+    pub(in crate::ui) fn has_tab(&self, tab_id: TabId) -> bool {
+        self.tab(tab_id).is_some()
+    }
+
+    pub(in crate::ui) fn navigate_remote_path(
+        &mut self,
+        tab_id: TabId,
+        path: String,
+        cx: &mut Context<Self>,
+    ) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.remote_path == trimmed)
+        {
+            return;
+        }
+        self.request_remote_directory(tab_id, trimmed.to_string(), cx);
+    }
+
     pub(in crate::ui) fn begin_inline_rename(
         &mut self,
         tab_id: TabId,

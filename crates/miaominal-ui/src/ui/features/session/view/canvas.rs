@@ -440,6 +440,8 @@ fn paint_snapshot(
 
     if cursor_unfocused {
         paint_unfocused_cursor(snapshot, origin, cell_width_px, line_height_px, window);
+    } else {
+        paint_focused_cursor_overlay(snapshot, origin, cell_width_px, line_height_px, window);
     }
     if let Some(target) = drop_target {
         paint_free_type_drop_caret(
@@ -643,6 +645,60 @@ pub(crate) fn terminal_ime_cursor_bounds(
     ))
 }
 
+fn paint_focused_cursor_overlay(
+    snapshot: &TerminalSnapshot,
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    window: &mut gpui_kit::Window,
+) {
+    let shape = snapshot.cursor_shape;
+    if !matches!(
+        shape,
+        miaominal_terminal::TerminalCursorShape::Beam
+            | miaominal_terminal::TerminalCursorShape::Underline
+    ) {
+        return;
+    }
+    let scale_factor = window.scale_factor();
+    let color = Background::from(terminal_rgba(snapshot.cursor_color));
+    for (row, cells) in snapshot.cells.iter().enumerate() {
+        for (col, cell) in cells.iter().enumerate() {
+            if !cell.is_cursor {
+                continue;
+            }
+            let advance = if cell.wide { 2 } else { 1 };
+            let cell_bounds = snapped_cell_bounds(
+                origin,
+                cell_width,
+                line_height,
+                col,
+                advance,
+                row,
+                scale_factor,
+            );
+            let cursor_bounds = match shape {
+                miaominal_terminal::TerminalCursorShape::Beam => Bounds {
+                    origin: cell_bounds.origin,
+                    size: size(px(2.0), cell_bounds.size.height),
+                },
+                miaominal_terminal::TerminalCursorShape::Underline => {
+                    let thickness = px(2.0);
+                    Bounds {
+                        origin: Point {
+                            x: cell_bounds.origin.x,
+                            y: cell_bounds.origin.y + cell_bounds.size.height - thickness,
+                        },
+                        size: size(cell_bounds.size.width, thickness),
+                    }
+                }
+                _ => continue,
+            };
+            window.paint_quad(fill(cursor_bounds, color));
+        }
+    }
+}
+
 fn paint_unfocused_cursor(
     snapshot: &TerminalSnapshot,
     origin: Point<Pixels>,
@@ -668,7 +724,7 @@ fn paint_unfocused_cursor(
             );
             window.paint_quad(gpui_kit::outline(
                 bounds,
-                terminal_hsla(cell.bg),
+                terminal_hsla(snapshot.cursor_color),
                 gpui_kit::BorderStyle::Solid,
             ));
         }
@@ -916,6 +972,8 @@ mod tests {
                 viewport_line,
                 column,
             },
+            cursor_shape: miaominal_terminal::TerminalCursorShape::Block,
+            cursor_color: fg,
             default_fg: fg,
             default_bg: bg,
             focused_cursor: true,

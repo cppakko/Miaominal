@@ -102,6 +102,8 @@ impl AppView {
             pane_split_drag: self.workspace.workspace.pane_split_drag.take(),
             pane_split_animation: self.workspace.workspace.pane_split_animation.take(),
             pane_tab_drop_target: self.workspace.workspace.pane_tab_drop_target.take(),
+            zoomed_pane: self.workspace.workspace.zoomed_pane.take(),
+            sync_panes: std::mem::take(&mut self.workspace.workspace.sync_panes),
         }
     }
 
@@ -151,6 +153,82 @@ impl AppView {
         self.workspace.workspace.pane_split_drag = workspace.pane_split_drag;
         self.workspace.workspace.pane_split_animation = workspace.pane_split_animation;
         self.workspace.workspace.pane_tab_drop_target = workspace.pane_tab_drop_target;
+        self.workspace.workspace.zoomed_pane = workspace.zoomed_pane;
+        self.workspace.workspace.sync_panes = workspace.sync_panes;
+    }
+
+    pub(in crate::ui::shell) fn workspace_is_split(&self) -> bool {
+        !matches!(self.workspace.workspace.pane_layout, PaneLayout::Leaf(_))
+    }
+
+    pub(in crate::ui::shell) fn active_workspace_session_tab_ids(&self) -> Vec<TabId> {
+        let mut ids = Vec::new();
+        if let Some(tab_id) = self.workspace.workspace.active_tab {
+            ids.push(tab_id);
+        }
+        for parked in self.workspace.workspace.parked_panes.values() {
+            if let Some(tab_id) = parked.active_tab
+                && !ids.contains(&tab_id)
+            {
+                ids.push(tab_id);
+            }
+        }
+        ids
+    }
+
+    pub(in crate::ui::shell) fn refresh_pane_workspace_controls(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace_is_split() {
+            self.workspace.workspace.zoomed_pane = None;
+            self.workspace.workspace.sync_panes = false;
+        } else if let Some(zoomed) = self.workspace.workspace.zoomed_pane
+            && !self.workspace.workspace.pane_layout.contains(zoomed)
+        {
+            self.workspace.workspace.zoomed_pane = None;
+        }
+        let targets = if self.workspace.workspace.sync_panes && self.workspace_is_split() {
+            self.active_workspace_session_tab_ids()
+        } else {
+            Vec::new()
+        };
+        self.controllers
+            .session
+            .read(cx)
+            .set_sync_broadcast_targets(targets);
+    }
+
+    pub(in crate::ui::shell) fn toggle_zoom_pane(
+        &mut self,
+        pane_id: PaneId,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.workspace_is_split() || !self.workspace.workspace.pane_layout.contains(pane_id) {
+            self.workspace.workspace.zoomed_pane = None;
+            cx.notify();
+            return;
+        }
+        if self.workspace.workspace.zoomed_pane == Some(pane_id) {
+            self.workspace.workspace.zoomed_pane = None;
+        } else {
+            self.set_active_pane(pane_id, window, cx);
+            self.workspace.workspace.zoomed_pane = Some(pane_id);
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::shell) fn toggle_sync_panes(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace_is_split() {
+            self.workspace.workspace.sync_panes = false;
+        } else {
+            self.workspace.workspace.sync_panes = !self.workspace.workspace.sync_panes;
+        }
+        self.refresh_pane_workspace_controls(cx);
+        self.shell.status_message = i18n::string(if self.workspace.workspace.sync_panes {
+            "session.workspace.sync_panes_enabled"
+        } else {
+            "session.workspace.sync_panes_disabled"
+        });
+        cx.notify();
     }
 
     pub(in crate::ui::shell) fn reset_loaded_workspace(&mut self, cx: &mut Context<Self>) {

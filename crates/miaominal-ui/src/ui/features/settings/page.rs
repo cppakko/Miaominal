@@ -360,8 +360,134 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                     )
                     .layout(Axis::Vertical)
                     .description(i18n::string("settings.appearance.seed_color.description")),
+                    SettingItem::new(
+                        i18n::string("settings.appearance.terminal_color_scheme.label"),
+                        SettingField::render({
+                            let entity = entity.clone();
+                            move |options, _, cx| {
+                                render_terminal_color_scheme_menu(
+                                    entity.clone(),
+                                    options.size(),
+                                    cx,
+                                )
+                            }
+                        }),
+                    )
+                    .description(i18n::string(
+                        "settings.appearance.terminal_color_scheme.description",
+                    )),
+                    SettingItem::new(
+                        i18n::string("settings.appearance.terminal_cursor_style.label"),
+                        SettingField::render({
+                            let entity = entity.clone();
+                            move |options, _, cx| {
+                                render_terminal_cursor_style_menu(
+                                    entity.clone(),
+                                    options.size(),
+                                    cx,
+                                )
+                            }
+                        }),
+                    )
+                    .description(i18n::string(
+                        "settings.appearance.terminal_cursor_style.description",
+                    )),
                 ]),
         ]))
+}
+
+fn terminal_color_scheme_label(scheme: miaominal_settings::TerminalColorScheme) -> String {
+    match scheme {
+        miaominal_settings::TerminalColorScheme::ThemeDefault => {
+            i18n::string("settings.appearance.terminal_color_schemes.theme_default")
+        }
+        miaominal_settings::TerminalColorScheme::Dracula => "Dracula".to_string(),
+        miaominal_settings::TerminalColorScheme::Nord => "Nord".to_string(),
+        miaominal_settings::TerminalColorScheme::CatppuccinMocha => "Catppuccin Mocha".to_string(),
+        miaominal_settings::TerminalColorScheme::SolarizedDark => "Solarized Dark".to_string(),
+        miaominal_settings::TerminalColorScheme::TokyoNight => "Tokyo Night".to_string(),
+        miaominal_settings::TerminalColorScheme::OneDark => "One Dark".to_string(),
+    }
+}
+
+fn terminal_cursor_style_label(style: miaominal_settings::TerminalCursorStyle) -> String {
+    match style {
+        miaominal_settings::TerminalCursorStyle::Block => {
+            i18n::string("settings.appearance.terminal_cursor_styles.block")
+        }
+        miaominal_settings::TerminalCursorStyle::Beam => {
+            i18n::string("settings.appearance.terminal_cursor_styles.beam")
+        }
+        miaominal_settings::TerminalCursorStyle::Underline => {
+            i18n::string("settings.appearance.terminal_cursor_styles.underline")
+        }
+    }
+}
+
+fn render_terminal_color_scheme_menu(
+    entity: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+    let current = entity.read(cx).settings().terminal_color_scheme;
+    let label = terminal_color_scheme_label(current);
+    let menu_entity = entity.clone();
+    Button::new("settings-terminal-color-scheme")
+        .outline()
+        .with_size(size)
+        .dropdown_caret(true)
+        .label(label)
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(180.0);
+            for scheme in miaominal_settings::TerminalColorScheme::ALL {
+                let entity = menu_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(terminal_color_scheme_label(scheme))
+                        .checked(current == scheme)
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.set_terminal_color_scheme(scheme, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
+fn render_terminal_cursor_style_menu(
+    entity: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+    let current = entity.read(cx).settings().terminal_cursor_style;
+    let label = terminal_cursor_style_label(current);
+    let menu_entity = entity.clone();
+    Button::new("settings-terminal-cursor-style")
+        .outline()
+        .with_size(size)
+        .dropdown_caret(true)
+        .label(label)
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(160.0);
+            for style in miaominal_settings::TerminalCursorStyle::ALL {
+                let entity = menu_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(terminal_cursor_style_label(style))
+                        .checked(current == style)
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.set_terminal_cursor_style(style, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
 }
 
 fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {

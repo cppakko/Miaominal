@@ -90,13 +90,34 @@ impl SessionController {
         cx.notify();
     }
 
+    pub(in crate::ui) fn toggle_terminal_search_case_sensitive(&mut self, cx: &mut Context<Self>) {
+        let pattern = {
+            let mut search = self.terminal_search_mut();
+            search.case_sensitive = !search.case_sensitive;
+            search.input.read(cx).value().to_string()
+        };
+        self.apply_terminal_search(&pattern);
+        cx.notify();
+    }
+
+    pub(in crate::ui) fn toggle_terminal_search_regex(&mut self, cx: &mut Context<Self>) {
+        let pattern = {
+            let mut search = self.terminal_search_mut();
+            search.use_regex = !search.use_regex;
+            search.input.read(cx).value().to_string()
+        };
+        self.apply_terminal_search(&pattern);
+        cx.notify();
+    }
+
     fn apply_terminal_search(&self, pattern: &str) {
-        {
+        let (case_sensitive, use_regex) = {
             let mut search = self.terminal_search_mut();
             search.total = 0;
             search.current = None;
             search.status = None;
-        }
+            (search.case_sensitive, search.use_regex)
+        };
         let Some(tab_id) = self.search_target.get() else {
             return;
         };
@@ -106,11 +127,11 @@ impl SessionController {
         let mut next_total = 0;
         let mut next_current = None;
         let mut next_status = None;
-        let escaped = build_terminal_search_pattern(pattern);
-        if escaped.is_empty() {
+        let compiled = build_terminal_search_pattern(pattern, case_sensitive, use_regex);
+        if compiled.is_empty() {
             session.terminal.clear_search();
         } else {
-            match session.terminal.set_search(&escaped) {
+            match session.terminal.set_search(&compiled) {
                 Ok(total) => {
                     next_total = total;
                     next_current = if total == 0 { None } else { Some(0) };
@@ -190,8 +211,20 @@ impl SessionController {
     }
 }
 
-fn build_terminal_search_pattern(pattern: &str) -> String {
-    regex_escape(pattern)
+fn build_terminal_search_pattern(pattern: &str, case_sensitive: bool, use_regex: bool) -> String {
+    if pattern.is_empty() {
+        return String::new();
+    }
+    let body = if use_regex {
+        pattern.to_string()
+    } else {
+        regex_escape(pattern)
+    };
+    if case_sensitive {
+        format!("(?-i){body}")
+    } else {
+        format!("(?i){body}")
+    }
 }
 
 fn regex_escape(input: &str) -> String {
@@ -215,8 +248,18 @@ mod tests {
 
     #[test]
     fn terminal_search_preserves_leading_and_trailing_whitespace() {
-        assert_eq!(build_terminal_search_pattern("  error "), "  error ");
-        assert_eq!(build_terminal_search_pattern("[warn] "), r"\[warn\] ");
-        assert!(build_terminal_search_pattern("").is_empty());
+        assert_eq!(
+            build_terminal_search_pattern("  error ", false, false),
+            "(?i)  error "
+        );
+        assert_eq!(
+            build_terminal_search_pattern("[warn] ", true, false),
+            r"(?-i)\[warn\] "
+        );
+        assert_eq!(
+            build_terminal_search_pattern(r"err\d+", false, true),
+            r"(?i)err\d+"
+        );
+        assert!(build_terminal_search_pattern("", false, false).is_empty());
     }
 }

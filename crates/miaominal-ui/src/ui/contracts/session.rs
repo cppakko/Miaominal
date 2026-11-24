@@ -344,6 +344,8 @@ pub(in crate::ui) struct SessionTabSnapshot {
     bytes_in: u64,
     bytes_out: u64,
     sftp_progress_visible: bool,
+    dynamic_title: Option<String>,
+    current_directory: Option<String>,
 }
 impl SessionTabSnapshot {
     pub(in crate::ui) fn new(
@@ -364,6 +366,8 @@ impl SessionTabSnapshot {
             bytes_in: 0,
             bytes_out: 0,
             sftp_progress_visible: false,
+            dynamic_title: None,
+            current_directory: None,
         }
     }
     pub(in crate::ui) fn with_connection(
@@ -396,6 +400,14 @@ impl SessionTabSnapshot {
     }
     pub(in crate::ui) fn with_sftp_progress_visible(mut self, visible: bool) -> Self {
         self.sftp_progress_visible = visible;
+        self
+    }
+    pub(in crate::ui) fn with_dynamic_title(mut self, title: Option<String>) -> Self {
+        self.dynamic_title = title;
+        self
+    }
+    pub(in crate::ui) fn with_current_directory(mut self, dir: Option<String>) -> Self {
+        self.current_directory = dir;
         self
     }
     pub(in crate::ui) fn profile_id(&self) -> &str {
@@ -433,6 +445,12 @@ impl SessionTabSnapshot {
     }
     pub(in crate::ui) fn sftp_progress_visible(&self) -> bool {
         self.sftp_progress_visible
+    }
+    pub(in crate::ui) fn dynamic_title(&self) -> Option<&str> {
+        self.dynamic_title.as_deref()
+    }
+    pub(in crate::ui) fn current_directory(&self) -> Option<&str> {
+        self.current_directory.as_deref()
     }
 }
 

@@ -157,6 +157,7 @@ impl TabDescriptor {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ClosedTabBundle {
     Hosts,
     Sftp {
@@ -920,6 +921,8 @@ pub(crate) struct TabWorkspaceState {
     pub pane_split_drag: Option<PaneSplitDragState>,
     pub pane_split_animation: Option<PaneSplitAnimation>,
     pub pane_tab_drop_target: Option<PaneTabDropTarget>,
+    pub zoomed_pane: Option<PaneId>,
+    pub sync_panes: bool,
 }
 
 impl TabWorkspaceState {
@@ -934,6 +937,8 @@ impl TabWorkspaceState {
             pane_split_drag: None,
             pane_split_animation: None,
             pane_tab_drop_target: None,
+            zoomed_pane: None,
+            sync_panes: false,
         }
     }
 

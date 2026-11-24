@@ -760,7 +760,10 @@ impl SshSessionInner {
                 TerminalEvent::ClipboardStore(content) => {
                     self.host.store_clipboard(content);
                 }
-                TerminalEvent::Bell => {}
+                TerminalEvent::Bell
+                | TerminalEvent::Title(_)
+                | TerminalEvent::ResetTitle
+                | TerminalEvent::CurrentDirectoryChanged(_) => {}
             }
         }
     }

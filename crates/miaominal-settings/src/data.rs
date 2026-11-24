@@ -696,6 +696,44 @@ pub enum ThemeId {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TerminalCursorStyle {
+    #[default]
+    Block,
+    Beam,
+    Underline,
+}
+
+impl TerminalCursorStyle {
+    pub const ALL: [Self; 3] = [Self::Block, Self::Beam, Self::Underline];
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalColorScheme {
+    #[default]
+    ThemeDefault,
+    Dracula,
+    Nord,
+    CatppuccinMocha,
+    SolarizedDark,
+    TokyoNight,
+    OneDark,
+}
+
+impl TerminalColorScheme {
+    pub const ALL: [Self; 7] = [
+        Self::ThemeDefault,
+        Self::Dracula,
+        Self::Nord,
+        Self::CatppuccinMocha,
+        Self::SolarizedDark,
+        Self::TokyoNight,
+        Self::OneDark,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OpenSshIntegrationMode {
     #[default]
     Disabled,
@@ -770,6 +808,10 @@ pub struct AppSettings {
     pub theme_id: ThemeId,
     #[serde(default = "default_seed_color")]
     pub seed_color: String,
+    #[serde(default)]
+    pub terminal_color_scheme: TerminalColorScheme,
+    #[serde(default)]
+    pub terminal_cursor_style: TerminalCursorStyle,
     #[serde(default = "default_recent_connections_count")]
     pub recent_connections_count: u8,
     #[serde(default)]
@@ -823,6 +865,10 @@ pub struct AppSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncedSettings {
+    #[serde(default)]
+    pub terminal_color_scheme: TerminalColorScheme,
+    #[serde(default)]
+    pub terminal_cursor_style: TerminalCursorStyle,
     #[serde(default = "default_recent_connections_count")]
     pub recent_connections_count: u8,
     #[serde(default)]
@@ -961,6 +1007,8 @@ impl Default for AppSettings {
             line_height: default_line_height(),
             theme_id: default_theme(),
             seed_color: default_seed_color(),
+            terminal_color_scheme: TerminalColorScheme::default(),
+            terminal_cursor_style: TerminalCursorStyle::default(),
             recent_connections_count: default_recent_connections_count(),
             key_bindings: TerminalKeyBindings::default(),
             terminal_right_click_behavior: default_terminal_right_click_behavior(),
@@ -1050,6 +1098,8 @@ impl AppSettings {
     }
 
     pub fn apply_synced_settings(&mut self, synced: &SyncedSettings) {
+        self.terminal_color_scheme = synced.terminal_color_scheme;
+        self.terminal_cursor_style = synced.terminal_cursor_style;
         self.recent_connections_count = synced.recent_connections_count;
         self.key_bindings = synced.key_bindings.clone();
         self.terminal_right_click_behavior = synced.terminal_right_click_behavior;
@@ -1086,6 +1136,8 @@ impl SyncedSettings {
 impl From<&AppSettings> for SyncedSettings {
     fn from(settings: &AppSettings) -> Self {
         Self {
+            terminal_color_scheme: settings.terminal_color_scheme,
+            terminal_cursor_style: settings.terminal_cursor_style,
             recent_connections_count: settings.recent_connections_count,
             key_bindings: settings.key_bindings.clone(),
             terminal_right_click_behavior: settings.terminal_right_click_behavior,

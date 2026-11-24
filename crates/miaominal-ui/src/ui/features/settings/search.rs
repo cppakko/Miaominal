@@ -40,6 +40,8 @@ const GROUPS: &[SearchGroup] = &[
         items: &[
             "settings.appearance.dark_mode.label",
             "settings.appearance.seed_color.label",
+            "settings.appearance.terminal_color_scheme.label",
+            "settings.appearance.terminal_cursor_style.label",
         ],
     },
     SearchGroup {

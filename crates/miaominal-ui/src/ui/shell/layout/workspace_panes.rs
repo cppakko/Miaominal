@@ -92,7 +92,7 @@ pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
     fn render_pane_header(
         &self,
         pane_id: super::super::panes::PaneId,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement;
 
     fn render_split_bar(
@@ -387,7 +387,7 @@ impl WorkspacePanesAppViewExt for AppView {
     fn render_pane_header(
         &self,
         pane_id: super::super::panes::PaneId,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
         let roles = material.roles;
@@ -396,16 +396,18 @@ impl WorkspacePanesAppViewExt for AppView {
             if material.dark { 65 } else { 50 },
         );
         let is_active = pane_id == self.workspace.workspace.active_pane_id;
+        let is_zoomed = self.workspace.workspace.zoomed_pane == Some(pane_id);
+        let sync_panes = self.workspace.workspace.sync_panes;
         let tab_index = if is_active {
             self.workspace.workspace.active_tab
         } else {
             self.parked_pane(pane_id).and_then(|p| p.active_tab)
         };
-        let (label, status_color) = tab_index
+        let (label, status_color, cwd_sync_target) = tab_index
             .and_then(|idx| self.workspace.tabs.get(idx))
             .map(|tab| {
                 let session = self.session_tab(tab.id, cx);
-                let label = session
+                let base_label = session
                     .as_ref()
                     .and_then(|session| {
                         self.controllers
@@ -417,39 +419,185 @@ impl WorkspacePanesAppViewExt for AppView {
                             .map(|p| p.name.clone())
                     })
                     .unwrap_or_else(|| tab.title.to_string());
+                let label = match session.as_ref().and_then(|s| s.dynamic_title()) {
+                    Some(dynamic_title)
+                        if !dynamic_title.is_empty() && dynamic_title != base_label =>
+                    {
+                        format!("{base_label} · {dynamic_title}")
+                    }
+                    _ => base_label,
+                };
                 let has_activity = session
                     .as_ref()
                     .is_some_and(|session| session.has_activity());
+                let cwd_sync_target = session
+                    .as_ref()
+                    .and_then(|s| s.current_directory().map(|dir| (tab.id, dir.to_string())))
+                    .filter(|(tab_id, _)| self.controllers.sftp.read(cx).has_tab(*tab_id));
                 (
                     label,
                     tab_status_indicator_color(&tab, session.as_ref(), has_activity),
+                    cwd_sync_target,
                 )
             })
-            .unwrap_or_else(|| (i18n::string("session.workspace.empty_tab_label"), None));
+            .unwrap_or_else(|| {
+                (
+                    i18n::string("session.workspace.empty_tab_label"),
+                    None,
+                    None,
+                )
+            });
+
+        let entity = cx.entity();
+        let sync_entity = entity.clone();
+        let zoom_entity = entity.clone();
+        let close_entity = entity.clone();
 
         div()
+            .id(SharedString::from(format!("pane-header-{}", pane_id.0)))
             .flex_shrink_0()
             .w_full()
             .flex()
             .flex_row()
             .items_center()
+            .justify_between()
             .gap_2()
-            .px_4()
-            .when_some(status_color, |this, color| {
-                this.child(status_indicator(color, 7.0))
+            .px_3()
+            .py_1()
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.set_active_pane(pane_id, window, cx);
+                });
             })
             .child(
                 div()
-                    .text_size(miaominal_settings::FontSize::Heading.scaled())
-                    .text_color(rgb(if is_active {
-                        roles.on_surface
-                    } else {
-                        text_muted
-                    }))
-                    .when(is_active, |this| {
-                        this.font_weight(gpui_kit::FontWeight::MEDIUM)
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .overflow_hidden()
+                    .when_some(status_color, |this, color| {
+                        this.child(status_indicator(color, 7.0))
                     })
-                    .child(SharedString::from(label)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_color(rgb(if is_active {
+                                roles.on_surface
+                            } else {
+                                text_muted
+                            }))
+                            .when(is_active, |this| {
+                                this.font_weight(gpui_kit::FontWeight::MEDIUM)
+                            })
+                            .child(SharedString::from(label)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_1()
+                    .when_some(cwd_sync_target, |this, (tab_id, dir)| {
+                        let sftp_controller = self.controllers.sftp.clone();
+                        let tooltip = i18n::string_args(
+                            "session.workspace.sync_sftp_cwd",
+                            &[("path", dir.as_str())],
+                        );
+                        this.child(crate::ui::components::icon_button_with_tooltip(
+                            AppIcon::FolderOpen,
+                            tooltip,
+                            22.0,
+                            6.0,
+                            Some(roles.surface_container_high),
+                            Some(text_muted),
+                            None,
+                            move |_, cx| {
+                                let dir = dir.clone();
+                                sftp_controller.update(cx, |sftp, cx| {
+                                    sftp.navigate_remote_path(tab_id, dir, cx);
+                                });
+                            },
+                        ))
+                    })
+                    .child(crate::ui::components::icon_button_with_tooltip(
+                        AppIcon::ArrowUpDown,
+                        i18n::string(if sync_panes {
+                            "session.workspace.disable_sync_panes"
+                        } else {
+                            "session.workspace.enable_sync_panes"
+                        }),
+                        22.0,
+                        6.0,
+                        Some(if sync_panes {
+                            roles.primary_container
+                        } else {
+                            roles.surface_container_high
+                        }),
+                        Some(if sync_panes {
+                            roles.on_primary_container
+                        } else {
+                            text_muted
+                        }),
+                        None,
+                        move |_, cx| {
+                            sync_entity.update(cx, |this, cx| {
+                                this.toggle_sync_panes(cx);
+                            });
+                        },
+                    ))
+                    .child(crate::ui::components::icon_button_with_tooltip(
+                        if is_zoomed {
+                            AppIcon::Restore
+                        } else {
+                            AppIcon::Maximize
+                        },
+                        i18n::string(if is_zoomed {
+                            "session.workspace.unzoom_pane"
+                        } else {
+                            "session.workspace.zoom_pane"
+                        }),
+                        22.0,
+                        6.0,
+                        Some(if is_zoomed {
+                            roles.primary_container
+                        } else {
+                            roles.surface_container_high
+                        }),
+                        Some(if is_zoomed {
+                            roles.on_primary_container
+                        } else {
+                            text_muted
+                        }),
+                        None,
+                        move |window, cx| {
+                            zoom_entity.update(cx, |this, cx| {
+                                this.toggle_zoom_pane(pane_id, window, cx);
+                            });
+                        },
+                    ))
+                    .child(crate::ui::components::icon_button_with_tooltip(
+                        AppIcon::Close,
+                        i18n::string("session.workspace.close_pane"),
+                        22.0,
+                        6.0,
+                        Some(roles.surface_container_high),
+                        Some(text_muted),
+                        None,
+                        move |window, cx| {
+                            close_entity.update(cx, |this, cx| {
+                                this.set_active_pane(pane_id, window, cx);
+                                this.close_active_pane(window, cx);
+                            });
+                        },
+                    )),
             )
             .into_any_element()
     }

@@ -569,6 +569,27 @@ impl SessionController {
                             session.has_activity = true;
                         }
                     }
+                    miaominal_terminal::TerminalEvent::Title(title) => {
+                        let trimmed = title.trim();
+                        if trimmed.is_empty() {
+                            self.tab_dynamic_titles.borrow_mut().remove(&tab_id);
+                        } else {
+                            self.tab_dynamic_titles
+                                .borrow_mut()
+                                .insert(tab_id, trimmed.to_string());
+                        }
+                    }
+                    miaominal_terminal::TerminalEvent::ResetTitle => {
+                        self.tab_dynamic_titles.borrow_mut().remove(&tab_id);
+                    }
+                    miaominal_terminal::TerminalEvent::CurrentDirectoryChanged(dir) => {
+                        let trimmed = dir.trim();
+                        if !trimmed.is_empty() {
+                            self.tab_current_directories
+                                .borrow_mut()
+                                .insert(tab_id, trimmed.to_string());
+                        }
+                    }
                 }
             }
         }

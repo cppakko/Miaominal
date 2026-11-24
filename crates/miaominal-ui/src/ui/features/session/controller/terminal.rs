@@ -399,8 +399,26 @@ impl SessionController {
         bytes: Vec<u8>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let result = self.write_terminal_bytes(tab_id, bytes, true);
-        self.finish_terminal_input_write(tab_id, result, cx)
+        let broadcast_peers = self.sync_broadcast_peers(tab_id);
+        let result = self.write_terminal_bytes(tab_id, bytes.clone(), true);
+        let handled = self.finish_terminal_input_write(tab_id, result, cx);
+        for peer_tab_id in broadcast_peers {
+            let peer_result = self.write_terminal_bytes(peer_tab_id, bytes.clone(), true);
+            self.finish_terminal_input_write(peer_tab_id, peer_result, cx);
+        }
+        handled
+    }
+
+    fn sync_broadcast_peers(&self, source_tab_id: TabId) -> Vec<TabId> {
+        let targets = self.sync_broadcast_targets.borrow();
+        if targets.len() < 2 || !targets.contains(&source_tab_id) {
+            return Vec::new();
+        }
+        targets
+            .iter()
+            .copied()
+            .filter(|id| *id != source_tab_id)
+            .collect()
     }
 
     fn finish_terminal_input_write(
@@ -793,9 +811,21 @@ impl SessionController {
         else {
             return false;
         };
+        let broadcast_peers = self.sync_broadcast_peers(tab_id);
         let bytes = sanitize_paste(&text, bracketed);
         let result = self.write_terminal_bytes(tab_id, bytes, true);
-        self.finish_terminal_paste_write(tab_id, &text, result, cx)
+        let handled = self.finish_terminal_paste_write(tab_id, &text, result, cx);
+        for peer_tab_id in broadcast_peers {
+            if let Some(peer_bracketed) = self
+                .tab(peer_tab_id)
+                .map(|session| session.terminal.bracketed_paste_enabled())
+            {
+                let peer_bytes = sanitize_paste(&text, peer_bracketed);
+                let peer_result = self.write_terminal_bytes(peer_tab_id, peer_bytes, true);
+                let _ = self.finish_terminal_input_write(peer_tab_id, peer_result, cx);
+            }
+        }
+        handled
     }
 
     fn finish_terminal_paste_write(

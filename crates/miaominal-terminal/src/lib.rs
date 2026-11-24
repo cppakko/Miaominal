@@ -34,13 +34,19 @@ pub const MAX_SEARCH_MATCHES: usize = 1000;
 /// Subset of alacritty events that the UI cares about. The PTY worker thread
 /// produces these via [`MiaominalListener`]; the AppView drains them on the
 /// foreground thread and reacts (OSC 52 clipboard writes, PTY write-backs, bell).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalEvent {
     ClipboardStore(String),
     /// Escape sequence that must be written back to the PTY, such as the cursor
     /// position report Windows ConPTY waits for before it renders any output.
     PtyWrite(String),
     Bell,
+    /// Dynamic window/pane title reported by OSC 0 / OSC 2.
+    Title(String),
+    /// Title reset requested by the terminal.
+    ResetTitle,
+    /// Current working directory reported by OSC 7 (`file://host/path`).
+    CurrentDirectoryChanged(String),
 }
 
 #[derive(Clone)]
@@ -60,12 +66,160 @@ impl EventListener for MiaominalListener {
             Event::ClipboardStore(_, content) => Some(TerminalEvent::ClipboardStore(content)),
             Event::PtyWrite(text) => Some(TerminalEvent::PtyWrite(text)),
             Event::Bell => Some(TerminalEvent::Bell),
+            Event::Title(title) => Some(TerminalEvent::Title(title)),
+            Event::ResetTitle => Some(TerminalEvent::ResetTitle),
             _ => None,
         };
         if let Some(ev) = mapped {
             // Receiver disconnect just means the AppView is gone; drop silently.
             let _ = self.sender.send(ev);
         }
+    }
+}
+
+/// Incremental scanner for OSC 7 (`ESC ] 7 ; <uri> (BEL | ESC \)`) sequences
+/// across arbitrary byte-chunk boundaries.
+#[derive(Default)]
+struct Osc7Scanner {
+    state: Osc7State,
+    buffer: Vec<u8>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Osc7State {
+    #[default]
+    Ground,
+    Escape,
+    OscCode,
+    Osc7Prefix,
+    Osc7Body,
+    Osc7Escape,
+}
+
+impl Osc7Scanner {
+    const MAX_URI_BYTES: usize = 4096;
+
+    fn feed(&mut self, bytes: &[u8], out: &mut Vec<String>) {
+        for &byte in bytes {
+            match self.state {
+                Osc7State::Ground => {
+                    if byte == 0x1b {
+                        self.state = Osc7State::Escape;
+                    }
+                }
+                Osc7State::Escape => {
+                    self.state = if byte == b']' {
+                        Osc7State::OscCode
+                    } else if byte == 0x1b {
+                        Osc7State::Escape
+                    } else {
+                        Osc7State::Ground
+                    };
+                }
+                Osc7State::OscCode => {
+                    self.state = if byte == b'7' {
+                        Osc7State::Osc7Prefix
+                    } else if byte == 0x1b {
+                        Osc7State::Escape
+                    } else {
+                        Osc7State::Ground
+                    };
+                }
+                Osc7State::Osc7Prefix => {
+                    if byte == b';' {
+                        self.buffer.clear();
+                        self.state = Osc7State::Osc7Body;
+                    } else if byte == 0x1b {
+                        self.state = Osc7State::Escape;
+                    } else {
+                        self.state = Osc7State::Ground;
+                    }
+                }
+                Osc7State::Osc7Body => {
+                    if byte == 0x07 {
+                        if let Some(path) = parse_osc7_uri(&self.buffer) {
+                            out.push(path);
+                        }
+                        self.buffer.clear();
+                        self.state = Osc7State::Ground;
+                    } else if byte == 0x1b {
+                        self.state = Osc7State::Osc7Escape;
+                    } else if self.buffer.len() < Self::MAX_URI_BYTES {
+                        self.buffer.push(byte);
+                    } else {
+                        self.buffer.clear();
+                        self.state = Osc7State::Ground;
+                    }
+                }
+                Osc7State::Osc7Escape => {
+                    if byte == b'\\' {
+                        if let Some(path) = parse_osc7_uri(&self.buffer) {
+                            out.push(path);
+                        }
+                        self.buffer.clear();
+                        self.state = Osc7State::Ground;
+                    } else {
+                        self.buffer.clear();
+                        self.state = if byte == b']' {
+                            Osc7State::OscCode
+                        } else if byte == 0x1b {
+                            Osc7State::Escape
+                        } else {
+                            Osc7State::Ground
+                        };
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn parse_osc7_uri(raw: &[u8]) -> Option<String> {
+    let uri = std::str::from_utf8(raw).ok()?.trim();
+    let rest = uri
+        .strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("FILE://"))?;
+    let slash = rest.find('/')?;
+    let encoded_path = &rest[slash..];
+    let decoded = percent_decode_utf8(encoded_path)?;
+    if decoded.is_empty() {
+        return None;
+    }
+    // Normalize Windows drive URIs like `/C:/Users/name` -> `C:/Users/name`.
+    let bytes = decoded.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+        Some(decoded[1..].to_string())
+    } else {
+        Some(decoded)
+    }
+}
+
+fn percent_decode_utf8(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            let hi = hex_nibble(bytes[idx + 1]);
+            let lo = hex_nibble(bytes[idx + 2]);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi << 4) | lo);
+                idx += 3;
+                continue;
+            }
+        }
+        out.push(bytes[idx]);
+        idx += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -190,6 +344,14 @@ impl TerminalCell {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalCursorShape {
+    Block,
+    Beam,
+    Underline,
+    Hidden,
+}
+
 pub struct TerminalSnapshot {
     pub cells: Vec<Vec<TerminalCell>>,
     #[allow(dead_code)]
@@ -198,6 +360,8 @@ pub struct TerminalSnapshot {
     pub display_offset: usize,
     pub history_size: usize,
     pub cursor: TerminalCursorPosition,
+    pub cursor_shape: TerminalCursorShape,
+    pub cursor_color: TerminalColor,
     #[allow(dead_code)]
     pub default_fg: TerminalColor,
     pub default_bg: TerminalColor,
@@ -336,6 +500,8 @@ const PARSER_SLICE_BYTES: usize = 16 * 1024;
 struct TerminalCore {
     term: Term<MiaominalListener>,
     parser: Processor,
+    osc7_scanner: Osc7Scanner,
+    event_sender: Sender<TerminalEvent>,
     columns: usize,
     screen_lines: usize,
     events: Receiver<TerminalEvent>,
@@ -362,6 +528,7 @@ struct CachedTerminalSnapshot {
     generation: u64,
     focused: bool,
     palette: TerminalPaletteKey,
+    cursor_style: settings::TerminalCursorStyle,
     snapshot: Arc<TerminalSnapshot>,
 }
 
@@ -424,11 +591,13 @@ impl TerminalCore {
         };
 
         let (sender, receiver) = mpsc::channel();
-        let listener = MiaominalListener::new(sender);
+        let listener = MiaominalListener::new(sender.clone());
 
         Self {
             term: Term::new(config, &dimensions, listener),
             parser: Processor::new(),
+            osc7_scanner: Osc7Scanner::default(),
+            event_sender: sender,
             columns,
             screen_lines,
             events: receiver,
@@ -445,6 +614,14 @@ impl TerminalCore {
     pub fn push_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
+        }
+
+        let mut dirs = Vec::new();
+        self.osc7_scanner.feed(bytes, &mut dirs);
+        for dir in dirs {
+            let _ = self
+                .event_sender
+                .send(TerminalEvent::CurrentDirectoryChanged(dir));
         }
 
         self.parser.advance(&mut self.term, bytes);
@@ -1385,8 +1562,21 @@ impl TerminalCore {
             viewport_line: renderable.cursor.point.line.0 + display_offset,
             column: renderable.cursor.point.column.0,
         };
+        let cursor_shape = match renderable.cursor.shape {
+            CursorShape::Hidden => TerminalCursorShape::Hidden,
+            CursorShape::Beam => TerminalCursorShape::Beam,
+            CursorShape::Underline => TerminalCursorShape::Underline,
+            CursorShape::Block | CursorShape::HollowBlock => {
+                match settings::current_settings().terminal_cursor_style {
+                    settings::TerminalCursorStyle::Block => TerminalCursorShape::Block,
+                    settings::TerminalCursorStyle::Beam => TerminalCursorShape::Beam,
+                    settings::TerminalCursorStyle::Underline => TerminalCursorShape::Underline,
+                }
+            }
+        };
+        let cursor_color = resolve_named_color(NamedColor::Cursor, renderable.colors, theme);
         let rendered_cursor = if focused
-            && renderable.cursor.shape != CursorShape::Hidden
+            && cursor_shape != TerminalCursorShape::Hidden
             && renderable.display_offset == 0
         {
             usize::try_from(cursor_position.viewport_line)
@@ -1415,6 +1605,7 @@ impl TerminalCore {
             }
 
             let is_cursor = rendered_cursor == Some((line_index, column));
+            let invert_cursor = is_cursor && cursor_shape == TerminalCursorShape::Block;
             let is_selected = selection_range
                 .map(|range| range.contains(indexed.point))
                 .unwrap_or(false);
@@ -1428,16 +1619,17 @@ impl TerminalCore {
                     uri
                 }
             });
-            let cell = build_cell(
+            let mut cell = build_cell(
                 indexed.cell,
                 renderable.colors,
-                is_cursor,
+                invert_cursor,
                 is_selected,
                 default_fg,
                 default_bg,
                 theme,
                 link,
             );
+            cell.is_cursor = is_cursor;
             cells[line_index][column] = cell;
         }
 
@@ -1453,6 +1645,8 @@ impl TerminalCore {
             display_offset: renderable.display_offset,
             history_size: self.history_size(),
             cursor: cursor_position,
+            cursor_shape,
+            cursor_color,
             default_fg,
             default_bg,
             focused_cursor: focused,
@@ -1905,6 +2099,7 @@ impl TerminalState {
     pub fn snapshot(&self, focused: bool) -> Arc<TerminalSnapshot> {
         let theme = self.resolved_theme();
         let palette = TerminalPaletteKey::from_theme(theme);
+        let cursor_style = settings::current_settings().terminal_cursor_style;
         let core = self
             .shared
             .core
@@ -1921,6 +2116,7 @@ impl TerminalState {
             && cached.generation == generation
             && cached.focused == focused
             && cached.palette == palette
+            && cached.cursor_style == cursor_style
         {
             return cached.snapshot.clone();
         }
@@ -1930,6 +2126,7 @@ impl TerminalState {
             generation,
             focused,
             palette,
+            cursor_style,
             snapshot: snapshot.clone(),
         });
         snapshot
@@ -3687,5 +3884,36 @@ mod tests {
             + (actual.a - expected.a).abs();
 
         assert!(delta < 0.001, "color delta was {delta}");
+    }
+
+    #[test]
+    fn osc0_title_and_osc7_cwd_emit_terminal_events_across_chunks() {
+        let mut core = TerminalCore::new(80, 24);
+        core.push_bytes(b"\x1b]2;web-prod: /var/log\x07");
+        core.push_bytes(b"\x1b]7;file://web-prod/var/log/my%20app");
+        core.push_bytes(b"\x1b\\");
+        core.push_bytes(b"\x1b]7;file://localhost/C:/Users/Alice\x07");
+
+        let mut events = Vec::new();
+        while let Some(event) = core.try_recv_event() {
+            events.push(event);
+        }
+        assert!(events.contains(&TerminalEvent::Title("web-prod: /var/log".into())));
+        assert!(events.contains(&TerminalEvent::CurrentDirectoryChanged(
+            "/var/log/my app".into()
+        )));
+        assert!(events.contains(&TerminalEvent::CurrentDirectoryChanged(
+            "C:/Users/Alice".into()
+        )));
+    }
+
+    #[test]
+    fn search_supports_case_insensitive_and_regex_patterns() {
+        let mut core = TerminalCore::new(80, 10);
+        core.push_bytes(b"Hello World\r\nhello 123\r\n");
+
+        assert_eq!(core.set_search("(?i)hello").unwrap(), 2);
+        assert_eq!(core.set_search("(?-i)hello").unwrap(), 1);
+        assert_eq!(core.set_search(r"(?-i)hello \d+").unwrap(), 1);
     }
 }

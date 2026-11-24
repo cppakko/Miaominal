@@ -103,13 +103,22 @@ pub(in crate::ui::shell) fn render_workspace_surface(
 ) -> gpui_kit::AnyElement {
     let workspace_height = Rc::new(RefCell::new(px(0.0)));
 
+    app.refresh_pane_workspace_controls(cx);
+
     // Snapshot the layout so the renderer can borrow the app mutably while walking it.
     let layout = std::mem::replace(
         &mut app.workspace.workspace.pane_layout,
         PaneLayout::Leaf(app.workspace.workspace.active_pane_id),
     );
     let valid_source_ids = app.pane_drop_source_ids();
-    let workspace_body = app.render_pane_layout(&layout, &[], &valid_source_ids, window, cx);
+    let workspace_body = if let Some(zoomed_pane) = app.workspace.workspace.zoomed_pane
+        && layout.contains(zoomed_pane)
+    {
+        let zoomed_layout = PaneLayout::Leaf(zoomed_pane);
+        app.render_pane_layout(&zoomed_layout, &[0], &valid_source_ids, window, cx)
+    } else {
+        app.render_pane_layout(&layout, &[], &valid_source_ids, window, cx)
+    };
     app.workspace.workspace.pane_layout = layout;
 
     let session_index = app.active_terminal_session_index(cx);

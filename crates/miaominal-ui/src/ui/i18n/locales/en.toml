@@ -88,6 +88,22 @@ description = "Switches the application between light and dark Material 3 palett
 label = "Seed color"
 description = "Sets the application colors, terminal background, and ANSI palette."
 
+[settings.appearance.terminal_color_scheme]
+label = "Terminal color scheme"
+description = "Use the Material 3 theme palette or choose an independent terminal color scheme."
+
+[settings.appearance.terminal_color_schemes]
+theme_default = "Follow app theme"
+
+[settings.appearance.terminal_cursor_style]
+label = "Terminal cursor style"
+description = "Default cursor shape when the remote program does not override it."
+
+[settings.appearance.terminal_cursor_styles]
+block = "Block"
+beam = "Beam (vertical bar)"
+underline = "Underline"
+
 [settings.appearance.swatches]
 seed = "Seed"
 primary = "Primary"
@@ -844,6 +860,14 @@ reconnect_action = "Reconnect"
 hide_action = "Hide"
 empty_tab_label = "(empty)"
 click_to_focus = "Click to focus"
+zoom_pane = "Maximize pane"
+unzoom_pane = "Restore split panes"
+enable_sync_panes = "Broadcast input to all panes"
+disable_sync_panes = "Stop broadcasting input"
+sync_panes_enabled = "Broadcasting input to all split panes"
+sync_panes_disabled = "Stopped broadcasting input to split panes"
+close_pane = "Close pane"
+sync_sftp_cwd = "Sync SFTP to {path}"
 
 [chrome.menu]
 rename_tab = "Rename tab"
@@ -1803,6 +1827,10 @@ sftp_starting_worker = "Starting SFTP worker"
 [search.messages]
 no_matches = "No matches"
 invalid_search = "Invalid search: {error}"
+
+[search.tooltips]
+match_case = "Match case"
+use_regex = "Use regular expression"
 
 [profile.messages]
 new_profile_created = "New profile created. Fill the form and click Save."

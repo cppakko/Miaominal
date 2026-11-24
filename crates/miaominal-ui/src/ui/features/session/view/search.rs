@@ -1,7 +1,9 @@
 use crate::ui::assets::AppIcon;
 use crate::ui::components::{SearchInputStyle, icon_button, search_filter_input};
 use crate::ui::features::session::SessionController;
-use gpui_kit::component::h_flex;
+use crate::ui::i18n;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::{Sizable as _, h_flex};
 use gpui_kit::{Entity, FocusHandle, IntoElement, Styled, Window, div, prelude::*, px, rgb};
 use std::time::Instant;
 
@@ -59,13 +61,15 @@ impl SessionController {
             if material.dark { 65 } else { 50 },
         );
         let button_background = roles.surface_container_high;
-        let (input, total, current, status) = {
+        let (input, total, current, status, case_sensitive, use_regex) = {
             let search = self.terminal_search();
             (
                 search.input.clone(),
                 search.total,
                 search.current,
                 search.status.clone(),
+                search.case_sensitive,
+                search.use_regex,
             )
         };
         let counter = if let Some(message) = status {
@@ -77,6 +81,8 @@ impl SessionController {
             format!("{display_index}/{total}")
         };
 
+        let case_controller = controller.clone();
+        let regex_controller = controller.clone();
         let prev_controller = controller.clone();
         let next_controller = controller.clone();
         let close_controller = controller.clone();
@@ -86,7 +92,7 @@ impl SessionController {
             .top(px(12.0))
             .right(px(28.0))
             .occlude()
-            .w(px(440.0))
+            .w(px(500.0))
             .opacity(visibility)
             .child(
                 search_filter_input(
@@ -95,8 +101,56 @@ impl SessionController {
                     Some(
                         h_flex()
                             .items_center()
-                            .gap_2()
+                            .gap_1p5()
                             .pr_1()
+                            .child(
+                                Button::new("terminal-search-case-sensitive")
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
+                                    .tab_stop(false)
+                                    .label("Aa")
+                                    .tooltip(i18n::string("search.tooltips.match_case"))
+                                    .bg(rgb(if case_sensitive {
+                                        roles.primary_container
+                                    } else {
+                                        button_background
+                                    }))
+                                    .text_color(rgb(if case_sensitive {
+                                        roles.on_primary_container
+                                    } else {
+                                        text_muted
+                                    }))
+                                    .on_click(move |_, _, cx| {
+                                        case_controller.update(cx, |controller, cx| {
+                                            controller.toggle_terminal_search_case_sensitive(cx);
+                                        });
+                                    }),
+                            )
+                            .child(
+                                Button::new("terminal-search-regex")
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
+                                    .tab_stop(false)
+                                    .label(".*")
+                                    .tooltip(i18n::string("search.tooltips.use_regex"))
+                                    .bg(rgb(if use_regex {
+                                        roles.primary_container
+                                    } else {
+                                        button_background
+                                    }))
+                                    .text_color(rgb(if use_regex {
+                                        roles.on_primary_container
+                                    } else {
+                                        text_muted
+                                    }))
+                                    .on_click(move |_, _, cx| {
+                                        regex_controller.update(cx, |controller, cx| {
+                                            controller.toggle_terminal_search_regex(cx);
+                                        });
+                                    }),
+                            )
                             .child(
                                 div()
                                     .min_w(px(48.0))

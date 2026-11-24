@@ -3128,6 +3128,33 @@ impl SettingsController {
         }
     }
 
+    pub(in crate::ui) fn set_terminal_color_scheme(
+        &mut self,
+        scheme: miaominal_settings::TerminalColorScheme,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .settings_store
+            .update(|settings| settings.terminal_color_scheme = scheme)
+        {
+            miaominal_settings::sync_component_theme(cx);
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui) fn set_terminal_cursor_style(
+        &mut self,
+        style: miaominal_settings::TerminalCursorStyle,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .settings_store
+            .update(|settings| settings.terminal_cursor_style = style)
+        {
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui) fn set_language(&mut self, language: AppLanguage, cx: &mut Context<Self>) {
         if self
             .settings_store

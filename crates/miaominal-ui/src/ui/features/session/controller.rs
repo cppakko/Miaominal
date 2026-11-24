@@ -253,6 +253,8 @@ pub(in crate::ui) struct TerminalSearchForms {
     pub(in crate::ui) total: usize,
     pub(in crate::ui) current: Option<usize>,
     pub(in crate::ui) status: Option<String>,
+    pub(in crate::ui) case_sensitive: bool,
+    pub(in crate::ui) use_regex: bool,
 }
 
 pub(in crate::ui) struct SessionWorkspaceForms {
@@ -317,6 +319,9 @@ pub(in crate::ui) struct SessionController {
     kbi_input_target: Cell<Option<(TabId, u64)>>,
     search_target: Cell<Option<TabId>>,
     tabs: RefCell<HashMap<TabId, SessionTabState>>,
+    tab_dynamic_titles: RefCell<HashMap<TabId, String>>,
+    tab_current_directories: RefCell<HashMap<TabId, String>>,
+    sync_broadcast_targets: RefCell<Vec<TabId>>,
     shared_profile_monitoring: RefCell<HashMap<String, SessionMonitoringState>>,
     monitor_source_tabs: RefCell<HashMap<String, TabId>>,
     monitor_scroll_handle: ScrollHandle,
@@ -420,6 +425,8 @@ impl SessionController {
                     total: 0,
                     current: None,
                     status: None,
+                    case_sensitive: false,
+                    use_regex: false,
                 },
             },
         }
@@ -532,6 +539,9 @@ impl SessionController {
             kbi_input_target: Cell::new(None),
             search_target: Cell::new(None),
             tabs: RefCell::new(HashMap::new()),
+            tab_dynamic_titles: RefCell::new(HashMap::new()),
+            tab_current_directories: RefCell::new(HashMap::new()),
+            sync_broadcast_targets: RefCell::new(Vec::new()),
             shared_profile_monitoring: RefCell::new(HashMap::new()),
             monitor_source_tabs: RefCell::new(HashMap::new()),
             monitor_scroll_handle: ScrollHandle::new(),
@@ -1006,8 +1016,14 @@ impl SessionController {
                 session.bytes_in,
                 session.bytes_out,
             )
-            .with_sftp_progress_visible(session.sftp_progress_layout.visible()),
+            .with_sftp_progress_visible(session.sftp_progress_layout.visible())
+            .with_dynamic_title(self.tab_dynamic_titles.borrow().get(&tab_id).cloned())
+            .with_current_directory(self.tab_current_directories.borrow().get(&tab_id).cloned()),
         )
+    }
+
+    pub(in crate::ui) fn set_sync_broadcast_targets(&self, targets: Vec<TabId>) {
+        *self.sync_broadcast_targets.borrow_mut() = targets;
     }
     pub(in crate::ui) fn port_session(
         &self,
@@ -1168,6 +1184,11 @@ impl SessionController {
     ) -> Option<SessionTabState> {
         let removed = self.tabs.borrow_mut().remove(&tab_id);
         if removed.is_some() {
+            self.tab_dynamic_titles.borrow_mut().remove(&tab_id);
+            self.tab_current_directories.borrow_mut().remove(&tab_id);
+            self.sync_broadcast_targets
+                .borrow_mut()
+                .retain(|id| *id != tab_id);
             self.terminal_port().close_session(tab_id);
             let mut ports = self.ports.borrow_mut();
             ports.snapshot.sessions.remove(&tab_id);

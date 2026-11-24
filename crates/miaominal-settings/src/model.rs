@@ -11,10 +11,10 @@ pub use crate::data::{
     CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX,
     LINE_HEIGHT_MIN, LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
     OpenSshIntegrationMode, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
-    RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalKeyBindings,
-    TerminalRightClickBehavior, ThemeId, WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN,
-    WebSearchConfig, WebSearchProviderKind, WindowCloseBehavior, ai_provider_kind_label,
-    default_font_fallbacks, default_font_family,
+    RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalColorScheme,
+    TerminalCursorStyle, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
+    WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
+    WindowCloseBehavior, ai_provider_kind_label, default_font_fallbacks, default_font_family,
 };
 
 impl AppLanguage {
@@ -45,6 +45,72 @@ impl TerminalPalette {
             ansi: material_theme::terminal_ansi(theme),
         }
     }
+
+    pub fn from_scheme_and_material(scheme: TerminalColorScheme, theme: &MaterialTheme) -> Self {
+        match scheme {
+            TerminalColorScheme::ThemeDefault => Self::from_material(theme),
+            TerminalColorScheme::Dracula => Self {
+                default_fg: 0xf8f8f2,
+                default_bg: 0x282a36,
+                cursor: 0xf8f8f2,
+                selection: 0x44475a,
+                ansi: [
+                    0x21222c, 0xff5555, 0x50fa7b, 0xf1fa8c, 0xbd93f9, 0xff79c6, 0x8be9fd, 0xf8f8f2,
+                    0x6272a4, 0xff6e6e, 0x69ff94, 0xffffa5, 0xd6acff, 0xff92df, 0xa4ffff, 0xffffff,
+                ],
+            },
+            TerminalColorScheme::Nord => Self {
+                default_fg: 0xd8dee9,
+                default_bg: 0x2e3440,
+                cursor: 0xd8dee9,
+                selection: 0x434c5e,
+                ansi: [
+                    0x3b4252, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x88c0d0, 0xe5e9f0,
+                    0x4c566a, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x8fbcbb, 0xeceff4,
+                ],
+            },
+            TerminalColorScheme::CatppuccinMocha => Self {
+                default_fg: 0xcdd6f4,
+                default_bg: 0x1e1e2e,
+                cursor: 0xf5e0dc,
+                selection: 0x585b70,
+                ansi: [
+                    0x45475a, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xbac2de,
+                    0x585b70, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xa6adc8,
+                ],
+            },
+            TerminalColorScheme::SolarizedDark => Self {
+                default_fg: 0x839496,
+                default_bg: 0x002b36,
+                cursor: 0x93a1a1,
+                selection: 0x073642,
+                ansi: [
+                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
+                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
+                ],
+            },
+            TerminalColorScheme::TokyoNight => Self {
+                default_fg: 0xc0caf5,
+                default_bg: 0x1a1b26,
+                cursor: 0xc0caf5,
+                selection: 0x33467c,
+                ansi: [
+                    0x15161e, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xa9b1d6,
+                    0x414868, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xc0caf5,
+                ],
+            },
+            TerminalColorScheme::OneDark => Self {
+                default_fg: 0xabb2bf,
+                default_bg: 0x282c34,
+                cursor: 0x528bff,
+                selection: 0x3e4451,
+                ansi: [
+                    0x282c34, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xabb2bf,
+                    0x5c6370, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xffffff,
+                ],
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +125,10 @@ impl Theme {
             material_theme::build_theme(settings.seed_argb(), settings.theme_id.is_dark());
 
         Self {
-            terminal: TerminalPalette::from_material(&material),
+            terminal: TerminalPalette::from_scheme_and_material(
+                settings.terminal_color_scheme,
+                &material,
+            ),
             material,
         }
     }
@@ -97,6 +166,8 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || (a.line_height - b.line_height).abs() > f32::EPSILON
         || a.theme_id != b.theme_id
         || a.seed_color != b.seed_color
+        || a.terminal_color_scheme != b.terminal_color_scheme
+        || a.terminal_cursor_style != b.terminal_cursor_style
         || a.recent_connections_count != b.recent_connections_count
         || a.key_bindings != b.key_bindings
         || a.terminal_right_click_behavior != b.terminal_right_click_behavior

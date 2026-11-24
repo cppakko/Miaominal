@@ -84,6 +84,22 @@ description = "在浅色和深色 Material 3 配色之间切换应用。"
 label = "种子色"
 description = "设置应用配色、终端背景和 ANSI 调色板。"
 
+[settings.appearance.terminal_color_scheme]
+label = "终端配色方案"
+description = "跟随 Material 3 主题配色，或选择独立的经典终端配色方案。"
+
+[settings.appearance.terminal_color_schemes]
+theme_default = "跟随应用主题"
+
+[settings.appearance.terminal_cursor_style]
+label = "终端光标样式"
+description = "远端程序未指定光标形状时使用的默认终端光标样式。"
+
+[settings.appearance.terminal_cursor_styles]
+block = "方块"
+beam = "竖线"
+underline = "下划线"
+
 [settings.appearance.swatches]
 seed = "种子"
 primary = "主色"
@@ -704,6 +720,14 @@ reconnect_action = "重连"
 hide_action = "隐藏"
 empty_tab_label = "（空）"
 click_to_focus = "点击以聚焦"
+zoom_pane = "最大化此窗格"
+unzoom_pane = "还原分屏窗格"
+enable_sync_panes = "向所有分屏窗格广播输入"
+disable_sync_panes = "停止广播输入"
+sync_panes_enabled = "已开启多窗格广播输入"
+sync_panes_disabled = "已关闭多窗格广播输入"
+close_pane = "关闭窗格"
+sync_sftp_cwd = "同步 SFTP 目录到 {path}"
 
 [chrome.menu]
 rename_tab = "重命名标签页"
@@ -1663,6 +1687,10 @@ sftp_starting_worker = "正在启动 SFTP 工作线程"
 [search.messages]
 no_matches = "没有匹配项"
 invalid_search = "搜索无效：{error}"
+
+[search.tooltips]
+match_case = "区分大小写"
+use_regex = "使用正则表达式"
 
 [errors.profile.validation]
 profile_name_required = "必须填写配置名称。"
