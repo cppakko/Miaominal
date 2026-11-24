@@ -3308,8 +3308,8 @@ impl SettingsController {
     ) {
         if self.settings_store.update(|settings| {
             settings.terminal_color_scheme = scheme;
-            if scheme != miaominal_settings::TerminalColorScheme::ThemeDefault {
-                settings.theme_id = ThemeId::Dark;
+            if let Some(theme_id) = scheme.preset_theme_id() {
+                settings.theme_id = theme_id;
             }
         }) {
             miaominal_settings::sync_component_theme(cx);
@@ -3395,7 +3395,9 @@ fn terminal_color_scheme_label(scheme: miaominal_settings::TerminalColorScheme) 
         miaominal_settings::TerminalColorScheme::Dracula => "Dracula".to_string(),
         miaominal_settings::TerminalColorScheme::Nord => "Nord".to_string(),
         miaominal_settings::TerminalColorScheme::CatppuccinMocha => "Catppuccin Mocha".to_string(),
+        miaominal_settings::TerminalColorScheme::CatppuccinLatte => "Catppuccin Latte".to_string(),
         miaominal_settings::TerminalColorScheme::SolarizedDark => "Solarized Dark".to_string(),
+        miaominal_settings::TerminalColorScheme::SolarizedLight => "Solarized Light".to_string(),
         miaominal_settings::TerminalColorScheme::TokyoNight => "Tokyo Night".to_string(),
         miaominal_settings::TerminalColorScheme::OneDark => "One Dark".to_string(),
     }

@@ -734,21 +734,38 @@ pub enum TerminalColorScheme {
     Dracula,
     Nord,
     CatppuccinMocha,
+    CatppuccinLatte,
     SolarizedDark,
+    SolarizedLight,
     TokyoNight,
     OneDark,
 }
 
 impl TerminalColorScheme {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::ThemeDefault,
         Self::Dracula,
         Self::Nord,
         Self::CatppuccinMocha,
+        Self::CatppuccinLatte,
         Self::SolarizedDark,
+        Self::SolarizedLight,
         Self::TokyoNight,
         Self::OneDark,
     ];
+
+    pub const fn preset_theme_id(self) -> Option<ThemeId> {
+        match self {
+            Self::ThemeDefault => None,
+            Self::Dracula
+            | Self::Nord
+            | Self::CatppuccinMocha
+            | Self::SolarizedDark
+            | Self::TokyoNight
+            | Self::OneDark => Some(ThemeId::Dark),
+            Self::CatppuccinLatte | Self::SolarizedLight => Some(ThemeId::Light),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

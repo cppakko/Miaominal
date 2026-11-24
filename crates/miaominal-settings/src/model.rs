@@ -82,11 +82,31 @@ impl TerminalPalette {
                     0x585b70, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xa6adc8,
                 ],
             },
+            TerminalColorScheme::CatppuccinLatte => Self {
+                default_fg: 0x4c4f69,
+                default_bg: 0xeff1f5,
+                cursor: 0xdc8a78,
+                selection: 0xacb0be,
+                ansi: [
+                    0x5c5f77, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xacb0be,
+                    0x6c6f85, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xbcc0cc,
+                ],
+            },
             TerminalColorScheme::SolarizedDark => Self {
                 default_fg: 0x839496,
                 default_bg: 0x002b36,
                 cursor: 0x93a1a1,
                 selection: 0x073642,
+                ansi: [
+                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
+                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
+                ],
+            },
+            TerminalColorScheme::SolarizedLight => Self {
+                default_fg: 0x657b83,
+                default_bg: 0xfdf6e3,
+                cursor: 0x586e75,
+                selection: 0xeee8d5,
                 ansi: [
                     0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
                     0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
@@ -118,8 +138,10 @@ impl TerminalPalette {
 
 #[derive(Clone, Copy)]
 struct SchemeSurfacePreset {
+    dark: bool,
     seed: u32,
     surface: u32,
+    surface_dim: u32,
     surface_container_lowest: u32,
     surface_container_low: u32,
     surface_container: u32,
@@ -138,9 +160,11 @@ impl SchemeSurfacePreset {
         match scheme {
             TerminalColorScheme::ThemeDefault => None,
             TerminalColorScheme::Dracula => Some(Self {
+                dark: true,
                 seed: 0xbd93f9,
                 surface_container_lowest: 0x21222c,
                 surface: 0x282a36,
+                surface_dim: 0x282a36,
                 surface_container_low: 0x2e303e,
                 surface_container: 0x343746,
                 surface_container_high: 0x3b3f52,
@@ -153,9 +177,11 @@ impl SchemeSurfacePreset {
                 outline_variant: 0x44475a,
             }),
             TerminalColorScheme::Nord => Some(Self {
+                dark: true,
                 seed: 0x88c0d0,
                 surface_container_lowest: 0x272c36,
                 surface: 0x2e3440,
+                surface_dim: 0x2e3440,
                 surface_container_low: 0x333a47,
                 surface_container: 0x373e4c,
                 surface_container_high: 0x3b4252,
@@ -168,9 +194,11 @@ impl SchemeSurfacePreset {
                 outline_variant: 0x434c5e,
             }),
             TerminalColorScheme::CatppuccinMocha => Some(Self {
+                dark: true,
                 seed: 0x89b4fa,
                 surface_container_lowest: 0x181825,
                 surface: 0x1e1e2e,
+                surface_dim: 0x1e1e2e,
                 surface_container_low: 0x242536,
                 surface_container: 0x2a2b3d,
                 surface_container_high: 0x313244,
@@ -182,10 +210,29 @@ impl SchemeSurfacePreset {
                 outline: 0x6c7086,
                 outline_variant: 0x45475a,
             }),
+            TerminalColorScheme::CatppuccinLatte => Some(Self {
+                dark: false,
+                seed: 0x1e66f5,
+                surface_container_lowest: 0xf7f8fb,
+                surface: 0xeff1f5,
+                surface_bright: 0xeff1f5,
+                surface_container_low: 0xe8ebf1,
+                surface_container: 0xe2e6ee,
+                surface_container_high: 0xdce0e8,
+                surface_container_highest: 0xd2d6e2,
+                surface_dim: 0xccd0da,
+                surface_variant: 0xdce0e8,
+                on_surface: 0x4c4f69,
+                on_surface_variant: 0x6c6f85,
+                outline: 0x8c8fa1,
+                outline_variant: 0xc6cad6,
+            }),
             TerminalColorScheme::SolarizedDark => Some(Self {
+                dark: true,
                 seed: 0x2aa198,
                 surface_container_lowest: 0x00222b,
                 surface: 0x002b36,
+                surface_dim: 0x002b36,
                 surface_container_low: 0x04313d,
                 surface_container: 0x073642,
                 surface_container_high: 0x0c3f4d,
@@ -197,10 +244,29 @@ impl SchemeSurfacePreset {
                 outline: 0x586e75,
                 outline_variant: 0x1a4b57,
             }),
+            TerminalColorScheme::SolarizedLight => Some(Self {
+                dark: false,
+                seed: 0x268bd2,
+                surface_container_lowest: 0xfffdf5,
+                surface: 0xfdf6e3,
+                surface_bright: 0xfdf6e3,
+                surface_container_low: 0xf7f0dd,
+                surface_container: 0xf2ecd9,
+                surface_container_high: 0xeee8d5,
+                surface_container_highest: 0xe4decb,
+                surface_dim: 0xdcd6c2,
+                surface_variant: 0xeee8d5,
+                on_surface: 0x586e75,
+                on_surface_variant: 0x657b83,
+                outline: 0x93a1a1,
+                outline_variant: 0xd5ceb9,
+            }),
             TerminalColorScheme::TokyoNight => Some(Self {
+                dark: true,
                 seed: 0x7aa2f7,
                 surface_container_lowest: 0x16161e,
                 surface: 0x1a1b26,
+                surface_dim: 0x1a1b26,
                 surface_container_low: 0x1f2335,
                 surface_container: 0x24283b,
                 surface_container_high: 0x292e42,
@@ -213,9 +279,11 @@ impl SchemeSurfacePreset {
                 outline_variant: 0x3b4261,
             }),
             TerminalColorScheme::OneDark => Some(Self {
+                dark: true,
                 seed: 0x61afef,
                 surface_container_lowest: 0x21252b,
                 surface: 0x282c34,
+                surface_dim: 0x282c34,
                 surface_container_low: 0x2d323b,
                 surface_container: 0x323742,
                 surface_container_high: 0x373d49,
@@ -237,7 +305,7 @@ impl SchemeSurfacePreset {
         material.roles.background = self.surface;
         material.roles.on_background = self.on_surface;
         material.roles.surface = self.surface;
-        material.roles.surface_dim = self.surface;
+        material.roles.surface_dim = self.surface_dim;
         material.roles.surface_bright = self.surface_bright;
         material.roles.surface_container_lowest = self.surface_container_lowest;
         material.roles.surface_container_low = self.surface_container_low;
@@ -263,7 +331,7 @@ impl Theme {
         let material =
             if let Some(preset) = SchemeSurfacePreset::for_scheme(settings.terminal_color_scheme) {
                 let seed = material_colors::color::Argb::from_u32(0xff00_0000 | preset.seed);
-                let mut theme = material_theme::build_theme(seed, true);
+                let mut theme = material_theme::build_theme(seed, preset.dark);
                 preset.apply_to_material(&mut theme);
                 theme
             } else {
@@ -652,24 +720,46 @@ max_channels_per_connection = 1000
             );
             assert_eq!(roles.surface, theme.terminal.default_bg);
 
-            if scheme != TerminalColorScheme::ThemeDefault {
-                assert!(theme.material.dark);
-                assert_eq!(roles.surface_dim, roles.surface);
-                assert!(luminance(roles.surface_container_lowest) < luminance(roles.surface));
-                assert!(luminance(roles.surface) < luminance(roles.surface_container_low));
-                assert!(
-                    luminance(roles.surface_container_low) < luminance(roles.surface_container)
-                );
-                assert!(
-                    luminance(roles.surface_container) < luminance(roles.surface_container_high)
-                );
-                assert!(
-                    luminance(roles.surface_container_high)
-                        < luminance(roles.surface_container_highest)
-                );
-                assert!(
-                    luminance(roles.surface_container_highest) <= luminance(roles.surface_bright)
-                );
+            if let Some(expected_theme_id) = scheme.preset_theme_id() {
+                assert_eq!(theme.material.dark, expected_theme_id.is_dark());
+                if expected_theme_id.is_dark() {
+                    assert_eq!(roles.surface_dim, roles.surface);
+                    assert!(luminance(roles.surface_container_lowest) < luminance(roles.surface));
+                    assert!(luminance(roles.surface) < luminance(roles.surface_container_low));
+                    assert!(
+                        luminance(roles.surface_container_low) < luminance(roles.surface_container)
+                    );
+                    assert!(
+                        luminance(roles.surface_container)
+                            < luminance(roles.surface_container_high)
+                    );
+                    assert!(
+                        luminance(roles.surface_container_high)
+                            < luminance(roles.surface_container_highest)
+                    );
+                    assert!(
+                        luminance(roles.surface_container_highest)
+                            <= luminance(roles.surface_bright)
+                    );
+                } else {
+                    assert_eq!(roles.surface_bright, roles.surface);
+                    assert!(luminance(roles.surface_container_lowest) > luminance(roles.surface));
+                    assert!(luminance(roles.surface) > luminance(roles.surface_container_low));
+                    assert!(
+                        luminance(roles.surface_container_low) > luminance(roles.surface_container)
+                    );
+                    assert!(
+                        luminance(roles.surface_container)
+                            > luminance(roles.surface_container_high)
+                    );
+                    assert!(
+                        luminance(roles.surface_container_high)
+                            > luminance(roles.surface_container_highest)
+                    );
+                    assert!(
+                        luminance(roles.surface_container_highest) >= luminance(roles.surface_dim)
+                    );
+                }
             }
         }
     }
