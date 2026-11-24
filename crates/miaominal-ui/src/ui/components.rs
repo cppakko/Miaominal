@@ -75,7 +75,7 @@ pub(crate) use input_hint::{
     register_input_hint, register_textarea_hint,
 };
 pub(crate) use list_item_card::list_item_card;
-pub(crate) use md3_select::md3_select;
+pub(crate) use md3_select::{md3_select, md3_select_for_options, md3_select_options_width};
 pub(crate) use md3_spinner::md3_spinner;
 pub(crate) use md3_switch::md3_switch;
 pub(in crate::ui) use page_chrome::view_mode_switcher;

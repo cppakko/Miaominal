@@ -2,12 +2,14 @@ use super::*;
 use crate::ui::assets::AppIcon;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
 use crate::ui::components::{
-    SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select, md3_spinner,
+    SegmentedSwitch, editor_button_with_id, font_family_picker, md3_select, md3_select_for_options,
+    md3_spinner,
 };
 use crate::ui::i18n;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Size,
     group_box::GroupBoxVariant,
+    select::SelectItem as _,
     setting::{
         RenderOptions, SelectIndex, SettingField, SettingFieldElement, SettingGroup, SettingItem,
         SettingPage, Settings,
@@ -380,7 +382,7 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
 }
 
 macro_rules! settings_select_field {
-    ($name:ident, $field:ident) => {
+    ($name:ident, $field:ident, $options_fn:path) => {
         #[derive(Clone)]
         struct $name {
             controller: Entity<SettingsController>,
@@ -402,10 +404,10 @@ macro_rules! settings_select_field {
                 cx: &mut App,
             ) -> Self::Element {
                 let select_state = self.controller.read(cx).forms.$field.clone();
+                let select_options = $options_fn();
 
-                md3_select(&select_state)
+                md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
                     .with_size(options.size())
-                    .w_full()
                     .into_any_element()
             }
         }
@@ -444,17 +446,33 @@ impl SettingFieldElement for TerminalColorSchemeField {
             });
         }
 
-        md3_select(&select_state)
+        let select_options = super::controller::terminal_color_scheme_select_options();
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
 
-settings_select_field!(TerminalCursorStyleField, terminal_cursor_style_select);
-settings_select_field!(SshKeepaliveIntervalField, ssh_keepalive_interval_select);
-settings_select_field!(SshKeepaliveMaxField, ssh_keepalive_max_select);
-settings_select_field!(SshConnectTimeoutField, ssh_connect_timeout_select);
+settings_select_field!(
+    TerminalCursorStyleField,
+    terminal_cursor_style_select,
+    super::controller::terminal_cursor_style_select_options
+);
+settings_select_field!(
+    SshKeepaliveIntervalField,
+    ssh_keepalive_interval_select,
+    super::controller::ssh_keepalive_interval_select_options
+);
+settings_select_field!(
+    SshKeepaliveMaxField,
+    ssh_keepalive_max_select,
+    super::controller::ssh_keepalive_max_select_options
+);
+settings_select_field!(
+    SshConnectTimeoutField,
+    ssh_connect_timeout_select,
+    super::controller::ssh_connect_timeout_select_options
+);
 
 fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
     let (group_ids, groups) = named_setting_groups![
@@ -1886,10 +1904,10 @@ impl SettingFieldElement for AppLanguageField {
         cx: &mut App,
     ) -> Self::Element {
         let select_state = self.controller.read(cx).forms.language_select.clone();
+        let select_options = super::controller::language_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
@@ -1920,10 +1938,10 @@ impl SettingFieldElement for MonitorHistoryDurationField {
             .forms
             .monitor_history_select
             .clone();
+        let select_options = super::controller::monitor_history_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
@@ -1954,10 +1972,10 @@ impl SettingFieldElement for LocalVaultAutoLockDurationField {
             .forms
             .local_vault_auto_lock_duration_select
             .clone();
+        let select_options = super::controller::local_vault_auto_lock_duration_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
@@ -1996,10 +2014,10 @@ impl SettingFieldElement for WindowCloseBehaviorField {
             .forms
             .window_close_behavior_select
             .clone();
+        let select_options = super::controller::window_close_behavior_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w(px(184.0))
             .into_any_element()
     }
 }
@@ -2025,10 +2043,10 @@ impl SettingFieldElement for LastTabCloseBehaviorField {
             .forms
             .last_tab_close_behavior_select
             .clone();
+        let select_options = super::controller::last_tab_close_behavior_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
@@ -2059,10 +2077,10 @@ impl SettingFieldElement for ProfileImportSourceField {
             .forms
             .profile_import_source_select
             .clone();
+        let select_options = super::controller::profile_import_source_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }
@@ -3133,10 +3151,10 @@ impl SettingFieldElement for TerminalRightClickBehaviorField {
             .forms
             .terminal_right_click_behavior_select
             .clone();
+        let select_options = super::controller::terminal_right_click_behavior_select_options();
 
-        md3_select(&select_state)
+        md3_select_for_options(&select_state, select_options.iter().map(|opt| opt.title()))
             .with_size(options.size())
-            .w_full()
             .into_any_element()
     }
 }

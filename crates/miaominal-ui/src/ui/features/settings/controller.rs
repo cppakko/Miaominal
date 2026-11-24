@@ -779,48 +779,28 @@ impl SettingsController {
         let sync_passphrase = sync_secrets.passphrase.unwrap_or_default();
         let sync_passphrase_configured = sync_engine.config_store.config.has_passphrase;
 
-        let language_options = AppLanguage::supported_languages()
-            .into_iter()
-            .map(|language| SelectOption::new(language, language.native_name()))
-            .collect::<Vec<_>>();
+        let language_options = language_select_options();
         let selected_language = language_options
             .iter()
             .position(|language| *language.value() == settings.language)
             .map(|index| IndexPath::default().row(index));
-        let last_tab_close_behavior_options = LastTabCloseBehavior::all()
-            .iter()
-            .copied()
-            .map(|behavior| SelectOption::new(behavior, last_tab_close_behavior_label(behavior)))
-            .collect::<Vec<_>>();
+        let last_tab_close_behavior_options = last_tab_close_behavior_select_options();
         let selected_last_tab_close_behavior = last_tab_close_behavior_options
             .iter()
             .position(|behavior| *behavior.value() == settings.last_tab_close_behavior)
             .map(|index| IndexPath::default().row(index));
-        let window_close_behavior_options = WindowCloseBehavior::all()
-            .iter()
-            .copied()
-            .map(|behavior| SelectOption::new(behavior, window_close_behavior_label(behavior)))
-            .collect::<Vec<_>>();
+        let window_close_behavior_options = window_close_behavior_select_options();
         let selected_window_close_behavior = window_close_behavior_options
             .iter()
             .position(|behavior| *behavior.value() == settings.window_close_behavior)
             .map(|index| IndexPath::default().row(index));
-        let local_vault_auto_lock_duration_options = LocalVaultAutoLockDuration::all()
-            .iter()
-            .copied()
-            .map(|duration| {
-                SelectOption::new(duration, local_vault_auto_lock_duration_label(duration))
-            })
-            .collect::<Vec<_>>();
+        let local_vault_auto_lock_duration_options =
+            local_vault_auto_lock_duration_select_options();
         let selected_local_vault_auto_lock_duration = local_vault_auto_lock_duration_options
             .iter()
             .position(|duration| *duration.value() == settings.local_vault_auto_lock_duration)
             .map(|index| IndexPath::default().row(index));
-        let monitor_history_options = MonitorHistoryDuration::all()
-            .iter()
-            .copied()
-            .map(|duration| SelectOption::new(duration, monitor_history_duration_label(duration)))
-            .collect::<Vec<_>>();
+        let monitor_history_options = monitor_history_select_options();
         let selected_monitor_history = monitor_history_options
             .iter()
             .position(|duration| *duration.value() == settings.monitor_history_duration)
@@ -850,16 +830,7 @@ impl SettingsController {
             .iter()
             .position(|option| *option.value() == settings.ssh_connect_timeout_secs)
             .map(|index| IndexPath::default().row(index));
-        let terminal_right_click_behavior_options = vec![
-            SelectOption::new(
-                TerminalRightClickBehavior::ContextMenu,
-                i18n::string("settings.key_bindings.context_menu_option"),
-            ),
-            SelectOption::new(
-                TerminalRightClickBehavior::CopySelectionOrPaste,
-                i18n::string("settings.key_bindings.copy_paste_option"),
-            ),
-        ];
+        let terminal_right_click_behavior_options = terminal_right_click_behavior_select_options();
         let selected_terminal_right_click_behavior = terminal_right_click_behavior_options
             .iter()
             .position(|behavior| *behavior.value() == settings.terminal_right_click_behavior)
@@ -884,15 +855,7 @@ impl SettingsController {
         .into_iter()
         .map(|level| SelectOption::new(level, bridge_security_level_label(level)))
         .collect::<Vec<_>>();
-        let profile_import_source_options = [
-            ImportSourceKind::OpenSshConfig,
-            ImportSourceKind::PuttyRegistry,
-            ImportSourceKind::SecureCrtXml,
-            ImportSourceKind::FinalShellJson,
-        ]
-        .into_iter()
-        .map(|source| SelectOption::new(source, localized_profile_import_source_label(source)))
-        .collect::<Vec<_>>();
+        let profile_import_source_options = profile_import_source_select_options();
         let sync_provider_options = vec![
             SelectOption::new(
                 SyncProvider::None,
@@ -2525,9 +2488,17 @@ impl SettingsController {
     }
 
     pub(in crate::ui) fn render_monitor_history_select(&self) -> AnyElement {
+        use gpui_kit::component::select::SelectItem as _;
+        let options = monitor_history_select_options();
+        let menu_width = crate::ui::components::md3_select_options_width(
+            options.iter().map(|opt| opt.title()),
+            8.5,
+            14.0,
+        );
         md3_select(&self.forms.monitor_history_select)
             .with_size(gpui_kit::component::Size::Small)
             .w_full()
+            .menu_width(menu_width)
             .into_any_element()
     }
 
@@ -3430,7 +3401,73 @@ fn terminal_color_scheme_label(scheme: miaominal_settings::TerminalColorScheme) 
     }
 }
 
-fn terminal_color_scheme_select_options()
+pub(super) fn language_select_options() -> Vec<SelectOption<AppLanguage>> {
+    AppLanguage::supported_languages()
+        .into_iter()
+        .map(|language| SelectOption::new(language, language.native_name()))
+        .collect()
+}
+
+pub(super) fn last_tab_close_behavior_select_options() -> Vec<SelectOption<LastTabCloseBehavior>> {
+    LastTabCloseBehavior::all()
+        .iter()
+        .copied()
+        .map(|behavior| SelectOption::new(behavior, last_tab_close_behavior_label(behavior)))
+        .collect()
+}
+
+pub(super) fn window_close_behavior_select_options() -> Vec<SelectOption<WindowCloseBehavior>> {
+    WindowCloseBehavior::all()
+        .iter()
+        .copied()
+        .map(|behavior| SelectOption::new(behavior, window_close_behavior_label(behavior)))
+        .collect()
+}
+
+pub(super) fn local_vault_auto_lock_duration_select_options()
+-> Vec<SelectOption<LocalVaultAutoLockDuration>> {
+    LocalVaultAutoLockDuration::all()
+        .iter()
+        .copied()
+        .map(|duration| SelectOption::new(duration, local_vault_auto_lock_duration_label(duration)))
+        .collect()
+}
+
+pub(super) fn monitor_history_select_options() -> Vec<SelectOption<MonitorHistoryDuration>> {
+    MonitorHistoryDuration::all()
+        .iter()
+        .copied()
+        .map(|duration| SelectOption::new(duration, monitor_history_duration_label(duration)))
+        .collect()
+}
+
+pub(super) fn profile_import_source_select_options() -> Vec<SelectOption<ImportSourceKind>> {
+    [
+        ImportSourceKind::OpenSshConfig,
+        ImportSourceKind::PuttyRegistry,
+        ImportSourceKind::SecureCrtXml,
+        ImportSourceKind::FinalShellJson,
+    ]
+    .into_iter()
+    .map(|source| SelectOption::new(source, localized_profile_import_source_label(source)))
+    .collect()
+}
+
+pub(super) fn terminal_right_click_behavior_select_options()
+-> Vec<SelectOption<TerminalRightClickBehavior>> {
+    vec![
+        SelectOption::new(
+            TerminalRightClickBehavior::ContextMenu,
+            i18n::string("settings.key_bindings.context_menu_option"),
+        ),
+        SelectOption::new(
+            TerminalRightClickBehavior::CopySelectionOrPaste,
+            i18n::string("settings.key_bindings.copy_paste_option"),
+        ),
+    ]
+}
+
+pub(super) fn terminal_color_scheme_select_options()
 -> Vec<SelectOption<miaominal_settings::TerminalColorScheme>> {
     miaominal_settings::TerminalColorScheme::ALL
         .iter()
@@ -3453,7 +3490,7 @@ fn terminal_cursor_style_label(style: miaominal_settings::TerminalCursorStyle) -
     }
 }
 
-fn terminal_cursor_style_select_options()
+pub(super) fn terminal_cursor_style_select_options()
 -> Vec<SelectOption<miaominal_settings::TerminalCursorStyle>> {
     miaominal_settings::TerminalCursorStyle::ALL
         .iter()
@@ -3462,7 +3499,7 @@ fn terminal_cursor_style_select_options()
         .collect()
 }
 
-fn ssh_keepalive_interval_select_options() -> Vec<SelectOption<u64>> {
+pub(super) fn ssh_keepalive_interval_select_options() -> Vec<SelectOption<u64>> {
     [0u64, 15, 30, 60, 120, 300]
         .into_iter()
         .map(|secs| {
@@ -3479,14 +3516,14 @@ fn ssh_keepalive_interval_select_options() -> Vec<SelectOption<u64>> {
         .collect()
 }
 
-fn ssh_keepalive_max_select_options() -> Vec<SelectOption<u32>> {
+pub(super) fn ssh_keepalive_max_select_options() -> Vec<SelectOption<u32>> {
     [1u32, 3, 5, 10]
         .into_iter()
         .map(|count| SelectOption::new(count, count.to_string()))
         .collect()
 }
 
-fn ssh_connect_timeout_select_options() -> Vec<SelectOption<u64>> {
+pub(super) fn ssh_connect_timeout_select_options() -> Vec<SelectOption<u64>> {
     [5u64, 10, 15, 30, 60]
         .into_iter()
         .map(|secs| {
