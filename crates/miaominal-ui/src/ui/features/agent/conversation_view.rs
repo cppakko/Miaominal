@@ -141,7 +141,6 @@ pub(in crate::ui) struct SessionAgentMessageView {
     patch_diff: Option<Entity<DiffState>>,
     patch_height_rem: f32,
     markdown_observation: Option<Subscription>,
-    markdown_worker_seeded: bool,
     thinking_ticker: Option<Task<()>>,
     content_chars: usize,
     estimated_tokens: usize,
@@ -170,7 +169,6 @@ impl SessionAgentMessageView {
             patch_diff: None,
             patch_height_rem: 6.0,
             markdown_observation: None,
-            markdown_worker_seeded: false,
             thinking_ticker: None,
             content_chars,
             estimated_tokens: estimate_tokens_from_chars(content_chars),
@@ -361,13 +359,10 @@ impl SessionAgentMessageView {
         }
     }
 
-    /// The pinned gpui-component revision parses full replacements synchronously, but its
-    /// background append worker does not inherit that parsed baseline. Keep the correct
-    /// synchronous first layout here and lazily seed the worker only if this row later receives
-    /// an append; static history rows therefore pay for just one full parse.
+    /// Creates the Markdown state entity for this row and forwards async parse updates as
+    /// layout-change notifications for the outer virtual list.
     fn rebuild_markdown_state(&mut self, cx: &mut Context<Self>) -> Entity<TextViewState> {
         let source = self.message.content.clone();
-        self.markdown_worker_seeded = source.is_empty();
         let selectable = self.selectable;
         let state = cx.new(move |cx| TextViewState::markdown(&source, cx).selectable(selectable));
         self.markdown_observation = Some(cx.observe(&state, |_this, _state, cx| {
@@ -378,32 +373,20 @@ impl SessionAgentMessageView {
         state
     }
 
-    /// Appends to the managed Markdown document, seeding gpui-component's background worker on
-    /// the first real append after a non-empty synchronous full parse. `push_str(full_source)`
-    /// gives the empty worker its baseline; the immediately newer `set_text(full_source)` keeps
-    /// the visible entity correct and makes the worker result stale. Later suffixes can use the
-    /// normal append path.
+    /// Appends to the managed Markdown document. `gpui-base` keeps the background worker
+    /// synchronized with synchronous baseline parses via `BaselineAck`, so `push_str` directly
+    /// extends the document in place.
     fn append_markdown_suffix(&mut self, suffix: &str, cx: &mut Context<Self>) {
         let Some(state) = self.markdown_state.clone() else {
             self.prepare_markdown_state(cx);
             return;
         };
 
-        if self.markdown_worker_seeded {
-            state.update(cx, |state, cx| state.push_str(suffix, cx));
-            return;
-        }
-
-        let source = self.message.content.clone();
-        state.update(cx, |state, cx| {
-            state.push_str(&source, cx);
-            state.set_text(&source, cx);
-        });
-        self.markdown_worker_seeded = true;
+        state.update(cx, |state, cx| state.push_str(suffix, cx));
     }
 
-    /// Appends a streaming suffix; after the one-time worker seed, steady-state updates use
-    /// gpui-component's append path instead of replacing the full source.
+    /// Appends a streaming suffix using `gpui-component`'s incremental append path instead of
+    /// replacing the full source.
     pub(in crate::ui) fn append_content(
         &mut self,
         suffix: &str,
@@ -1302,6 +1285,17 @@ mod tests {
             view.append_content(" suffix", cx);
             assert_eq!(view.markdown_state().unwrap().entity_id(), prepared);
             assert_eq!(view.content(), "**streamed** suffix");
+        });
+        cx.run_until_parked();
+        empty.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.markdown_state()
+                    .unwrap()
+                    .read(cx)
+                    .rendered_text()
+                    .as_str(),
+                "streamed suffix\n"
+            );
         });
 
         let thinking = cx.new(|cx| {

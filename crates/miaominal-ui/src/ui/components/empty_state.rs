@@ -96,7 +96,7 @@ impl EmptyStateTone {
 
 /// Paints a smooth Material 3 Expressive 4-petal organic clover using cubic Bézier splines with
 /// exact analytic tangents.
-fn build_m3_clover_path(bounds: Bounds<Pixels>) -> Option<gpui_kit::Path<Pixels>> {
+fn build_m3_clover_path(bounds: Bounds<Pixels>) -> Option<gpui_kit::Path> {
     const LOBES: f32 = 4.0;
     const AMPLITUDE: f32 = 0.068;
 

@@ -7,8 +7,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     App, Entity, EntityId, Focusable as _, Global, IntoElement, ParentElement, Pixels, RenderOnce,
-    SharedString, StyleRefinement, Styled, TextRun, Window, black, div,
-    prelude::FluentBuilder as _, px, rems, rgb,
+    SharedString, StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px, rems, rgb,
 };
 use std::collections::HashMap;
 
@@ -108,11 +107,12 @@ fn code_editor_gutter_width(
     folding: bool,
     window: &mut Window,
 ) -> Pixels {
-    // Mirrors gpui-base's `layout_line_numbers`: three digits are reserved for
-    // small documents, growing up to seven, followed by a 6px margin. A foldable
-    // editor adds the fold icon hitbox.
+    // Mirrors gpui-base/gpui-component's `measure_line_numbers`: three digits are
+    // reserved for small documents, growing up to nine, measured from the widest
+    // decimal digit followed by a 6px margin. A foldable editor adds the fold icon
+    // hitbox.
     const MIN_LINE_NUMBER_DIGITS: usize = 3;
-    const MAX_LINE_NUMBER_DIGITS: usize = 7;
+    const MAX_LINE_NUMBER_DIGITS: usize = 9;
     const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(6.0);
     const FOLD_ICON_HITBOX_WIDTH: Pixels = px(18.0);
 
@@ -120,21 +120,14 @@ fn code_editor_gutter_width(
         .clamp(MIN_LINE_NUMBER_DIGITS, MAX_LINE_NUMBER_DIGITS);
     let mut font = window.text_style().font();
     font.family = font_family.clone();
-    let shaped_line = window.text_system().shape_line(
-        SharedString::from("+".repeat(digits)),
-        font_size,
-        &[TextRun {
-            len: digits,
-            font,
-            color: black(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }],
-        None,
-    );
+    let font_id = window.text_system().resolve_font(&font);
+    let digits_width = "0123456789"
+        .chars()
+        .map(|digit| window.text_system().layout_width(font_id, font_size, digit))
+        .fold(px(0.0), Pixels::max)
+        * digits;
 
-    shaped_line.width
+    digits_width
         + LINE_NUMBER_RIGHT_MARGIN
         + if folding {
             FOLD_ICON_HITBOX_WIDTH

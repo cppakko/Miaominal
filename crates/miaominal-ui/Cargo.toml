@@ -14,6 +14,7 @@ gpui-kit = { workspace = true, features = [
     "assets",
     "component",
     "syntect",
+    "x11",
 ] }
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 log.workspace = true

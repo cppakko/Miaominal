@@ -108,6 +108,7 @@ pub fn sync_component_theme(cx: &mut App) {
     colors.list_hover = hsla(material.roles.surface_container);
     colors.list_active = hsla(material.roles.primary_container);
     colors.list_active_border = hsla(material.roles.primary);
+    colors.list_highlight_foreground = hsla(material.roles.primary);
     colors.table = hsla(material.roles.surface);
     colors.table_even = hsla(material.roles.surface_container_low);
     colors.table_head = hsla(material.roles.surface_container_high);
