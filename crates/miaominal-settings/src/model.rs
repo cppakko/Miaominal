@@ -11,7 +11,10 @@ pub use crate::data::{
     CURRENT_ONBOARDING_VERSION, FONT_SIZE_MAX, FONT_SIZE_MIN, KeyBinding, LINE_HEIGHT_MAX,
     LINE_HEIGHT_MIN, LastTabCloseBehavior, LocalVaultAutoLockDuration, MonitorHistoryDuration,
     OpenSshIntegrationMode, PLATFORM_DEFAULT_FONT, RECENT_CONNECTIONS_COUNT_MAX,
-    RECENT_CONNECTIONS_COUNT_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalColorScheme,
+    RECENT_CONNECTIONS_COUNT_MIN, SSH_CONNECT_TIMEOUT_SECS_DEFAULT, SSH_CONNECT_TIMEOUT_SECS_MAX,
+    SSH_CONNECT_TIMEOUT_SECS_MIN, SSH_KEEPALIVE_INTERVAL_SECS_DEFAULT,
+    SSH_KEEPALIVE_INTERVAL_SECS_MAX, SSH_KEEPALIVE_MAX_DEFAULT, SSH_KEEPALIVE_MAX_MAX,
+    SSH_KEEPALIVE_MAX_MIN, STEP, SshBridgeConfig, SyncedSettings, TerminalColorScheme,
     TerminalCursorStyle, TerminalKeyBindings, TerminalRightClickBehavior, ThemeId,
     WEB_SEARCH_MAX_RESULTS_MAX, WEB_SEARCH_MAX_RESULTS_MIN, WebSearchConfig, WebSearchProviderKind,
     WindowCloseBehavior, ai_provider_kind_label, default_font_fallbacks, default_font_family,
@@ -189,6 +192,9 @@ pub fn changed(a: &AppSettings, b: &AppSettings) -> bool {
         || a.web_search != b.web_search
         || a.open_ssh_integration_mode != b.open_ssh_integration_mode
         || a.ssh_bridge != b.ssh_bridge
+        || a.ssh_keepalive_interval_secs != b.ssh_keepalive_interval_secs
+        || a.ssh_keepalive_max != b.ssh_keepalive_max
+        || a.ssh_connect_timeout_secs != b.ssh_connect_timeout_secs
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ pub enum PortForwardKind {
     #[default]
     Local,
     Remote,
+    Dynamic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

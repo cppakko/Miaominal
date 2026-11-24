@@ -335,21 +335,40 @@ pub struct KeyBinding {
     pub shift: bool,
     #[serde(default)]
     pub alt: bool,
+    #[serde(default)]
+    pub platform: bool,
     pub key: String,
 }
 
 impl KeyBinding {
     pub fn new(ctrl: bool, shift: bool, alt: bool, key: impl Into<String>) -> Self {
+        Self::with_platform(ctrl, shift, alt, false, key)
+    }
+
+    pub fn with_platform(
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+        platform: bool,
+        key: impl Into<String>,
+    ) -> Self {
         Self {
             ctrl,
             shift,
             alt,
+            platform,
             key: key.into(),
         }
     }
 
     pub fn display(&self) -> String {
         let mut result = String::new();
+        if self.platform {
+            #[cfg(target_os = "macos")]
+            result.push_str("Cmd+");
+            #[cfg(not(target_os = "macos"))]
+            result.push_str("Super+");
+        }
         if self.ctrl {
             result.push_str("Ctrl+");
         }
@@ -741,6 +760,27 @@ pub enum OpenSshIntegrationMode {
     Bridge,
 }
 
+pub const SSH_KEEPALIVE_INTERVAL_SECS_DEFAULT: u64 = 30;
+pub const SSH_KEEPALIVE_INTERVAL_SECS_MAX: u64 = 600;
+pub const SSH_KEEPALIVE_MAX_DEFAULT: u32 = 3;
+pub const SSH_KEEPALIVE_MAX_MIN: u32 = 1;
+pub const SSH_KEEPALIVE_MAX_MAX: u32 = 20;
+pub const SSH_CONNECT_TIMEOUT_SECS_DEFAULT: u64 = 15;
+pub const SSH_CONNECT_TIMEOUT_SECS_MIN: u64 = 5;
+pub const SSH_CONNECT_TIMEOUT_SECS_MAX: u64 = 120;
+
+fn default_ssh_keepalive_interval_secs() -> u64 {
+    SSH_KEEPALIVE_INTERVAL_SECS_DEFAULT
+}
+
+fn default_ssh_keepalive_max() -> u32 {
+    SSH_KEEPALIVE_MAX_DEFAULT
+}
+
+fn default_ssh_connect_timeout_secs() -> u64 {
+    SSH_CONNECT_TIMEOUT_SECS_DEFAULT
+}
+
 fn default_ssh_bridge_max_connections() -> u16 {
     16
 }
@@ -856,6 +896,12 @@ pub struct AppSettings {
     pub open_ssh_integration_mode: OpenSshIntegrationMode,
     #[serde(default)]
     pub ssh_bridge: SshBridgeConfig,
+    #[serde(default = "default_ssh_keepalive_interval_secs")]
+    pub ssh_keepalive_interval_secs: u64,
+    #[serde(default = "default_ssh_keepalive_max")]
+    pub ssh_keepalive_max: u32,
+    #[serde(default = "default_ssh_connect_timeout_secs")]
+    pub ssh_connect_timeout_secs: u64,
     /// Deserialize-only compatibility field for settings written before
     /// `open_ssh_integration_mode` replaced the legacy boolean. SettingsStore consumes it during
     /// migration and it must never become persisted or runtime state again.
@@ -897,6 +943,12 @@ pub struct SyncedSettings {
     pub ai_providers: Vec<AiProviderConfig>,
     #[serde(default)]
     pub web_search: WebSearchConfig,
+    #[serde(default = "default_ssh_keepalive_interval_secs")]
+    pub ssh_keepalive_interval_secs: u64,
+    #[serde(default = "default_ssh_keepalive_max")]
+    pub ssh_keepalive_max: u32,
+    #[serde(default = "default_ssh_connect_timeout_secs")]
+    pub ssh_connect_timeout_secs: u64,
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -1031,6 +1083,9 @@ impl Default for AppSettings {
             web_search: WebSearchConfig::default(),
             open_ssh_integration_mode: OpenSshIntegrationMode::Disabled,
             ssh_bridge: SshBridgeConfig::default(),
+            ssh_keepalive_interval_secs: default_ssh_keepalive_interval_secs(),
+            ssh_keepalive_max: default_ssh_keepalive_max(),
+            ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
             rdp_client: crate::RdpClientSettings::default(),
             managed_open_ssh_integration_enabled: false,
         }
@@ -1062,6 +1117,15 @@ impl AppSettings {
         sanitize_ai_providers(&mut self.ai_providers);
         self.web_search.sanitize();
         self.ssh_bridge.sanitize();
+        self.ssh_keepalive_interval_secs = self
+            .ssh_keepalive_interval_secs
+            .min(SSH_KEEPALIVE_INTERVAL_SECS_MAX);
+        self.ssh_keepalive_max = self
+            .ssh_keepalive_max
+            .clamp(SSH_KEEPALIVE_MAX_MIN, SSH_KEEPALIVE_MAX_MAX);
+        self.ssh_connect_timeout_secs = self
+            .ssh_connect_timeout_secs
+            .clamp(SSH_CONNECT_TIMEOUT_SECS_MIN, SSH_CONNECT_TIMEOUT_SECS_MAX);
         self.managed_open_ssh_integration_enabled = false;
     }
 
@@ -1118,6 +1182,15 @@ impl AppSettings {
         self.ai_providers = ai_providers;
         self.web_search = synced.web_search.clone();
         self.web_search.sanitize();
+        self.ssh_keepalive_interval_secs = synced
+            .ssh_keepalive_interval_secs
+            .min(SSH_KEEPALIVE_INTERVAL_SECS_MAX);
+        self.ssh_keepalive_max = synced
+            .ssh_keepalive_max
+            .clamp(SSH_KEEPALIVE_MAX_MIN, SSH_KEEPALIVE_MAX_MAX);
+        self.ssh_connect_timeout_secs = synced
+            .ssh_connect_timeout_secs
+            .clamp(SSH_CONNECT_TIMEOUT_SECS_MIN, SSH_CONNECT_TIMEOUT_SECS_MAX);
     }
 }
 
@@ -1153,6 +1226,9 @@ impl From<&AppSettings> for SyncedSettings {
             local_vault_auto_lock_duration: settings.local_vault_auto_lock_duration,
             ai_providers: settings.ai_providers.clone(),
             web_search: settings.web_search.clone(),
+            ssh_keepalive_interval_secs: settings.ssh_keepalive_interval_secs,
+            ssh_keepalive_max: settings.ssh_keepalive_max,
+            ssh_connect_timeout_secs: settings.ssh_connect_timeout_secs,
         }
     }
 }

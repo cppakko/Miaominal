@@ -55,6 +55,7 @@ pub use profile_connector::{
 };
 #[allow(unused_imports)]
 pub use session::SessionConnection;
+pub use session::connection::set_network_timeouts as set_ssh_network_timeouts;
 pub use session::{
     AuthenticationRequest, HostKeyRequest, SessionCancellation, SessionChannels, SessionCommand,
     SessionCommandSender, SessionEvent, SessionEventReceiver, SessionHop, SessionPhase,

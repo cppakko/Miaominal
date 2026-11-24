@@ -52,6 +52,16 @@ const GROUPS: &[SearchGroup] = &[
     },
     SearchGroup {
         page: SettingsPageId::Connections,
+        group: SettingsGroupId::SshNetwork,
+        title: "settings.connections.ssh_network_group.title",
+        items: &[
+            "settings.connections.ssh_keepalive_interval.label",
+            "settings.connections.ssh_keepalive_max.label",
+            "settings.connections.ssh_connect_timeout.label",
+        ],
+    },
+    SearchGroup {
+        page: SettingsPageId::Connections,
         group: SettingsGroupId::Monitoring,
         title: "settings.connections.monitor_group.title",
         items: &[

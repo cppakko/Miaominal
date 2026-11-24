@@ -400,7 +400,7 @@ impl KeyBinding {
         self.ctrl == keystroke.modifiers.control
             && self.shift == keystroke.modifiers.shift
             && self.alt == keystroke.modifiers.alt
-            && !keystroke.modifiers.platform
+            && self.platform == keystroke.modifiers.platform
             && keystroke.key.eq_ignore_ascii_case(&self.key)
     }
 }

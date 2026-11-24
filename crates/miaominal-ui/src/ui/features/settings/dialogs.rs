@@ -206,11 +206,68 @@ impl SettingsController {
                 }),
             );
 
+        let roles = miaominal_settings::current_theme().material.roles;
+        let settings = self.settings();
+        let sync_provider_label = match self.sync_engine().config_store.config.provider {
+            miaominal_sync::SyncProvider::None => i18n::string("settings.sync.providers.none"),
+            miaominal_sync::SyncProvider::GithubGist => {
+                i18n::string("settings.sync.providers.gist")
+            }
+            miaominal_sync::SyncProvider::WebDav => i18n::string("settings.sync.providers.webdav"),
+        };
+        let last_sync_at = self.sync_engine().config_store.config.last_sync_at;
+        let last_synced_label = if last_sync_at > 0 {
+            i18n::string_args(
+                "settings.sync.dialogs.pull_confirm.last_synced_timestamp",
+                &[("timestamp", &last_sync_at.to_string())],
+            )
+        } else {
+            i18n::string("settings.sync.status.never")
+        };
+        let summary_body = v_flex()
+            .w_full()
+            .gap_2()
+            .p_3()
+            .rounded(px(12.0))
+            .bg(rgb(roles.surface_container_low))
+            .text_size(miaominal_settings::FontSize::Body.scaled())
+            .text_color(rgb(roles.on_surface))
+            .child(
+                div()
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .child(i18n::string(
+                        "settings.sync.dialogs.pull_confirm.summary_title",
+                    )),
+            )
+            .child(
+                div()
+                    .text_color(rgb(roles.on_surface_variant))
+                    .child(i18n::string_args(
+                        "settings.sync.dialogs.pull_confirm.local_summary",
+                        &[
+                            ("provider", sync_provider_label.as_str()),
+                            ("last_synced", last_synced_label.as_str()),
+                            ("proxies", &self.proxies.len().to_string()),
+                            ("ai_providers", &settings.ai_providers.len().to_string()),
+                        ],
+                    )),
+            )
+            .when(prompt.reason != SyncPullConfirmReason::Manual, |this| {
+                this.child(
+                    div()
+                        .text_color(rgb(roles.on_surface_variant))
+                        .child(i18n::string(
+                            "settings.sync.dialogs.pull_confirm.comparison_hint",
+                        )),
+                )
+            })
+            .into_any_element();
+
         render_basic_dialog(
             "sync-pull-confirm",
             i18n::string(title_key),
             Some(i18n::string(message_key)),
-            None,
+            Some(summary_body),
             actions.into_any_element(),
             exit_progress,
         )
@@ -877,32 +934,88 @@ impl SettingsController {
                 TextInputSurface::Low,
                 false,
             ))
+            .when_some(
+                self.ai_provider_test_status.clone(),
+                |this, (ok, message)| {
+                    let (bg, fg) = if ok {
+                        (roles.secondary_container, roles.on_secondary_container)
+                    } else {
+                        (roles.error_container, roles.on_error_container)
+                    };
+                    this.child(
+                        div()
+                            .id("ai-provider-test-status")
+                            .w_full()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(12.0))
+                            .bg(rgb(bg))
+                            .text_color(rgb(fg))
+                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .child(message),
+                    )
+                },
+            )
             .into_any_element();
 
+        let test_in_progress = self.ai_provider_test_in_progress;
+        let controller_test = settings_controller.clone();
         let actions = h_flex()
             .w_full()
             .justify_between()
             .gap_3()
-            .child(if let Some(provider_id) = editing_provider_id {
-                let controller_delete = settings_controller.clone();
-                Button::new("ai-provider-popup-delete")
-                    .ghost()
-                    .border_0()
-                    .rounded(px(20.0))
-                    .large()
-                    .disabled(operation_in_progress)
-                    .text_color(rgb(roles.error))
-                    .label(i18n::string("settings.ai_providers.actions.delete"))
-                    .on_click(move |_, window, cx| {
-                        let provider_id = provider_id.clone();
-                        controller_delete.update(cx, |controller, cx| {
-                            controller.delete_ai_provider(provider_id, window, cx);
-                        });
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .when_some(editing_provider_id, |this, provider_id| {
+                        let controller_delete = settings_controller.clone();
+                        this.child(
+                            Button::new("ai-provider-popup-delete")
+                                .ghost()
+                                .border_0()
+                                .rounded(px(20.0))
+                                .large()
+                                .disabled(operation_in_progress || test_in_progress)
+                                .text_color(rgb(roles.error))
+                                .label(i18n::string("settings.ai_providers.actions.delete"))
+                                .on_click(move |_, window, cx| {
+                                    let provider_id = provider_id.clone();
+                                    controller_delete.update(cx, |controller, cx| {
+                                        controller.delete_ai_provider(provider_id, window, cx);
+                                    });
+                                }),
+                        )
                     })
-                    .into_any_element()
-            } else {
-                div().into_any_element()
-            })
+                    .child(if test_in_progress {
+                        div()
+                            .id("ai-provider-popup-test-spinner")
+                            .min_w(px(96.0))
+                            .min_h(px(32.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::ui::components::md3_spinner(16.0))
+                            .into_any_element()
+                    } else {
+                        Button::new("ai-provider-popup-test")
+                            .ghost()
+                            .border_0()
+                            .rounded(px(20.0))
+                            .large()
+                            .disabled(operation_in_progress)
+                            .text_color(rgb(roles.on_surface))
+                            .label(i18n::string(
+                                "settings.ai_providers.actions.test_connection",
+                            ))
+                            .on_click(move |_, _, cx| {
+                                controller_test.update(cx, |controller, cx| {
+                                    controller.test_ai_provider_connection(cx);
+                                });
+                            })
+                            .into_any_element()
+                    }),
+            )
             .child(
                 h_flex()
                     .gap_3()

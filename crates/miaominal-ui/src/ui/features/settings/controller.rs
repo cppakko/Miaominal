@@ -707,6 +707,9 @@ pub(in crate::ui) struct SettingsController {
     proxy_config_popup: Option<PendingProxyConfigPopupState>,
     local_vault_passphrase_popup: Option<LocalVaultPassphrasePopupMode>,
     ai_provider_save_in_progress: bool,
+    pub(super) ai_provider_test_in_progress: bool,
+    pub(super) ai_provider_test_status: Option<(bool, String)>,
+    ai_provider_test_task: Option<gpui_kit::Task<()>>,
     web_search_save_in_progress: bool,
     ai_provider_api_key_load_in_progress: Option<String>,
     ai_provider_api_key_load_tasks: std::collections::HashMap<u64, gpui_kit::Task<()>>,
@@ -1940,6 +1943,9 @@ impl SettingsController {
             proxy_config_popup: None,
             local_vault_passphrase_popup: None,
             ai_provider_save_in_progress: false,
+            ai_provider_test_in_progress: false,
+            ai_provider_test_status: None,
+            ai_provider_test_task: None,
             web_search_save_in_progress: false,
             ai_provider_api_key_load_in_progress: None,
             ai_provider_api_key_load_tasks: std::collections::HashMap::new(),
@@ -1972,6 +1978,7 @@ impl SettingsController {
             ],
         };
         controller.sync_ssh_bridge_security_level_select(window, cx);
+        controller.apply_ssh_network_timeouts();
         controller.detect_rdp(cx);
         controller
     }
@@ -3151,6 +3158,62 @@ impl SettingsController {
             .settings_store
             .update(|settings| settings.terminal_cursor_style = style)
         {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn apply_ssh_network_timeouts(&self) {
+        let settings = self.settings();
+        miaominal_ssh::set_ssh_network_timeouts(
+            settings.ssh_keepalive_interval_secs,
+            settings.ssh_keepalive_max,
+            settings.ssh_connect_timeout_secs,
+        );
+    }
+
+    pub(in crate::ui) fn set_ssh_keepalive_interval_secs(
+        &mut self,
+        secs: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let clamped = secs.min(miaominal_settings::SSH_KEEPALIVE_INTERVAL_SECS_MAX);
+        if self
+            .settings_store
+            .update(|settings| settings.ssh_keepalive_interval_secs = clamped)
+        {
+            self.apply_ssh_network_timeouts();
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui) fn set_ssh_keepalive_max(&mut self, max: u32, cx: &mut Context<Self>) {
+        let clamped = max.clamp(
+            miaominal_settings::SSH_KEEPALIVE_MAX_MIN,
+            miaominal_settings::SSH_KEEPALIVE_MAX_MAX,
+        );
+        if self
+            .settings_store
+            .update(|settings| settings.ssh_keepalive_max = clamped)
+        {
+            self.apply_ssh_network_timeouts();
+            cx.notify();
+        }
+    }
+
+    pub(in crate::ui) fn set_ssh_connect_timeout_secs(
+        &mut self,
+        secs: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let clamped = secs.clamp(
+            miaominal_settings::SSH_CONNECT_TIMEOUT_SECS_MIN,
+            miaominal_settings::SSH_CONNECT_TIMEOUT_SECS_MAX,
+        );
+        if self
+            .settings_store
+            .update(|settings| settings.ssh_connect_timeout_secs = clamped)
+        {
+            self.apply_ssh_network_timeouts();
             cx.notify();
         }
     }

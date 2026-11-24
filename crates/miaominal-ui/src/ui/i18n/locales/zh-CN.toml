@@ -114,6 +114,26 @@ description = "控制 Hosts 页面顶部显示多少最近连接过的主机。"
 label = "显示数量"
 description = "设为 0 可隐藏该分区。最大值为 {max}。"
 
+[settings.connections.ssh_network_group]
+title = "SSH 网络与心跳保活"
+description = "配置 SSH Keepalive 探测与 TCP 连接超时时间。"
+
+[settings.connections.ssh_keepalive_interval]
+label = "Keepalive 间隔"
+description = "空闲连接上发送 SSH 保活包的频率。"
+
+[settings.connections.ssh_keepalive_max]
+label = "最大连续失败次数"
+description = "连续多少次 Keepalive 未响应后断开连接。"
+
+[settings.connections.ssh_connect_timeout]
+label = "连接超时"
+description = "等待直接 TCP 连接建立的最长时间。"
+
+[settings.connections]
+ssh_keepalive_disabled = "已禁用"
+seconds_option = "{seconds} 秒"
+
 [settings.connections.monitor_group]
 title = "会话监控"
 description = "控制终端会话在 SSH 连接就绪后，是否立即采集远端系统信息与 CPU、内存、磁盘、网络和负载指标。"
@@ -1580,6 +1600,10 @@ no_package_matches_title = "该分组下暂无片段"
 no_package_matches = "所选分组中没有匹配的脚本片段。"
 clear_package_filter = "清除分组筛选"
 
+[snippets.variables]
+title = "填写变量：{name}"
+run = "运行片段"
+
 [snippets.editor]
 edit_title = "编辑脚本片段"
 create_title = "创建脚本片段"
@@ -1760,6 +1784,7 @@ ssh_host_profile = "SSH 主机配置"
 
 [forwarding.editor]
 listen_locally = "本地监听"
+listen_socks5_locally = "本地监听（SOCKS5 代理）"
 destination_behind_ssh_host = "SSH 主机后的目标地址"
 forward_connections_copy = "通过所选主机配置把这些连接转发到这个远端地址。"
 destination_on_this_machine = "本机上的目标地址"
@@ -1770,6 +1795,7 @@ no_saved_host_profiles = "没有已保存的主机配置"
 select_host_profile = "选择主机配置"
 local = "本地"
 remote = "远端"
+dynamic = "动态（SOCKS5）"
 rule_configuration = "规则配置"
 profile_switching_disabled = "编辑现有规则时无法切换主机配置。"
 edit_tunnel_rule = "编辑隧道规则"
@@ -2113,6 +2139,10 @@ missing_baseline_title = "无法判断哪一边是最新配置"
 missing_baseline_message = "这台设备没有上次同步记录，因此无法自动选择。请选择保留这台设备的配置，还是保留远端配置。"
 force_push = "保留这台设备的配置"
 confirm = "保留远端配置"
+summary_title = "本地配置摘要"
+last_synced_timestamp = "时间戳 {timestamp}"
+local_summary = "同步后端：{provider} · 上次同步：{last_synced} · 代理：{proxies} · AI 提供商：{ai_providers}"
+comparison_hint = "保留本机配置会用当前设备覆盖远端；保留远端配置会用远端替换本机已同步的配置。"
 
 [settings.sync.dialogs.unsafe_write_consent]
 title = "仍要开启自动同步？"
@@ -2256,6 +2286,11 @@ label = "上下文窗口"
 [settings.ai_providers.actions]
 save = "保存提供商"
 delete = "删除"
+test_connection = "测试连接"
+
+[settings.ai_providers.test_connection]
+succeeded = "连接成功（{ms} ms）。"
+failed = "连接失败：{error}"
 
 [settings.ai_providers.kinds]
 anthropic = "Anthropic"

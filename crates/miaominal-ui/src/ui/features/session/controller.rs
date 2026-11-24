@@ -305,6 +305,7 @@ fn localized_port_forward_kind_label(kind: PortForwardKind) -> String {
     match kind {
         PortForwardKind::Local => i18n::string("forwarding.editor.local"),
         PortForwardKind::Remote => i18n::string("forwarding.editor.remote"),
+        PortForwardKind::Dynamic => i18n::string("forwarding.editor.dynamic"),
     }
 }
 

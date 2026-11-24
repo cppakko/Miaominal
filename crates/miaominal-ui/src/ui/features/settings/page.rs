@@ -39,6 +39,7 @@ pub(super) enum SettingsGroupId {
     Typography,
     Theme,
     RecentConnections,
+    SshNetwork,
     Monitoring,
     Tabs,
     Proxies,
@@ -490,6 +491,118 @@ fn render_terminal_cursor_style_menu(
         .into_any_element()
 }
 
+fn render_ssh_keepalive_interval_menu(
+    entity: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+    let current = entity.read(cx).settings().ssh_keepalive_interval_secs;
+    let label_for = |secs: u64| {
+        if secs == 0 {
+            i18n::string("settings.connections.ssh_keepalive_disabled")
+        } else {
+            i18n::string_args(
+                "settings.connections.seconds_option",
+                &[("seconds", &secs.to_string())],
+            )
+        }
+    };
+    let menu_entity = entity.clone();
+    Button::new("settings-ssh-keepalive-interval")
+        .outline()
+        .with_size(size)
+        .dropdown_caret(true)
+        .label(label_for(current))
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(140.0);
+            for secs in [0u64, 15, 30, 60, 120, 300] {
+                let entity = menu_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label_for(secs))
+                        .checked(current == secs)
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.set_ssh_keepalive_interval_secs(secs, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
+fn render_ssh_keepalive_max_menu(
+    entity: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+    let current = entity.read(cx).settings().ssh_keepalive_max;
+    let menu_entity = entity.clone();
+    Button::new("settings-ssh-keepalive-max")
+        .outline()
+        .with_size(size)
+        .dropdown_caret(true)
+        .label(current.to_string())
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(120.0);
+            for count in [1u32, 3, 5, 10] {
+                let entity = menu_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(count.to_string())
+                        .checked(current == count)
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.set_ssh_keepalive_max(count, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
+fn render_ssh_connect_timeout_menu(
+    entity: Entity<SettingsController>,
+    size: Size,
+    cx: &App,
+) -> gpui_kit::AnyElement {
+    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+    let current = entity.read(cx).settings().ssh_connect_timeout_secs;
+    let label_for = |secs: u64| {
+        i18n::string_args(
+            "settings.connections.seconds_option",
+            &[("seconds", &secs.to_string())],
+        )
+    };
+    let menu_entity = entity.clone();
+    Button::new("settings-ssh-connect-timeout")
+        .outline()
+        .with_size(size)
+        .dropdown_caret(true)
+        .label(label_for(current))
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu.min_w(140.0);
+            for secs in [5u64, 10, 15, 30, 60] {
+                let entity = menu_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label_for(secs))
+                        .checked(current == secs)
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.set_ssh_connect_timeout_secs(secs, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .into_any_element()
+}
+
 fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
     let (group_ids, groups) = named_setting_groups![
         SettingsGroupId::RecentConnections => SettingGroup::new()
@@ -523,6 +636,49 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
                         "max",
                         &miaominal_settings::RECENT_CONNECTIONS_COUNT_MAX.to_string(),
                     )],
+                )),
+            ]),
+        SettingsGroupId::SshNetwork => SettingGroup::new()
+            .title(i18n::string("settings.connections.ssh_network_group.title"))
+            .description(i18n::string(
+                "settings.connections.ssh_network_group.description",
+            ))
+            .items(vec![
+                SettingItem::new(
+                    i18n::string("settings.connections.ssh_keepalive_interval.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |options, _, cx| {
+                            render_ssh_keepalive_interval_menu(entity.clone(), options.size(), cx)
+                        }
+                    }),
+                )
+                .description(i18n::string(
+                    "settings.connections.ssh_keepalive_interval.description",
+                )),
+                SettingItem::new(
+                    i18n::string("settings.connections.ssh_keepalive_max.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |options, _, cx| {
+                            render_ssh_keepalive_max_menu(entity.clone(), options.size(), cx)
+                        }
+                    }),
+                )
+                .description(i18n::string(
+                    "settings.connections.ssh_keepalive_max.description",
+                )),
+                SettingItem::new(
+                    i18n::string("settings.connections.ssh_connect_timeout.label"),
+                    SettingField::render({
+                        let entity = settings.clone();
+                        move |options, _, cx| {
+                            render_ssh_connect_timeout_menu(entity.clone(), options.size(), cx)
+                        }
+                    }),
+                )
+                .description(i18n::string(
+                    "settings.connections.ssh_connect_timeout.description",
                 )),
             ]),
         SettingsGroupId::Monitoring => SettingGroup::new()
@@ -3319,13 +3475,15 @@ impl SettingFieldElement for KeyBindingCaptureField {
                                         key,
                                         "control" | "alt" | "shift" | "meta" | "super"
                                     );
-                                    let has_required_modifier =
-                                        ks.modifiers.control || ks.modifiers.alt;
+                                    let has_required_modifier = ks.modifiers.control
+                                        || ks.modifiers.alt
+                                        || ks.modifiers.platform;
                                     let binding = if has_required_modifier && !is_modifier_only {
-                                        Some(KeyBinding::new(
+                                        Some(KeyBinding::with_platform(
                                             ks.modifiers.control,
                                             ks.modifiers.shift,
                                             ks.modifiers.alt,
+                                            ks.modifiers.platform,
                                             ks.key.to_lowercase(),
                                         ))
                                     } else {
@@ -3424,6 +3582,12 @@ impl SettingFieldElement for KeyBindingCaptureField {
 
 fn format_keystroke_preview(ks: &gpui_kit::Keystroke) -> String {
     let mut parts = String::new();
+    if ks.modifiers.platform {
+        #[cfg(target_os = "macos")]
+        parts.push_str("Cmd+");
+        #[cfg(not(target_os = "macos"))]
+        parts.push_str("Super+");
+    }
     if ks.modifiers.control {
         parts.push_str(&i18n::string("settings.key_bindings.capture.modifier.ctrl"));
     }

@@ -2,14 +2,18 @@ use crate::ui::assets::AppIcon;
 use crate::ui::components::empty_state::{EmptyState, EmptyStateSize, empty_state_tonal_action};
 use crate::ui::components::group_accent::group_accent_palette;
 use crate::ui::components::shell_tokens::{ShellMetrics, space};
-use crate::ui::components::{SearchInputStyle, card_surface, icon_button, search_filter_input};
+use crate::ui::components::{
+    SearchInputStyle, TextInputSurface, card_surface, icon_button, search_filter_input,
+    surface_text_input_stack,
+};
 use crate::ui::contracts::TabId;
 use crate::ui::contracts::session::SessionTerminalPort;
 use crate::ui::features::snippets::SnippetsController;
 use crate::ui::i18n;
 use crate::ui::utils::truncate_with_ellipsis;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, MouseButton, SharedString, Window, div, px, rgb};
 
@@ -115,6 +119,7 @@ impl SnippetsController {
         let snippets_filter_input = self.workspace_filter_input.clone();
         let selected_package_filter = self.workspace_package_filter.borrow().clone();
         let empty_for_package = controller.clone();
+        let owner = controller.clone();
         let on_package_toggle = move |package, cx: &mut App| {
             controller.update(cx, |owner, cx| owner.toggle_workspace_package(package, cx));
         };
@@ -212,6 +217,8 @@ impl SnippetsController {
             let mut list = v_flex().gap_2();
             for snippet in visible_snippets {
                 let terminal_port = terminal_port.clone();
+                let run_owner = owner.clone();
+                let description = snippet.description.clone();
                 let script = snippet.script.clone();
                 let preview_line = snippet
                     .script
@@ -267,14 +274,21 @@ impl SnippetsController {
                                         Some(roles.primary),
                                         Some(roles.on_primary),
                                         None,
-                                        move |_window, cx| {
+                                        move |window, cx| {
+                                            let description = description.clone();
                                             let script = script.clone();
+                                            let terminal_port = terminal_port.clone();
                                             if let Some(tab_id) = terminal_tab_id {
-                                                terminal_port.paste_text(
-                                                    tab_id,
-                                                    script.clone(),
-                                                    cx,
-                                                );
+                                                run_owner.update(cx, |controller, cx| {
+                                                    controller.trigger_workspace_snippet(
+                                                        description,
+                                                        script,
+                                                        tab_id,
+                                                        terminal_port,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
                                             }
                                         },
                                     ))),
@@ -329,12 +343,73 @@ impl SnippetsController {
                 .into_any_element()
         };
 
+        let pending_variable_card = self.pending_variable_run.borrow().clone().map(|pending| {
+            let cancel_owner = owner.clone();
+            let confirm_owner = owner.clone();
+            card_surface(roles.surface_container_high, 14.0)
+                .id("session-snippet-variables-card")
+                .w_full()
+                .p_3()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_size(miaominal_settings::FontSize::Subheading.scaled())
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                .text_color(rgb(roles.on_surface))
+                                .child(i18n::string_args(
+                                    "snippets.variables.title",
+                                    &[("name", pending.description.as_str())],
+                                )),
+                        )
+                        .children(pending.fields.iter().map(|(variable, input)| {
+                            surface_text_input_stack(
+                                variable.name.clone(),
+                                input.clone(),
+                                TextInputSurface::Low,
+                                false,
+                            )
+                        }))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    Button::new("snippet-variables-cancel")
+                                        .ghost()
+                                        .small()
+                                        .label(i18n::string("snippets.editor.cancel"))
+                                        .on_click(move |_, _, cx| {
+                                            cancel_owner.update(cx, |controller, cx| {
+                                                controller.cancel_snippet_variable_run(cx);
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    Button::new("snippet-variables-run")
+                                        .primary()
+                                        .small()
+                                        .label(i18n::string("snippets.variables.run"))
+                                        .on_click(move |_, _, cx| {
+                                            confirm_owner.update(cx, |controller, cx| {
+                                                controller.confirm_snippet_variable_run(cx);
+                                            });
+                                        }),
+                                ),
+                        ),
+                )
+        });
+
         v_flex()
             .id("session-snippets-panel-content")
             .size_full()
             .gap_3()
             .overflow_hidden()
             .p_3()
+            .when_some(pending_variable_card, |this, card| this.child(card))
             .when(!snippets.is_empty(), |this| {
                 this.child(search_filter_input(
                     &snippets_filter_input,

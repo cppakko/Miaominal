@@ -548,6 +548,7 @@ impl PortForwardManager {
                     match binding.kind {
                         miaominal_core::profile::PortForwardKind::Local => "Local",
                         miaominal_core::profile::PortForwardKind::Remote => "Remote",
+                        miaominal_core::profile::PortForwardKind::Dynamic => "Dynamic (SOCKS5)",
                     },
                     binding.label,
                     binding.listen_host,

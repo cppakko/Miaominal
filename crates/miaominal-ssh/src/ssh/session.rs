@@ -225,15 +225,32 @@ pub mod connection {
     use russh::client;
     use std::collections::HashSet;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::time::Duration;
 
+    static KEEPALIVE_INTERVAL_SECS: AtomicU64 = AtomicU64::new(30);
+    static KEEPALIVE_MAX: AtomicU32 = AtomicU32::new(3);
+
+    pub fn set_network_timeouts(
+        keepalive_interval_secs: u64,
+        keepalive_max: u32,
+        connect_timeout_secs: u64,
+    ) {
+        KEEPALIVE_INTERVAL_SECS.store(keepalive_interval_secs.min(600), Ordering::Relaxed);
+        KEEPALIVE_MAX.store(keepalive_max.clamp(1, 20), Ordering::Relaxed);
+        crate::transport::set_direct_connect_timeout_secs(connect_timeout_secs);
+    }
+
     pub fn default_client_config() -> Arc<client::Config> {
+        let interval_secs = KEEPALIVE_INTERVAL_SECS.load(Ordering::Relaxed);
+        let keepalive_interval = (interval_secs > 0).then(|| Duration::from_secs(interval_secs));
+        let keepalive_max = KEEPALIVE_MAX.load(Ordering::Relaxed) as usize;
         Arc::new(client::Config {
             maximum_packet_size: super::SSH_MAXIMUM_PACKET_SIZE,
             channel_buffer_size: super::SSH_CHANNEL_BUFFER_SIZE,
             inactivity_timeout: None,
-            keepalive_interval: Some(Duration::from_secs(30)),
-            keepalive_max: 3,
+            keepalive_interval,
+            keepalive_max,
             ..Default::default()
         })
     }

@@ -16,7 +16,18 @@ use tokio_socks::tcp::Socks5Stream;
 
 const MAX_HTTP_CONNECT_RESPONSE_BYTES: usize = 16 * 1024;
 const PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_DIRECT_CONNECT_TIMEOUT_SECS: u64 = 15;
+
+static DIRECT_CONNECT_TIMEOUT_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(DEFAULT_DIRECT_CONNECT_TIMEOUT_SECS);
+
+pub(crate) fn set_direct_connect_timeout_secs(secs: u64) {
+    DIRECT_CONNECT_TIMEOUT_SECS.store(secs.clamp(5, 120), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn direct_connect_timeout() -> Duration {
+    Duration::from_secs(DIRECT_CONNECT_TIMEOUT_SECS.load(std::sync::atomic::Ordering::Relaxed))
+}
 
 /// Bound DNS and TCP establishment, without timing out user trust/auth prompts.
 pub(crate) async fn connect_direct(host: &str, port: u16) -> Result<TcpStream> {
@@ -24,7 +35,7 @@ pub(crate) async fn connect_direct(host: &str, port: u16) -> Result<TcpStream> {
         TcpStream::connect((unbracket_host(host), port)),
         host,
         port,
-        DIRECT_CONNECT_TIMEOUT,
+        direct_connect_timeout(),
     )
     .await
 }

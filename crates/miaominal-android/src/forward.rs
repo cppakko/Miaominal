@@ -486,7 +486,8 @@ impl ForwardSessionInner {
                     state.reconnect_retry_after_secs = 0;
                     if !state.phase.is_terminal() {
                         state.phase = match binding.kind {
-                            miaominal_core::profile::PortForwardKind::Local => {
+                            miaominal_core::profile::PortForwardKind::Local
+                            | miaominal_core::profile::PortForwardKind::Dynamic => {
                                 ForwardPhase::Listening
                             }
                             miaominal_core::profile::PortForwardKind::Remote => {

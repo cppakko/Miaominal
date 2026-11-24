@@ -384,6 +384,7 @@ impl ForwardingController {
         match kind {
             PortForwardKind::Local => i18n::string("forwarding.editor.local"),
             PortForwardKind::Remote => i18n::string("forwarding.editor.remote"),
+            PortForwardKind::Dynamic => i18n::string("forwarding.editor.dynamic"),
         }
     }
 
@@ -555,13 +556,14 @@ impl ForwardingController {
             ))
             .into());
         }
-        if target_host.is_empty() {
+        let is_dynamic = kind == PortForwardKind::Dynamic;
+        if !is_dynamic && target_host.is_empty() {
             return Err(ValidationFailure::required(i18n::string(
                 "errors.forwarding.validation.target_host_required",
             ))
             .into());
         }
-        if target_port_text.is_empty() {
+        if !is_dynamic && target_port_text.is_empty() {
             return Err(ValidationFailure::required(i18n::string(
                 "errors.forwarding.validation.target_port_required",
             ))
@@ -574,24 +576,42 @@ impl ForwardingController {
                 &[("port", &listen_port_text)],
             )))
         })?;
-        let target_port: u16 = target_port_text.trim().parse().map_err(|_| {
-            anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
-                "errors.forwarding.validation.invalid_target_port",
-                &[("port", &target_port_text)],
-            )))
-        })?;
+        let target_port: u16 = if is_dynamic {
+            0
+        } else {
+            target_port_text.trim().parse().map_err(|_| {
+                anyhow::anyhow!(ValidationFailure::invalid(i18n::string_args(
+                    "errors.forwarding.validation.invalid_target_port",
+                    &[("port", &target_port_text)],
+                )))
+            })?
+        };
+        let target_host = if is_dynamic {
+            String::new()
+        } else {
+            target_host
+        };
 
         let resolved_label = {
             let label = label.trim();
             if label.is_empty() {
-                format!(
-                    "{} {}:{} -> {}:{}",
-                    Self::localized_port_forward_kind_label(kind),
-                    listen_host,
-                    listen_port,
-                    target_host,
-                    target_port
-                )
+                if is_dynamic {
+                    format!(
+                        "{} {}:{}",
+                        Self::localized_port_forward_kind_label(kind),
+                        listen_host,
+                        listen_port
+                    )
+                } else {
+                    format!(
+                        "{} {}:{} -> {}:{}",
+                        Self::localized_port_forward_kind_label(kind),
+                        listen_host,
+                        listen_port,
+                        target_host,
+                        target_port
+                    )
+                }
             } else {
                 label.to_string()
             }

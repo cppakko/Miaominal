@@ -171,6 +171,7 @@ pub(super) fn route_direction_icon(kind: PortForwardKind) -> AppIcon {
     match kind {
         PortForwardKind::Local => AppIcon::Upload,
         PortForwardKind::Remote => AppIcon::Download,
+        PortForwardKind::Dynamic => AppIcon::Forward,
     }
 }
 

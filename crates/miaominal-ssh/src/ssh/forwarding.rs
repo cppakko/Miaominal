@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::copy_bidirectional;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
 use tokio::net::TcpListener;
 use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -230,7 +230,7 @@ async fn start_local_forward(
             binding_id,
             rule_id: rule.id.clone(),
             label: rule.label.clone(),
-            kind: PortForwardKind::Local,
+            kind: rule.kind,
             listen_host: rule.listen_host.clone(),
             bound_port,
         },
@@ -356,6 +356,90 @@ async fn run_dedicated_local_listener(
     result
 }
 
+async fn socks5_handshake(stream: &mut tokio::net::TcpStream) -> Result<(String, u16)> {
+    let mut greeting = [0u8; 2];
+    stream
+        .read_exact(&mut greeting)
+        .await
+        .context("failed to read SOCKS5 greeting")?;
+    if greeting[0] != 0x05 {
+        bail!("unsupported SOCKS version: {}", greeting[0]);
+    }
+    let nmethods = usize::from(greeting[1]);
+    let mut methods = vec![0u8; nmethods];
+    stream
+        .read_exact(&mut methods)
+        .await
+        .context("failed to read SOCKS5 auth methods")?;
+    if !methods.contains(&0x00) {
+        let _ = stream.write_all(&[0x05, 0xff]).await;
+        bail!("SOCKS5 client does not support no-authentication method");
+    }
+    stream
+        .write_all(&[0x05, 0x00])
+        .await
+        .context("failed to write SOCKS5 auth selection")?;
+
+    let mut header = [0u8; 4];
+    stream
+        .read_exact(&mut header)
+        .await
+        .context("failed to read SOCKS5 request header")?;
+    if header[0] != 0x05 {
+        bail!("invalid SOCKS5 request version: {}", header[0]);
+    }
+    if header[1] != 0x01 {
+        let _ = stream
+            .write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await;
+        bail!("unsupported SOCKS5 command: {}", header[1]);
+    }
+    let target_host = match header[3] {
+        0x01 => {
+            let mut addr = [0u8; 4];
+            stream
+                .read_exact(&mut addr)
+                .await
+                .context("failed to read SOCKS5 IPv4 address")?;
+            std::net::Ipv4Addr::from(addr).to_string()
+        }
+        0x03 => {
+            let mut len = [0u8; 1];
+            stream
+                .read_exact(&mut len)
+                .await
+                .context("failed to read SOCKS5 domain length")?;
+            let mut domain = vec![0u8; usize::from(len[0])];
+            stream
+                .read_exact(&mut domain)
+                .await
+                .context("failed to read SOCKS5 domain name")?;
+            String::from_utf8(domain).context("SOCKS5 domain name is not valid UTF-8")?
+        }
+        0x04 => {
+            let mut addr = [0u8; 16];
+            stream
+                .read_exact(&mut addr)
+                .await
+                .context("failed to read SOCKS5 IPv6 address")?;
+            std::net::Ipv6Addr::from(addr).to_string()
+        }
+        other => {
+            let _ = stream
+                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .await;
+            bail!("unsupported SOCKS5 address type: {other}");
+        }
+    };
+    let mut port_bytes = [0u8; 2];
+    stream
+        .read_exact(&mut port_bytes)
+        .await
+        .context("failed to read SOCKS5 target port")?;
+    let target_port = u16::from_be_bytes(port_bytes);
+    Ok((target_host, target_port))
+}
+
 async fn relay_local_connection(
     session: Arc<client::Handle<ClientHandler>>,
     rule: PortForwardRule,
@@ -364,26 +448,54 @@ async fn relay_local_connection(
     event_sender: SessionEventSender,
     notify: bool,
 ) {
+    let is_dynamic = rule.kind == PortForwardKind::Dynamic;
+    let (target_host, target_port) = if is_dynamic {
+        match socks5_handshake(&mut stream).await {
+            Ok(target) => target,
+            Err(error) => {
+                log::debug!("SOCKS5 handshake failed on {}: {error:#}", rule.label);
+                return;
+            }
+        }
+    } else {
+        (rule.target_host.clone(), rule.target_port)
+    };
+
     let message = match session
         .channel_open_direct_tcpip(
-            rule.target_host.clone(),
-            u32::from(rule.target_port),
+            target_host,
+            u32::from(target_port),
             originator.ip().to_string(),
             u32::from(originator.port()),
         )
         .await
     {
         Ok(channel) => {
+            if is_dynamic
+                && let Err(error) = stream
+                    .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                    .await
+            {
+                log::debug!("SOCKS5 success reply failed on {}: {error}", rule.label);
+                return;
+            }
             let mut forwarded = channel.into_stream();
             match copy_bidirectional(&mut forwarded, &mut stream).await {
                 Ok(_) => return,
                 Err(error) => format!("Forward {} relay failed: {}", rule.label, error),
             }
         }
-        Err(error) => format!(
-            "Forward {} could not open SSH channel: {}",
-            rule.label, error
-        ),
+        Err(error) => {
+            if is_dynamic {
+                let _ = stream
+                    .write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                    .await;
+            }
+            format!(
+                "Forward {} could not open SSH channel: {}",
+                rule.label, error
+            )
+        }
     };
     emit_port_forward_failure(
         &event_sender,
@@ -468,7 +580,9 @@ pub(super) async fn sync_port_forward_rules_with_policy(
     let mut report = PortForwardSyncReport::default();
     let desired_local: HashMap<_, _> = desired_rules
         .iter()
-        .filter(|rule| rule.enabled && rule.kind == PortForwardKind::Local)
+        .filter(|rule| {
+            rule.enabled && matches!(rule.kind, PortForwardKind::Local | PortForwardKind::Dynamic)
+        })
         .map(|rule| (rule.id.clone(), rule.clone()))
         .collect();
     let desired_remote: HashMap<_, _> = desired_rules
@@ -774,7 +888,9 @@ fn ensure_dedicated_forward_active(
     }
 
     let active = match rule.kind {
-        PortForwardKind::Local => active_local_forwards.contains_key(&rule.id),
+        PortForwardKind::Local | PortForwardKind::Dynamic => {
+            active_local_forwards.contains_key(&rule.id)
+        }
         PortForwardKind::Remote => active_remote_forwards.contains_key(&rule.id),
     };
     if active {

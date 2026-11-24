@@ -118,6 +118,26 @@ description = "Controls how many recently connected hosts appear at the top of t
 label = "Recent count"
 description = "Set to 0 to hide the section. Maximum is {max}."
 
+[settings.connections.ssh_network_group]
+title = "SSH network & keepalive"
+description = "Configure SSH keepalive probes and TCP connection timeout."
+
+[settings.connections.ssh_keepalive_interval]
+label = "Keepalive interval"
+description = "How often Miaominal sends SSH keepalive packets on idle connections."
+
+[settings.connections.ssh_keepalive_max]
+label = "Max missed keepalives"
+description = "Consecutive unanswered keepalives before disconnecting."
+
+[settings.connections.ssh_connect_timeout]
+label = "Connection timeout"
+description = "Maximum time to wait for a direct TCP connection before failing."
+
+[settings.connections]
+ssh_keepalive_disabled = "Disabled"
+seconds_option = "{seconds}s"
+
 [settings.connections.monitor_group]
 title = "Session monitoring"
 description = "Controls whether terminal sessions collect remote system details plus CPU, memory, disk, network, and load metrics as soon as SSH is ready."
@@ -594,6 +614,11 @@ label = "Context window"
 [settings.ai_providers.actions]
 save = "Save provider"
 delete = "Delete"
+test_connection = "Test connection"
+
+[settings.ai_providers.test_connection]
+succeeded = "Connection succeeded ({ms} ms)."
+failed = "Connection failed: {error}"
 
 [settings.ai_providers.kinds]
 anthropic = "Anthropic"
@@ -1720,6 +1745,10 @@ no_package_matches_title = "No snippets in this group"
 no_package_matches = "No snippets match the selected group."
 clear_package_filter = "Clear group filter"
 
+[snippets.variables]
+title = "Fill variables for {name}"
+run = "Run snippet"
+
 [snippets.editor]
 edit_title = "Edit Snippet"
 create_title = "Create Snippet"
@@ -1899,6 +1928,7 @@ ssh_host_profile = "SSH host profile"
 
 [forwarding.editor]
 listen_locally = "Listen locally"
+listen_socks5_locally = "Listen locally (SOCKS5 proxy)"
 destination_behind_ssh_host = "Destination behind the SSH host"
 forward_connections_copy = "Forward those connections through the selected host profile to this remote address."
 destination_on_this_machine = "Destination on this machine"
@@ -1909,6 +1939,7 @@ no_saved_host_profiles = "No saved host profiles"
 select_host_profile = "Select host profile"
 local = "Local"
 remote = "Remote"
+dynamic = "Dynamic (SOCKS5)"
 rule_configuration = "Rule Configuration"
 profile_switching_disabled = "Profile switching is disabled while editing an existing rule."
 edit_tunnel_rule = "Edit Tunnel Rule"
@@ -2252,6 +2283,10 @@ missing_baseline_title = "Cannot tell which configuration is newer"
 missing_baseline_message = "This device has no record of the previous sync, so Miaominal cannot choose automatically. Choose whether to keep this device's configuration or the remote configuration."
 force_push = "Keep this device's configuration"
 confirm = "Keep remote configuration"
+summary_title = "Local snapshot summary"
+last_synced_timestamp = "Unix {timestamp}"
+local_summary = "Provider: {provider} · Last synced: {last_synced} · Proxies: {proxies} · AI providers: {ai_providers}"
+comparison_hint = "Keeping this device's copy overwrites remote with your local settings; keeping remote replaces your local synced settings."
 
 [settings.sync.dialogs.unsafe_write_consent]
 title = "Turn on auto-sync anyway?"

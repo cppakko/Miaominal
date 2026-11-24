@@ -341,7 +341,7 @@ pub(crate) fn shell_type_from_dto(shell_type: ShellTypeDto) -> ShellType {
 
 pub(crate) fn forward_kind_to_dto(kind: PortForwardKind) -> ForwardKindDto {
     match kind {
-        PortForwardKind::Local => ForwardKindDto::Local,
+        PortForwardKind::Local | PortForwardKind::Dynamic => ForwardKindDto::Local,
         PortForwardKind::Remote => ForwardKindDto::Remote,
     }
 }

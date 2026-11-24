@@ -380,6 +380,116 @@ impl SettingsController {
         Ok(draft.with_editor_revision(self.ai_provider_editor_revision))
     }
 
+    pub(in crate::ui) fn test_ai_provider_connection(&mut self, cx: &mut Context<Self>) {
+        if self.ai_provider_test_in_progress || self.ai_provider_save_in_progress {
+            return;
+        }
+        let draft = match self.ai_provider_save_draft(cx) {
+            Ok(draft) => draft,
+            Err(failure) => {
+                self.ai_provider_test_status = Some((false, failure.message));
+                cx.notify();
+                return;
+            }
+        };
+        let (mut provider, mut api_key, _, _, _) = draft.into_parts();
+        if api_key.is_empty() && provider.has_api_key {
+            match self.secrets.get(&provider.id, SecretKind::AiProviderApiKey) {
+                Ok(stored) => api_key = stored.unwrap_or_default(),
+                Err(error) => {
+                    self.ai_provider_test_status = Some((
+                        false,
+                        i18n::string_args(
+                            "settings.ai_providers.test_connection.failed",
+                            &[("error", &error.to_string())],
+                        ),
+                    ));
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        provider.max_tokens = Some(1);
+        let client = match miaominal_agent::model::ModelProfile::from_provider(&provider, api_key)
+            .and_then(miaominal_agent::model::client_for)
+        {
+            Ok(client) => client,
+            Err(error) => {
+                self.ai_provider_test_status = Some((
+                    false,
+                    i18n::string_args(
+                        "settings.ai_providers.test_connection.failed",
+                        &[("error", &error.to_string())],
+                    ),
+                ));
+                cx.notify();
+                return;
+            }
+        };
+
+        self.ai_provider_test_in_progress = true;
+        self.ai_provider_test_status = None;
+        let revision = self.ai_provider_editor_revision;
+        let runtime = self.runtime.clone();
+        cx.notify();
+
+        let task = cx.spawn(async move |this, cx| {
+            let started = std::time::Instant::now();
+            let result: anyhow::Result<u128> = runtime
+                .spawn(async move {
+                    use futures::StreamExt as _;
+                    let request = miaominal_agent::model::ModelRequest {
+                        system: String::new(),
+                        messages: vec![miaominal_agent::model::WireMessage::User(vec![
+                            miaominal_agent::model::UserPart::Text("ping".to_string()),
+                        ])],
+                        tools: Vec::new(),
+                    };
+                    let mut stream = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        client.stream(request),
+                    )
+                    .await
+                    .map_err(|_| anyhow::anyhow!("connection timed out after 15s"))??;
+                    match tokio::time::timeout(std::time::Duration::from_secs(15), stream.next())
+                        .await
+                    {
+                        Ok(Some(Ok(_))) | Ok(None) => Ok(started.elapsed().as_millis()),
+                        Ok(Some(Err(err))) => Err(anyhow::anyhow!(err.to_string())),
+                        Err(_) => Err(anyhow::anyhow!("response timed out after 15s")),
+                    }
+                })
+                .await
+                .unwrap_or_else(|err| Err(anyhow::anyhow!(err.to_string())));
+
+            let _ = this.update(cx, |controller, cx| {
+                if controller.ai_provider_editor_revision != revision {
+                    return;
+                }
+                controller.ai_provider_test_in_progress = false;
+                controller.ai_provider_test_task = None;
+                controller.ai_provider_test_status = Some(match result {
+                    Ok(ms) => (
+                        true,
+                        i18n::string_args(
+                            "settings.ai_providers.test_connection.succeeded",
+                            &[("ms", &ms.to_string())],
+                        ),
+                    ),
+                    Err(error) => (
+                        false,
+                        i18n::string_args(
+                            "settings.ai_providers.test_connection.failed",
+                            &[("error", &error.to_string())],
+                        ),
+                    ),
+                });
+                cx.notify();
+            });
+        });
+        self.ai_provider_test_task = Some(task);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn validate_ai_provider_save_draft(
         existing: Option<AiProviderConfig>,
@@ -456,6 +566,7 @@ impl SettingsController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.ai_provider_test_status = None;
         if self.editing_ai_provider_id.is_some() {
             return;
         }

@@ -6,7 +6,9 @@ use crate::ui::components::notifications::{ValidationFailure, validation_notific
 use crate::ui::contracts::commands::AppCommand;
 use crate::ui::contracts::navigation::{PageEditorSidebarKind, ProfileViewMode};
 use crate::ui::contracts::overlay::{OverlayRevisionState, OverlaySnapshot};
+use crate::ui::contracts::session::SessionTerminalPort;
 use crate::ui::contracts::snippets::{SnippetCatalogPort, SnippetSaveSubmission};
+use crate::ui::contracts::workspace::TabId;
 use crate::ui::i18n;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{
@@ -29,6 +31,15 @@ use anyhow::{Result, anyhow};
 pub(in crate::ui) struct PendingSnippetDeleteState {
     pub(in crate::ui) snippet_id: String,
     pub(in crate::ui) snippet_description: String,
+}
+
+#[derive(Clone)]
+pub(super) struct PendingSnippetVariableRun {
+    pub(super) description: String,
+    pub(super) script: String,
+    pub(super) tab_id: TabId,
+    pub(super) terminal_port: SessionTerminalPort,
+    pub(super) fields: Vec<(miaominal_core::snippet::SnippetVariable, Entity<InputState>)>,
 }
 
 #[derive(Clone)]
@@ -61,6 +72,7 @@ pub(in crate::ui) struct SnippetsController {
     pending_save: RefCell<Option<SnippetSaveSubmission>>,
     editor_revision: Cell<u64>,
     pending_delete: RefCell<Option<PendingSnippetDeleteState>>,
+    pending_variable_run: RefCell<Option<PendingSnippetVariableRun>>,
     catalog_view: RefCell<SnippetsCatalogViewState>,
     overlay_revisions: RefCell<OverlayRevisionState>,
     _subscriptions: Vec<Subscription>,
@@ -157,6 +169,7 @@ impl SnippetsController {
             pending_save: RefCell::new(None),
             editor_revision: Cell::new(0),
             pending_delete: RefCell::new(None),
+            pending_variable_run: RefCell::new(None),
             catalog_view: RefCell::new(SnippetsCatalogViewState {
                 snippets_view_mode: ProfileViewMode::Grid,
                 snippets_package_filter: None,
@@ -164,6 +177,65 @@ impl SnippetsController {
             overlay_revisions: RefCell::default(),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(super) fn trigger_workspace_snippet(
+        &mut self,
+        description: String,
+        script: String,
+        tab_id: TabId,
+        terminal_port: SessionTerminalPort,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let variables = miaominal_core::snippet::extract_snippet_variables(&script);
+        if variables.is_empty() {
+            terminal_port.paste_text(tab_id, script, cx);
+            return;
+        }
+        let fields = variables
+            .into_iter()
+            .map(|variable| {
+                let placeholder = variable
+                    .default_value
+                    .clone()
+                    .unwrap_or_else(|| variable.name.clone());
+                let initial = variable.default_value.clone().unwrap_or_default();
+                let input = new_input_state(placeholder, initial, false, window, cx);
+                (variable, input)
+            })
+            .collect();
+        *self.pending_variable_run.borrow_mut() = Some(PendingSnippetVariableRun {
+            description,
+            script,
+            tab_id,
+            terminal_port,
+            fields,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn cancel_snippet_variable_run(&mut self, cx: &mut Context<Self>) {
+        *self.pending_variable_run.borrow_mut() = None;
+        cx.notify();
+    }
+
+    pub(super) fn confirm_snippet_variable_run(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_variable_run.borrow_mut().take() else {
+            return;
+        };
+        let mut values = std::collections::HashMap::new();
+        for (variable, input) in &pending.fields {
+            values.insert(
+                variable.name.clone(),
+                input.read(cx).value().trim().to_string(),
+            );
+        }
+        let rendered = miaominal_core::snippet::render_snippet_script(&pending.script, &values);
+        pending
+            .terminal_port
+            .paste_text(pending.tab_id, rendered, cx);
+        cx.notify();
     }
 
     pub(in crate::ui) fn refresh_localized_placeholders(

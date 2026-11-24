@@ -283,7 +283,9 @@ impl ForwardingController {
         let forward_kind_selected_index = match editor_state.port_forward_kind {
             PortForwardKind::Local => 0,
             PortForwardKind::Remote => 1,
+            PortForwardKind::Dynamic => 2,
         };
+        let is_dynamic = editor_state.port_forward_kind == PortForwardKind::Dynamic;
         let (
             top_title,
             top_host_input,
@@ -311,6 +313,15 @@ impl ForwardingController {
                 forms.listen_host_input.clone(),
                 forms.listen_port_input.clone(),
             ),
+            PortForwardKind::Dynamic => (
+                i18n::string("forwarding.editor.listen_socks5_locally"),
+                forms.listen_host_input.clone(),
+                forms.listen_port_input.clone(),
+                String::new(),
+                String::new(),
+                forms.target_host_input.clone(),
+                forms.target_port_input.clone(),
+            ),
         };
         let profile_select = md3_select(&forms.profile_select)
             .large()
@@ -329,17 +340,19 @@ impl ForwardingController {
             .disabled(profiles.is_empty() || is_editing_rule);
         let forward_kind_tabs = SegmentedSwitch::new("port-forward-editor-kind")
             .selected_index(forward_kind_selected_index)
-            .width(260.0)
+            .width(340.0)
             .height(34.0)
             .padding(2.0)
             .item(i18n::string("forwarding.editor.local"))
             .item(i18n::string("forwarding.editor.remote"))
+            .item(i18n::string("forwarding.editor.dynamic"))
             .on_click({
                 let controller = controller.clone();
                 move |index, _, cx| {
                     let kind = match index {
                         0 => PortForwardKind::Local,
                         1 => PortForwardKind::Remote,
+                        2 => PortForwardKind::Dynamic,
                         _ => return,
                     };
                     controller.update(cx, |controller, cx| {
@@ -456,11 +469,13 @@ impl ForwardingController {
                                     )
                                 }),
                         )
-                        .child(render_forward_endpoint_editor(
-                            bottom_title,
-                            bottom_host_input,
-                            bottom_port_input,
-                        )),
+                        .when(!is_dynamic, |this| {
+                            this.child(render_forward_endpoint_editor(
+                                bottom_title,
+                                bottom_host_input,
+                                bottom_port_input,
+                            ))
+                        }),
                 ),
         )
         .into_any_element()
