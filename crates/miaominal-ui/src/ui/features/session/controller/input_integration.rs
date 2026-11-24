@@ -3,8 +3,9 @@
 use super::{SessionController, tests::session_payload};
 use crate::ui::contracts::{PaneId, TabId, TerminalWorkspaceRequest};
 use crate::ui::features::session::input::{
-    PaneViewState, TerminalDragState, TerminalInputHost, TerminalKeyboardState,
-    TerminalMouseGesture, TerminalPanePresentation, bind_terminal_input_handlers,
+    PaneViewState, TERMINAL_CURSOR_BLINK_INTERVAL, TerminalCursorBlink, TerminalCursorBlinkTarget,
+    TerminalDragState, TerminalInputHost, TerminalKeyboardState, TerminalMouseGesture,
+    TerminalPanePresentation, bind_terminal_input_handlers,
 };
 use crate::ui::features::session::view::canvas::{
     TerminalCanvasHost, TerminalCanvasPrepaint, render_terminal_canvas_for_pane,
@@ -13,7 +14,8 @@ use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
 use gpui_kit::{
     AnyWindowHandle, Bounds, Context, Entity, InputEvent as _, IntoElement, KeyDownEvent,
     KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Render, TestAppContext, Window, WindowBounds, WindowOptions, div, point, prelude::*, px, size,
+    Render, Subscription, TestAppContext, Window, WindowBounds, WindowOptions, div, point,
+    prelude::*, px, size,
 };
 use miaominal_ssh::{SessionChannels, SessionCommand, session_channels};
 use std::time::Instant;
@@ -28,6 +30,8 @@ struct TerminalInputFixture {
     drag: TerminalDragState,
     requested: Vec<TerminalWorkspaceRequest>,
     parked_input: Vec<(TerminalKeyboardState, Option<TerminalMouseGesture>)>,
+    blink: Entity<TerminalCursorBlink>,
+    _blink_subscription: Subscription,
 }
 
 impl Render for TerminalInputFixture {
@@ -108,6 +112,31 @@ impl TerminalInputHost for TerminalInputFixture {
         self.requested.push(request);
         cx.notify();
     }
+    fn pause_terminal_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        let Some(tab_id) = self.active else {
+            return;
+        };
+        self.blink.update(cx, |blink, cx| {
+            blink.pause_for(PaneId(1), tab_id, cx);
+        });
+    }
+    fn sync_terminal_cursor_blink(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let next = if window.is_window_active() && self.pane.terminal_focus.is_focused(window) {
+            self.active.and_then(|tab_id| {
+                let cursor = self.owner.read(cx).terminal_cursor_state(tab_id)?;
+                Some(TerminalCursorBlinkTarget {
+                    pane_id: PaneId(1),
+                    tab_id,
+                    cursor,
+                })
+            })
+        } else {
+            None
+        };
+        self.blink.update(cx, |blink, cx| {
+            blink.sync(next, cx);
+        });
+    }
 }
 
 impl TerminalCanvasHost for TerminalInputFixture {
@@ -124,23 +153,29 @@ impl TerminalCanvasHost for TerminalInputFixture {
         self.pane.terminal_cell_width = cell_width;
         self.pane.terminal_line_height = line_height;
         let id = self.active?;
-        let snapshot = self
-            .owner
-            .read(cx)
-            .terminal_snapshot(id, self.pane.terminal_focus.is_focused(window))?;
-        Some(TerminalCanvasPrepaint::new(
-            snapshot,
-            self.pane.terminal_focus.clone(),
-            self.owner.downgrade(),
-            id,
-            None,
-            None,
-        ))
+        let focused = self.pane.terminal_focus.is_focused(window);
+        let cursor_visible = !focused || self.blink.read(cx).is_visible();
+        let snapshot =
+            self.owner
+                .read(cx)
+                .terminal_snapshot_with_cursor(id, focused, cursor_visible)?;
+        Some(
+            TerminalCanvasPrepaint::new(
+                snapshot,
+                self.pane.terminal_focus.clone(),
+                self.owner.downgrade(),
+                id,
+                None,
+                None,
+            )
+            .with_cursor_blink(self.blink.downgrade(), PaneId(1)),
+        )
     }
     fn handle_terminal_outside_mouse_move(
         &mut self,
         _: PaneId,
         _: &MouseMoveEvent,
+        _: &Window,
         _: &mut Context<Self>,
     ) {
     }
@@ -190,6 +225,8 @@ fn open_input_fixture(
                     }
                     let pane = PaneViewState::new(cx.focus_handle());
                     pane.terminal_focus.focus(window, cx);
+                    let blink = cx.new(|_| TerminalCursorBlink::new());
+                    let _blink_subscription = cx.observe(&blink, |_, _, cx| cx.notify());
                     TerminalInputFixture {
                         owner,
                         pane,
@@ -197,6 +234,8 @@ fn open_input_fixture(
                         drag: TerminalDragState::default(),
                         requested: Vec::new(),
                         parked_input: Vec::new(),
+                        blink,
+                        _blink_subscription,
                     }
                 })
             },
@@ -392,6 +431,89 @@ fn production_pointer_selection_release_does_not_mutate_a_replacement_terminal(
         );
         assert!(take_sent(&mut first).is_empty());
         assert!(take_sent(&mut second).is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn terminal_cursor_blinks_while_active_pauses_on_key_input_and_stops_when_blurred(
+    cx: &mut TestAppContext,
+) {
+    use crate::ui::features::session::input::WorkspaceTerminalInputExt as _;
+
+    let (handle, view, mut first, _) = open_input_fixture(cx, "");
+
+    // Window starts inactive in headless tests: cursor stays steady and visible.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.sync_terminal_focus_reporting(window, cx);
+        });
+        window.render_frame(cx);
+        let blink = view.read(cx).blink.read(cx);
+        assert!(blink.is_visible());
+        assert!(!blink.is_running());
+
+        window.activate_window();
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.sync_terminal_focus_reporting(window, cx);
+        });
+        window.render_frame(cx);
+        let state = view.read(cx);
+        assert!(state.blink.read(cx).is_visible());
+        assert!(state.blink.read(cx).is_running());
+        let visible_snap = state.owner.read(cx).terminal_snapshot_with_cursor(
+            FIRST,
+            true,
+            state.blink.read(cx).is_visible(),
+        );
+        assert!(visible_snap.unwrap().cursor_visible);
+    })
+    .unwrap();
+
+    // Advance one half-cycle (500 ms): cursor toggles off while keeping focused_cursor = true.
+    cx.executor().advance_clock(TERMINAL_CURSOR_BLINK_INTERVAL);
+    cx.executor().run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let state = view.read(cx);
+        assert!(!state.blink.read(cx).is_visible());
+        let hidden_snap = state
+            .owner
+            .read(cx)
+            .terminal_snapshot_with_cursor(FIRST, true, state.blink.read(cx).is_visible())
+            .unwrap();
+        assert!(hidden_snap.focused_cursor);
+        assert!(!hidden_snap.cursor_visible);
+
+        // Typing immediately resets the cursor to visible.
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke: Keystroke::parse("a").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+        let state = view.read(cx);
+        assert!(state.blink.read(cx).is_visible());
+        assert_eq!(take_sent(&mut first), vec![b"a".to_vec()]);
+
+        // Blurring stops blinking cleanly with steady visible cursor.
+        window.blur(cx);
+        view.update(cx, |view, cx| {
+            view.sync_terminal_focus_reporting(window, cx);
+        });
+        let state = view.read(cx);
+        assert!(state.blink.read(cx).is_visible());
+        assert!(!state.blink.read(cx).is_running());
     })
     .unwrap();
 }

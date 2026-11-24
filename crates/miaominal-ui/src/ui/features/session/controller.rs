@@ -454,16 +454,13 @@ impl SessionController {
         let forms = Self::build_forms(window, cx);
         let terminal_search_input = forms.workspace.search.input.clone();
         let terminal_focus_in_subscription =
-            cx.on_focus_in(&args.terminal_focus, window, |_controller, _window, cx| {
+            cx.on_focus(&args.terminal_focus, window, |_controller, _window, cx| {
                 cx.emit(AppCommand::TerminalFocusReportingRequested);
             });
-        let terminal_focus_out_subscription = cx.on_focus_out(
-            &args.terminal_focus,
-            window,
-            |_controller, _, _window, cx| {
+        let terminal_focus_out_subscription =
+            cx.on_blur(&args.terminal_focus, window, |_controller, _window, cx| {
                 cx.emit(AppCommand::TerminalFocusReportingRequested);
-            },
-        );
+            });
         let mut subscriptions = vec![cx.subscribe(
             &terminal_search_input,
             |controller, input, event: &InputEvent, cx| match event {
@@ -573,10 +570,10 @@ impl SessionController {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let focus_in = cx.on_focus_in(&terminal_focus, window, |_controller, _window, cx| {
+        let focus_in = cx.on_focus(&terminal_focus, window, |_controller, _window, cx| {
             cx.emit(AppCommand::TerminalFocusReportingRequested);
         });
-        let focus_out = cx.on_focus_out(&terminal_focus, window, |_controller, _, _window, cx| {
+        let focus_out = cx.on_blur(&terminal_focus, window, |_controller, _window, cx| {
             cx.emit(AppCommand::TerminalFocusReportingRequested);
         });
         *self.terminal_focus_subscriptions.borrow_mut() = Some((focus_in, focus_out));

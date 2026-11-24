@@ -35,6 +35,7 @@ pub(in crate::ui::shell) struct ShellUiState {
     pub(super) search_generation: Option<crate::ui::application::ApplicationGenerations>,
     pub(super) unattached_search_query: String,
     pub(in crate::ui::shell) pane_animation_frame_pending: bool,
+    pub(in crate::ui::shell) terminal_cursor_blink: Entity<TerminalCursorBlink>,
     pub(in crate::ui::shell) workspace_forms: WorkspaceForms,
     pub(in crate::ui::shell) shell_state: ShellState,
     pub(in crate::ui::shell) overlay_state: super::overlays::WindowOverlayState,

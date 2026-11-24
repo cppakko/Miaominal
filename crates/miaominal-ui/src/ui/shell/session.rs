@@ -1048,6 +1048,8 @@ impl AppView {
             None => {}
         }
 
+        self.sync_terminal_cursor_blink(window, cx);
+
         if should_notify {
             cx.notify();
         }

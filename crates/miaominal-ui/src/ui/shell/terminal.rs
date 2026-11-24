@@ -120,4 +120,59 @@ impl TerminalInputHost for AppView {
             TerminalWorkspaceRequest::ClosePane => self.close_active_pane(window, cx),
         }
     }
+
+    fn pause_terminal_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        let pane_id = self.workspace.workspace.active_pane_id;
+        let Some(tab_id) = self.workspace.workspace.active_tab else {
+            return;
+        };
+        self.shell.terminal_cursor_blink.update(cx, |blink, cx| {
+            blink.pause_for(pane_id, tab_id, cx);
+        });
+    }
+
+    fn sync_terminal_cursor_blink(&mut self, window: &Window, cx: &mut Context<Self>) {
+        AppView::sync_terminal_cursor_blink(self, window, cx);
+    }
+}
+
+impl AppView {
+    pub(in crate::ui::shell) fn sync_terminal_cursor_blink(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = if window.is_window_active()
+            && self
+                .workspace
+                .workspace
+                .active_pane
+                .terminal_focus
+                .is_focused(window)
+        {
+            self.workspace.workspace.active_tab.and_then(|tab_id| {
+                let cursor = self
+                    .controllers
+                    .session
+                    .read(cx)
+                    .terminal_cursor_state(tab_id)?;
+                Some(TerminalCursorBlinkTarget {
+                    pane_id: self.workspace.workspace.active_pane_id,
+                    tab_id,
+                    cursor,
+                })
+            })
+        } else {
+            None
+        };
+        self.shell.terminal_cursor_blink.update(cx, |blink, cx| {
+            blink.sync(next, cx);
+        });
+    }
+
+    pub(in crate::ui::shell) fn stop_terminal_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        self.shell.terminal_cursor_blink.update(cx, |blink, cx| {
+            blink.sync(None, cx);
+        });
+    }
 }

@@ -243,6 +243,7 @@ impl AppView {
     }
 
     pub(in crate::ui::shell) fn unload_active_topbar_workspace(&mut self, cx: &mut Context<Self>) {
+        self.stop_terminal_cursor_blink(cx);
         if let Some(tab_id) = self.workspace.active_topbar_tab
             && self
                 .workspace

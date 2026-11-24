@@ -10,10 +10,10 @@ pub(in crate::ui) use controller::{
     PortForwardSessionStart, RdpAction, SessionController, SessionControllerArgs,
 };
 pub(in crate::ui) use input::{
-    PaneViewState, TerminalDragState, TerminalHoveredLink, TerminalInputHost,
-    TerminalKeyboardState, TerminalLinkQuery, TerminalMouseGesture, TerminalMouseReportingState,
-    TerminalPanePresentation, TerminalScrollbarDrag, WorkspaceTerminalInputExt,
-    bind_terminal_input_handlers,
+    PaneViewState, TerminalCursorBlink, TerminalCursorBlinkTarget, TerminalDragState,
+    TerminalHoveredLink, TerminalInputHost, TerminalKeyboardState, TerminalLinkQuery,
+    TerminalMouseGesture, TerminalMouseReportingState, TerminalPanePresentation,
+    TerminalScrollbarDrag, WorkspaceTerminalInputExt, bind_terminal_input_handlers,
 };
 pub(in crate::ui) use input::{terminal_cell_width, terminal_line_height};
 use progress_panel::SessionSftpProgressLayoutState;

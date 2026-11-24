@@ -102,8 +102,8 @@ use workspace::{
 };
 
 pub(in crate::ui::shell) use crate::ui::features::session::{
-    render_terminal_canvas_for_pane, terminal_cell_width, terminal_ime_cursor_bounds,
-    terminal_line_height,
+    TerminalCursorBlink, TerminalCursorBlinkTarget, render_terminal_canvas_for_pane,
+    terminal_cell_width, terminal_ime_cursor_bounds, terminal_line_height,
 };
 use crate::ui::workspace::transfer::WorkspaceTransferExt;
 use support::{OVERLAY_ENTER_DURATION, new_input_state, set_input_placeholder, set_input_value};

@@ -18,6 +18,7 @@ impl TerminalCanvasHost for AppView {
         &mut self,
         pane_id: PaneId,
         event: &MouseMoveEvent,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         if self.active_pane_id() != pane_id {
@@ -28,7 +29,7 @@ impl TerminalCanvasHost for AppView {
             || pane.terminal_mouse_reporting.is_active()
             || pane.terminal_scrollbar_drag.is_some()
         {
-            self.handle_terminal_mouse_move(event, cx);
+            self.handle_terminal_mouse_move(event, window, cx);
         }
     }
 
@@ -125,13 +126,14 @@ fn prepare_terminal_canvas_prepaint(
     }
 
     let focused = pane_id == this.workspace.workspace.active_pane_id && focus.is_focused(window);
+    let cursor_visible = !focused || this.shell.terminal_cursor_blink.read(cx).is_visible();
     let tab_id = active_tab_id?;
     let input_controller = this.controllers.session.downgrade();
     let snapshot = this
         .controllers
         .session
         .read(cx)
-        .terminal_snapshot(tab_id, focused)?;
+        .terminal_snapshot_with_cursor(tab_id, focused, cursor_visible)?;
     let ime_cursor_bounds = terminal_ime_cursor_bounds(
         bounds,
         &snapshot,
@@ -154,12 +156,15 @@ fn prepare_terminal_canvas_prepaint(
         }
     }
 
-    Some(TerminalCanvasPrepaint::new(
-        snapshot,
-        focus,
-        input_controller,
-        tab_id,
-        ime_cursor_bounds,
-        drop_target,
-    ))
+    Some(
+        TerminalCanvasPrepaint::new(
+            snapshot,
+            focus,
+            input_controller,
+            tab_id,
+            ime_cursor_bounds,
+            drop_target,
+        )
+        .with_cursor_blink(this.shell.terminal_cursor_blink.downgrade(), pane_id),
+    )
 }

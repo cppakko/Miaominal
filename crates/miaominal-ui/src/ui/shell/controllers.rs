@@ -253,12 +253,17 @@ impl ControllerSet {
                 let next_settings = controller.read(cx).settings().clone();
                 let mut previous_settings = observed_settings.borrow_mut();
                 let metrics_changed = terminal_metrics_changed(&previous_settings, &next_settings);
+                let cursor_style_changed =
+                    previous_settings.terminal_cursor_style != next_settings.terminal_cursor_style;
                 let free_type_disabled = previous_settings.terminal_free_type_mode
                     && !next_settings.terminal_free_type_mode;
                 *previous_settings = next_settings;
                 drop(previous_settings);
                 if metrics_changed {
                     this.invalidate_terminal_metrics();
+                }
+                if cursor_style_changed {
+                    this.sync_terminal_cursor_blink(window, cx);
                 }
                 if free_type_disabled {
                     this.clear_terminal_free_type_interactions(cx);

@@ -763,7 +763,8 @@ impl SshSessionInner {
                 TerminalEvent::Bell
                 | TerminalEvent::Title(_)
                 | TerminalEvent::ResetTitle
-                | TerminalEvent::CurrentDirectoryChanged(_) => {}
+                | TerminalEvent::CurrentDirectoryChanged(_)
+                | TerminalEvent::CursorBlinkingChange => {}
             }
         }
     }

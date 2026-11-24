@@ -1,6 +1,6 @@
 use super::custom_glyphs;
 use crate::ui::contracts::{PaneId, TabId};
-use crate::ui::features::session::{SessionController, TerminalHoveredLink};
+use crate::ui::features::session::{SessionController, TerminalCursorBlink, TerminalHoveredLink};
 use alacritty_terminal::index::Side;
 use gpui_kit::{
     Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, Font, FontFallbacks,
@@ -52,6 +52,7 @@ pub(crate) struct TerminalCanvasPrepaint {
     tab_id: TabId,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     drop_target: Option<TerminalFreeTypeTarget>,
+    cursor_blink: Option<(WeakEntity<TerminalCursorBlink>, PaneId)>,
 }
 
 impl TerminalCanvasPrepaint {
@@ -70,7 +71,17 @@ impl TerminalCanvasPrepaint {
             tab_id,
             ime_cursor_bounds,
             drop_target,
+            cursor_blink: None,
         }
+    }
+
+    pub(crate) fn with_cursor_blink(
+        mut self,
+        blink: WeakEntity<TerminalCursorBlink>,
+        pane_id: PaneId,
+    ) -> Self {
+        self.cursor_blink = Some((blink, pane_id));
+        self
     }
 }
 
@@ -78,6 +89,7 @@ struct TerminalImeHandler {
     controller: WeakEntity<SessionController>,
     tab_id: TabId,
     cursor_bounds: Option<Bounds<Pixels>>,
+    cursor_blink: Option<(WeakEntity<TerminalCursorBlink>, PaneId)>,
 }
 
 impl InputHandler for TerminalImeHandler {
@@ -123,6 +135,12 @@ impl InputHandler for TerminalImeHandler {
         }
         let tab_id = self.tab_id;
         let text = text.to_string();
+        if let Some((blink, pane_id)) = self.cursor_blink.as_ref() {
+            let pane_id = *pane_id;
+            blink
+                .update(cx, |blink, cx| blink.pause_for(pane_id, tab_id, cx))
+                .ok();
+        }
         self.controller
             .update(cx, |controller, cx| {
                 controller.send_terminal_text_input(tab_id, text, cx);
@@ -220,6 +238,7 @@ pub(crate) fn render_terminal_canvas_for_pane<V: TerminalCanvasHost>(
                         controller: prepaint.input_controller.clone(),
                         tab_id: prepaint.tab_id,
                         cursor_bounds: prepaint.ime_cursor_bounds,
+                        cursor_blink: prepaint.cursor_blink.clone(),
                     },
                     cx,
                 );
@@ -244,7 +263,7 @@ pub(crate) fn render_terminal_canvas_for_pane<V: TerminalCanvasHost>(
                     }
 
                     view.update(cx, |this, cx| {
-                        this.handle_terminal_outside_mouse_move(pane_id, event, cx);
+                        this.handle_terminal_outside_mouse_move(pane_id, event, window, cx);
                     })
                     .ok();
                 }
@@ -290,6 +309,7 @@ pub(crate) trait TerminalCanvasHost: Render + Sized + 'static {
         &mut self,
         pane_id: PaneId,
         event: &MouseMoveEvent,
+        window: &Window,
         cx: &mut Context<Self>,
     );
 
@@ -652,6 +672,9 @@ fn paint_focused_cursor_overlay(
     line_height: Pixels,
     window: &mut gpui_kit::Window,
 ) {
+    if !snapshot.cursor_visible {
+        return;
+    }
     let shape = snapshot.cursor_shape;
     if !matches!(
         shape,
@@ -977,6 +1000,8 @@ mod tests {
             default_fg: fg,
             default_bg: bg,
             focused_cursor: true,
+            cursor_visible: true,
+            cursor_blinking: true,
             search_total: 0,
             search_current: None,
         }

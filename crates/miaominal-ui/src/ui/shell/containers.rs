@@ -1,12 +1,13 @@
 use gpui_kit::Subscription;
 use std::ops::{Deref, DerefMut};
 
-const ROOT_SHELL_SUBSCRIPTION_COUNT: usize = 2;
-const ROOT_SUBSCRIPTION_LIMIT: usize = 24;
+const ROOT_SHELL_SUBSCRIPTION_COUNT: usize = 3;
+const ROOT_SUBSCRIPTION_LIMIT: usize = 25;
 
 pub(in crate::ui::shell) struct AppViewSubscriptions {
     pub _rename_input_subscription: Subscription,
     pub _terminal_keystroke_interceptor: Subscription,
+    pub _terminal_cursor_blink_subscription: Subscription,
 }
 
 pub(in crate::ui::shell) struct RootSubscriptions {

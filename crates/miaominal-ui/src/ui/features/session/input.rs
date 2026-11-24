@@ -1,9 +1,13 @@
+mod cursor_blink;
 mod gestures;
 mod keymap;
 mod mouse_reporting;
 mod pane;
 mod region;
 mod routing;
+#[cfg(test)]
+pub(in crate::ui) use cursor_blink::TERMINAL_CURSOR_BLINK_INTERVAL;
+pub(in crate::ui) use cursor_blink::{TerminalCursorBlink, TerminalCursorBlinkTarget};
 pub(in crate::ui) use gestures::{
     TerminalDragState, TerminalInputHost, TerminalPanePresentation, WorkspaceTerminalInputExt,
 };

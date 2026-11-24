@@ -480,6 +480,9 @@ impl AppView {
             window,
             |this, _, event, window, cx| this.handle_management_search_event(event, window, cx),
         ));
+        let terminal_cursor_blink = cx.new(|_| TerminalCursorBlink::new());
+        let terminal_cursor_blink_subscription =
+            cx.observe(&terminal_cursor_blink, |_, _, cx| cx.notify());
         let mut view = Self {
             controllers,
             workspace,
@@ -490,6 +493,7 @@ impl AppView {
                 search_generation: None,
                 unattached_search_query: String::new(),
                 pane_animation_frame_pending: false,
+                terminal_cursor_blink,
                 workspace_forms,
                 shell_state: ShellState::default(),
                 overlay_state: super::overlays::WindowOverlayState::default(),
@@ -505,6 +509,7 @@ impl AppView {
                 build_subscriptions(AppViewSubscriptionsArgs {
                     rename_subscription,
                     keystroke_interceptor,
+                    terminal_cursor_blink_subscription,
                 }),
                 controller_subscriptions,
             ),

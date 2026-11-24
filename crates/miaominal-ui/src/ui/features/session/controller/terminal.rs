@@ -58,13 +58,25 @@ impl TerminalWriteResult {
 }
 
 impl SessionController {
-    pub(in crate::ui) fn terminal_snapshot(
+    pub(in crate::ui) fn terminal_snapshot_with_cursor(
         &self,
         tab_id: TabId,
         focused: bool,
+        cursor_visible: bool,
     ) -> Option<Arc<TerminalSnapshot>> {
+        self.tab(tab_id).map(|session| {
+            session
+                .terminal
+                .snapshot_with_cursor(focused, cursor_visible)
+        })
+    }
+
+    pub(in crate::ui) fn terminal_cursor_state(
+        &self,
+        tab_id: TabId,
+    ) -> Option<miaominal_terminal::TerminalCursorState> {
         self.tab(tab_id)
-            .map(|session| session.terminal.snapshot(focused))
+            .map(|session| session.terminal.cursor_state())
     }
 
     pub(in crate::ui) fn terminal_state(&self, tab_id: TabId) -> Option<TerminalState> {

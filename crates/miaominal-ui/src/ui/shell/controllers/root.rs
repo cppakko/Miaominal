@@ -370,6 +370,7 @@ impl AppView {
         controller.update(cx, |controller, cx| {
             controller.open_terminal_search(tab_id, window, cx);
         });
+        self.sync_terminal_cursor_blink(window, cx);
     }
 
     pub(in crate::ui::shell) fn close_terminal_search(
@@ -382,6 +383,7 @@ impl AppView {
         controller.update(cx, |controller, cx| {
             controller.close_terminal_search(&terminal_focus, window, cx);
         });
+        self.sync_terminal_cursor_blink(window, cx);
     }
 
     pub(in crate::ui::shell) fn with_active_window(
@@ -974,6 +976,12 @@ impl AppView {
                     application.apply_manual_sync_result((**result).clone(), cx);
                 });
             }
+            AppCommand::TerminalScrolledToBottom(tab_id) => {
+                if let Some(pane_id) = self.pane_of_tab(*tab_id) {
+                    self.touch_terminal_scrollbar_visibility(pane_id, cx);
+                }
+                self.sync_terminal_cursor_blink(window, cx);
+            }
             _ => self.handle_app_command(command, cx),
         }
         self.sync_window_overlays(window, cx);
@@ -996,12 +1004,8 @@ impl AppView {
                     tab.status = status.clone();
                 }
             }
-            AppCommand::TerminalScrolledToBottom(tab_id) => {
-                if let Some(pane_id) = self.pane_of_tab(*tab_id) {
-                    self.touch_terminal_scrollbar_visibility(pane_id, cx);
-                }
-            }
             AppCommand::TerminalFocusReportingRequested
+            | AppCommand::TerminalScrolledToBottom(_)
             | AppCommand::WindowActivationChanged { .. }
             | AppCommand::TerminalMenuRequested { .. }
             | AppCommand::VaultActionRequested(_)

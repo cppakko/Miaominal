@@ -46,6 +46,8 @@ pub(crate) trait TerminalInputHost: Render + Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
+    fn pause_terminal_cursor_blink(&mut self, _cx: &mut Context<Self>) {}
+    fn sync_terminal_cursor_blink(&mut self, _window: &Window, _cx: &mut Context<Self>) {}
 }
 
 #[derive(Clone, Copy)]
@@ -458,12 +460,23 @@ pub(crate) trait WorkspaceTerminalInputExt: Sized {
         &mut self,
         event: &ScrollEvent,
         line_height: f32,
+        window: &Window,
         cx: &mut Context<Self>,
     );
 
-    fn handle_terminal_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>);
+    fn handle_terminal_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    );
 
-    fn handle_terminal_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>);
+    fn handle_terminal_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    );
 
     fn handle_terminal_mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>);
 
@@ -631,6 +644,9 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
         });
         if dispatch.scrolled() {
             self.touch_terminal_scrollbar_visibility(self.active_terminal_pane_id(), cx);
+            self.sync_terminal_cursor_blink(window, cx);
+        } else if tab_id.is_some() && dispatch.request().is_none() {
+            self.pause_terminal_cursor_blink(cx);
         }
         if let Some(request) = dispatch.request() {
             self.dispatch_terminal_workspace_request(request, window, cx);
@@ -685,6 +701,7 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
         &mut self,
         event: &ScrollEvent,
         line_height: f32,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         let tab_id = self.active_terminal_tab_id();
@@ -694,10 +711,16 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
         });
         if scrolled {
             self.touch_terminal_scrollbar_visibility(self.active_terminal_pane_id(), cx);
+            self.sync_terminal_cursor_blink(window, cx);
         }
     }
 
-    fn handle_terminal_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+    fn handle_terminal_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_terminal_originated_selection_drag(cx);
         let target = self.active_terminal_tab_id();
         self.active_terminal_pane_mut().terminal_pointer_target = target;
@@ -736,9 +759,12 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
             self.active_terminal_pane_mut().terminal_scrollbar_drag =
                 Some(TerminalScrollbarDrag { thumb_grab_offset });
             self.touch_terminal_scrollbar_visibility(self.active_terminal_pane_id(), cx);
+            self.sync_terminal_cursor_blink(window, cx);
             cx.notify();
             return;
         }
+
+        self.pause_terminal_cursor_blink(cx);
 
         let free_type_enabled = miaominal_settings::current_settings().terminal_free_type_mode;
         let mouse_reporting_enabled =
@@ -894,7 +920,12 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
         }
     }
 
-    fn handle_terminal_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+    fn handle_terminal_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         if reset_stale_terminal_pointer(self) {
             self.clear_terminal_originated_selection_drag(cx);
             self.set_terminal_hover_state(None, false, cx);
@@ -927,6 +958,7 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
                 self.active_terminal_pane_mut().terminal_scrollbar_drag = None;
                 return;
             }
+            self.sync_terminal_cursor_blink(window, cx);
             cx.notify();
             return;
         }
@@ -1000,13 +1032,15 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
                                 self.active_terminal_pane().terminal_line_height,
                             )
                         });
-                if let Some(delta) = drag_scroll_delta
-                    && !self
+                if let Some(delta) = drag_scroll_delta {
+                    if !self
                         .terminal_owner()
                         .read(cx)
                         .scroll_terminal_display_offset_by(tab_id, delta)
-                {
-                    return;
+                    {
+                        return;
+                    }
+                    self.sync_terminal_cursor_blink(window, cx);
                 }
                 let Some((line, column, side)) =
                     self.event_position_to_cell_and_side_clamped(event.position, cx)
@@ -1529,6 +1563,7 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
     }
 
     fn sync_terminal_focus_reporting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_terminal_cursor_blink(window, cx);
         let next_reported_tab_id = self.current_terminal_focus_report_target(window, cx);
         if next_reported_tab_id.is_none() {
             self.clear_terminal_focus_reporting(cx);

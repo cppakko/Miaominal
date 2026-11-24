@@ -9,7 +9,7 @@ use alacritty_terminal::term::{
     cell::{Cell, Flags, Hyperlink},
     color::Colors,
 };
-use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::{Color, CursorShape, CursorStyle, NamedColor, Processor, Rgb};
 pub use miaominal_core::terminal::MIN_TERMINAL_COLUMNS;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,6 +47,8 @@ pub enum TerminalEvent {
     ResetTitle,
     /// Current working directory reported by OSC 7 (`file://host/path`).
     CurrentDirectoryChanged(String),
+    /// Cursor blinking mode changed via DECSCUSR or DEC private mode ?12.
+    CursorBlinkingChange,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,7 @@ impl EventListener for MiaominalListener {
             Event::Bell => Some(TerminalEvent::Bell),
             Event::Title(title) => Some(TerminalEvent::Title(title)),
             Event::ResetTitle => Some(TerminalEvent::ResetTitle),
+            Event::CursorBlinkingChange => Some(TerminalEvent::CursorBlinkingChange),
             _ => None,
         };
         if let Some(ev) = mapped {
@@ -352,6 +355,14 @@ pub enum TerminalCursorShape {
     Hidden,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCursorState {
+    pub position: TerminalCursorPosition,
+    pub shape: TerminalCursorShape,
+    pub blinking: bool,
+    pub visible_in_viewport: bool,
+}
+
 pub struct TerminalSnapshot {
     pub cells: Vec<Vec<TerminalCell>>,
     #[allow(dead_code)]
@@ -366,6 +377,8 @@ pub struct TerminalSnapshot {
     pub default_fg: TerminalColor,
     pub default_bg: TerminalColor,
     pub focused_cursor: bool,
+    pub cursor_visible: bool,
+    pub cursor_blinking: bool,
     #[allow(dead_code)]
     pub search_total: usize,
     #[allow(dead_code)]
@@ -520,13 +533,14 @@ struct TerminalShared {
     input_sequence: Mutex<()>,
     dirty_generation: AtomicU64,
     pending_inputs: AtomicU64,
-    snapshot_cache: Mutex<Option<CachedTerminalSnapshot>>,
+    snapshot_cache: Mutex<[Option<CachedTerminalSnapshot>; 2]>,
     theme: Mutex<ThemeSource>,
 }
 
 struct CachedTerminalSnapshot {
     generation: u64,
     focused: bool,
+    cursor_visible: bool,
     palette: TerminalPaletteKey,
     cursor_style: settings::TerminalCursorStyle,
     snapshot: Arc<TerminalSnapshot>,
@@ -587,6 +601,10 @@ impl TerminalCore {
 
         let config = Config {
             scrolling_history: SCROLLBACK_LINES,
+            default_cursor_style: CursorStyle {
+                shape: CursorShape::Block,
+                blinking: true,
+            },
             ..Default::default()
         };
 
@@ -1542,7 +1560,31 @@ impl TerminalCore {
         self.scroll_to_display_offset(target);
     }
 
+    pub fn cursor_state(&self) -> TerminalCursorState {
+        let renderable = self.term.renderable_content();
+        let configured_style = settings::current_settings().terminal_cursor_style;
+        build_cursor_state(
+            renderable.cursor.point,
+            renderable.cursor.shape,
+            renderable.display_offset,
+            self.screen_lines,
+            self.columns,
+            self.term.cursor_style().blinking,
+            configured_style,
+        )
+    }
+
+    #[cfg(test)]
     pub fn snapshot(&self, focused: bool, theme: &TerminalTheme) -> TerminalSnapshot {
+        self.snapshot_with_cursor(focused, true, theme)
+    }
+
+    pub fn snapshot_with_cursor(
+        &self,
+        focused: bool,
+        cursor_visible: bool,
+        theme: &TerminalTheme,
+    ) -> TerminalSnapshot {
         let columns = self.columns;
         let screen_lines = self.screen_lines;
         let default_fg = default_foreground(theme);
@@ -1557,28 +1599,26 @@ impl TerminalCore {
             .collect::<Vec<_>>();
 
         let renderable = self.term.renderable_content();
+        let configured_style = settings::current_settings().terminal_cursor_style;
+        let cursor_state = build_cursor_state(
+            renderable.cursor.point,
+            renderable.cursor.shape,
+            renderable.display_offset,
+            screen_lines,
+            columns,
+            self.term.cursor_style().blinking,
+            configured_style,
+        );
         let display_offset = renderable.display_offset as i32;
-        let cursor_position = TerminalCursorPosition {
-            viewport_line: renderable.cursor.point.line.0 + display_offset,
-            column: renderable.cursor.point.column.0,
-        };
-        let cursor_shape = match renderable.cursor.shape {
-            CursorShape::Hidden => TerminalCursorShape::Hidden,
-            CursorShape::Beam => TerminalCursorShape::Beam,
-            CursorShape::Underline => TerminalCursorShape::Underline,
-            CursorShape::Block | CursorShape::HollowBlock => {
-                match settings::current_settings().terminal_cursor_style {
-                    settings::TerminalCursorStyle::Block => TerminalCursorShape::Block,
-                    settings::TerminalCursorStyle::Beam => TerminalCursorShape::Beam,
-                    settings::TerminalCursorStyle::Underline => TerminalCursorShape::Underline,
-                }
-            }
-        };
+        let cursor_position = cursor_state.position;
+        let cursor_shape = cursor_state.shape;
         let cursor_color = resolve_named_color(NamedColor::Cursor, renderable.colors, theme);
-        let rendered_cursor = if focused
-            && cursor_shape != TerminalCursorShape::Hidden
-            && renderable.display_offset == 0
-        {
+        let snapshot_cursor_visible = if focused {
+            cursor_visible && cursor_state.visible_in_viewport
+        } else {
+            cursor_state.visible_in_viewport
+        };
+        let rendered_cursor = if focused && snapshot_cursor_visible {
             usize::try_from(cursor_position.viewport_line)
                 .ok()
                 .map(|line| (line, cursor_position.column))
@@ -1650,6 +1690,8 @@ impl TerminalCore {
             default_fg,
             default_bg,
             focused_cursor: focused,
+            cursor_visible: snapshot_cursor_visible,
+            cursor_blinking: cursor_state.blinking,
             search_total,
             search_current,
         }
@@ -1737,7 +1779,7 @@ impl TerminalState {
             input_sequence: Mutex::new(()),
             dirty_generation: AtomicU64::new(0),
             pending_inputs: AtomicU64::new(0),
-            snapshot_cache: Mutex::new(None),
+            snapshot_cache: Mutex::new([None, None]),
             theme: Mutex::new(theme),
         });
         let (sender, receiver) = mpsc::channel::<ParserInput>();
@@ -2096,7 +2138,20 @@ impl TerminalState {
         self.with_core_mut_and_mark(TerminalCore::prev_match);
     }
 
+    pub fn cursor_state(&self) -> TerminalCursorState {
+        self.with_core(|core| core.cursor_state())
+    }
+
     pub fn snapshot(&self, focused: bool) -> Arc<TerminalSnapshot> {
+        self.snapshot_with_cursor(focused, true)
+    }
+
+    pub fn snapshot_with_cursor(
+        &self,
+        focused: bool,
+        cursor_visible: bool,
+    ) -> Arc<TerminalSnapshot> {
+        let effective_cursor_visible = focused && cursor_visible;
         let theme = self.resolved_theme();
         let palette = TerminalPaletteKey::from_theme(theme);
         let cursor_style = settings::current_settings().terminal_cursor_style;
@@ -2107,24 +2162,27 @@ impl TerminalState {
             .unwrap_or_else(|error| error.into_inner());
         let generation = self.shared.dirty_generation.load(Ordering::Acquire);
 
+        let slot = usize::from(effective_cursor_visible);
         let mut cache = self
             .shared
             .snapshot_cache
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(cached) = cache.as_ref()
+        if let Some(cached) = cache[slot].as_ref()
             && cached.generation == generation
             && cached.focused == focused
+            && cached.cursor_visible == effective_cursor_visible
             && cached.palette == palette
             && cached.cursor_style == cursor_style
         {
             return cached.snapshot.clone();
         }
 
-        let snapshot = Arc::new(core.snapshot(focused, &theme));
-        *cache = Some(CachedTerminalSnapshot {
+        let snapshot = Arc::new(core.snapshot_with_cursor(focused, cursor_visible, &theme));
+        cache[slot] = Some(CachedTerminalSnapshot {
             generation,
             focused,
+            cursor_visible: effective_cursor_visible,
             palette,
             cursor_style,
             snapshot: snapshot.clone(),
@@ -2188,7 +2246,7 @@ impl TerminalState {
             .shared
             .snapshot_cache
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
+            .unwrap_or_else(|error| error.into_inner()) = [None, None];
     }
 }
 
@@ -2209,12 +2267,55 @@ fn parse_input(shared: &TerminalShared, input: ParserInput) {
         *shared
             .snapshot_cache
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
+            .unwrap_or_else(|error| error.into_inner()) = [None, None];
         drop(core);
     }
     shared.pending_inputs.fetch_sub(1, Ordering::AcqRel);
     if let Some(completion) = input.completion {
         let _ = completion.send(());
+    }
+}
+
+fn resolve_cursor_shape(
+    shape: CursorShape,
+    configured_style: settings::TerminalCursorStyle,
+) -> TerminalCursorShape {
+    match shape {
+        CursorShape::Hidden => TerminalCursorShape::Hidden,
+        CursorShape::Beam => TerminalCursorShape::Beam,
+        CursorShape::Underline => TerminalCursorShape::Underline,
+        CursorShape::Block | CursorShape::HollowBlock => match configured_style {
+            settings::TerminalCursorStyle::Block => TerminalCursorShape::Block,
+            settings::TerminalCursorStyle::Beam => TerminalCursorShape::Beam,
+            settings::TerminalCursorStyle::Underline => TerminalCursorShape::Underline,
+        },
+    }
+}
+
+fn build_cursor_state(
+    cursor_point: Point,
+    renderable_shape: CursorShape,
+    display_offset: usize,
+    screen_lines: usize,
+    columns: usize,
+    term_cursor_blinking: bool,
+    configured_style: settings::TerminalCursorStyle,
+) -> TerminalCursorState {
+    let position = TerminalCursorPosition {
+        viewport_line: cursor_point.line.0 + display_offset as i32,
+        column: cursor_point.column.0,
+    };
+    let shape = resolve_cursor_shape(renderable_shape, configured_style);
+    let visible_in_viewport = display_offset == 0
+        && shape != TerminalCursorShape::Hidden
+        && usize::try_from(position.viewport_line).is_ok_and(|line| line < screen_lines)
+        && position.column < columns;
+    let blinking = term_cursor_blinking && visible_in_viewport;
+    TerminalCursorState {
+        position,
+        shape,
+        blinking,
+        visible_in_viewport,
     }
 }
 
@@ -3915,5 +4016,121 @@ mod tests {
         assert_eq!(core.set_search("(?i)hello").unwrap(), 2);
         assert_eq!(core.set_search("(?-i)hello").unwrap(), 1);
         assert_eq!(core.set_search(r"(?-i)hello \d+").unwrap(), 1);
+    }
+
+    #[test]
+    fn cursor_blinking_defaults_enabled_and_tracks_vt_modes_scrollback_and_visibility() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(20, 4);
+        core.push_bytes(b"abc");
+
+        let initial = core.cursor_state();
+        assert!(initial.blinking);
+        assert!(initial.visible_in_viewport);
+        assert_eq!(
+            initial.position,
+            TerminalCursorPosition {
+                viewport_line: 0,
+                column: 3
+            }
+        );
+
+        // DECSCUSR 2 sets steady block and emits CursorBlinkingChange.
+        core.push_bytes(b"\x1b[2 q");
+        let mut events = Vec::new();
+        while let Some(ev) = core.try_recv_event() {
+            events.push(ev);
+        }
+        assert!(events.contains(&TerminalEvent::CursorBlinkingChange));
+        assert!(!core.cursor_state().blinking);
+        assert!(core.cursor_state().visible_in_viewport);
+
+        // DECSCUSR 5/6 (beam), 3/4 (underline), and 0 (reset to config default).
+        core.push_bytes(b"\x1b[5 q");
+        assert_eq!(core.cursor_state().shape, TerminalCursorShape::Beam);
+        assert!(core.cursor_state().blinking);
+
+        core.push_bytes(b"\x1b[6 q");
+        assert_eq!(core.cursor_state().shape, TerminalCursorShape::Beam);
+        assert!(!core.cursor_state().blinking);
+
+        core.push_bytes(b"\x1b[3 q");
+        assert_eq!(core.cursor_state().shape, TerminalCursorShape::Underline);
+        assert!(core.cursor_state().blinking);
+
+        core.push_bytes(b"\x1b[4 q");
+        assert_eq!(core.cursor_state().shape, TerminalCursorShape::Underline);
+        assert!(!core.cursor_state().blinking);
+
+        core.push_bytes(b"\x1b[0 q");
+        assert!(core.cursor_state().blinking);
+
+        // DEC private mode ?12 toggles cursor blinking.
+        core.push_bytes(b"\x1b[?12l");
+        assert!(!core.cursor_state().blinking);
+        core.push_bytes(b"\x1b[?12h");
+        assert!(core.cursor_state().blinking);
+
+        // DEC private mode ?25 hides the cursor completely.
+        core.push_bytes(b"\x1b[?25l");
+        let hidden = core.cursor_state();
+        assert_eq!(hidden.shape, TerminalCursorShape::Hidden);
+        assert!(!hidden.visible_in_viewport);
+        assert!(!hidden.blinking);
+        core.push_bytes(b"\x1b[?25h");
+        assert!(core.cursor_state().visible_in_viewport);
+        assert!(core.cursor_state().blinking);
+
+        // Scrollback suppresses visible_in_viewport and blinking.
+        for _ in 0..10 {
+            core.push_bytes(b"\r\nline");
+        }
+        core.scroll(TerminalScroll::Lines(2));
+        let scrolled = core.cursor_state();
+        assert!(!scrolled.visible_in_viewport);
+        assert!(!scrolled.blinking);
+        core.scroll_to_bottom();
+        assert!(core.cursor_state().visible_in_viewport);
+        assert!(core.cursor_state().blinking);
+
+        // snapshot_with_cursor(true, false) hides block inversion while keeping focus + cursor pos.
+        let cursor_col = core.cursor_state().position.column;
+        let cursor_line = core.cursor_state().position.viewport_line as usize;
+        let visible_snap = core.snapshot_with_cursor(true, true, &theme);
+        let hidden_snap = core.snapshot_with_cursor(true, false, &theme);
+        assert!(visible_snap.focused_cursor);
+        assert!(visible_snap.cursor_visible);
+        assert!(visible_snap.cursor_blinking);
+        assert!(visible_snap.cells[cursor_line][cursor_col].is_cursor);
+
+        assert!(hidden_snap.focused_cursor);
+        assert!(!hidden_snap.cursor_visible);
+        assert_eq!(hidden_snap.cursor, visible_snap.cursor);
+        assert!(!hidden_snap.cells[cursor_line][cursor_col].is_cursor);
+        assert_eq!(
+            hidden_snap.cells[cursor_line][cursor_col].bg,
+            default_background(&theme)
+        );
+    }
+
+    #[test]
+    fn snapshot_with_cursor_caches_both_blink_phases_until_generation_changes() {
+        let terminal = TerminalState::new_with_theme(20, 4, TerminalTheme::from_settings());
+        let first_on = terminal.snapshot_with_cursor(true, true);
+        let first_off = terminal.snapshot_with_cursor(true, false);
+        let second_on = terminal.snapshot_with_cursor(true, true);
+        let second_off = terminal.snapshot_with_cursor(true, false);
+
+        assert!(first_on.cursor_visible);
+        assert!(!first_off.cursor_visible);
+        assert!(Arc::ptr_eq(&first_on, &second_on));
+        assert!(Arc::ptr_eq(&first_off, &second_off));
+
+        terminal.push_bytes(b"update");
+        wait_for_parser(&terminal);
+        let updated_on = terminal.snapshot_with_cursor(true, true);
+        let updated_off = terminal.snapshot_with_cursor(true, false);
+        assert!(!Arc::ptr_eq(&first_on, &updated_on));
+        assert!(!Arc::ptr_eq(&first_off, &updated_off));
     }
 }

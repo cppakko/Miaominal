@@ -22,11 +22,11 @@ pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInte
             MouseButton::Left,
             cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 window.focus(&this.active_terminal_pane().terminal_focus, cx);
-                this.handle_terminal_mouse_down(event, cx);
+                this.handle_terminal_mouse_down(event, window, cx);
             }),
         )
-        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-            this.handle_terminal_mouse_move(event, cx);
+        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+            this.handle_terminal_mouse_move(event, window, cx);
         }))
         .on_mouse_up(
             MouseButton::Left,
@@ -36,8 +36,8 @@ pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInte
         )
         .on_mouse_down(
             MouseButton::Middle,
-            cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                this.handle_terminal_mouse_down(event, cx);
+            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                this.handle_terminal_mouse_down(event, window, cx);
             }),
         )
         .on_mouse_up(
@@ -50,7 +50,7 @@ pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInte
             MouseButton::Right,
             cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 window.focus(&this.active_terminal_pane().terminal_focus, cx);
-                this.handle_terminal_mouse_down(event, cx);
+                this.handle_terminal_mouse_down(event, window, cx);
             }),
         )
         .on_mouse_up(
@@ -61,7 +61,7 @@ pub(crate) fn bind_terminal_input_handlers<V: TerminalInputHost, E: StatefulInte
         )
         .on_key_down(cx.listener(V::handle_terminal_key_down))
         .on_key_up(cx.listener(V::handle_terminal_key_up))
-        .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
-            this.handle_terminal_scroll_wheel(event, line_height, cx);
+        .on_scroll(cx.listener(move |this, event: &ScrollEvent, window, cx| {
+            this.handle_terminal_scroll_wheel(event, line_height, window, cx);
         }))
 }

@@ -590,6 +590,7 @@ impl SessionController {
                                 .insert(tab_id, trimmed.to_string());
                         }
                     }
+                    miaominal_terminal::TerminalEvent::CursorBlinkingChange => {}
                 }
             }
         }
