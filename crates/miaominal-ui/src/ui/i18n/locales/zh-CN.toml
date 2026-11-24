@@ -746,8 +746,6 @@ enable_sync_panes = "向所有分屏窗格广播输入"
 disable_sync_panes = "停止广播输入"
 sync_panes_enabled = "已开启多窗格广播输入"
 sync_panes_disabled = "已关闭多窗格广播输入"
-sync_panes_badge = "广播中"
-zoomed_badge = "已最大化"
 sync_sftp_cwd = "同步 SFTP 目录到 {path}"
 
 [chrome.menu]

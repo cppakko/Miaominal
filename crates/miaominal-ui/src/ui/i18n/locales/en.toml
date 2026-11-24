@@ -891,8 +891,6 @@ enable_sync_panes = "Broadcast input to all panes"
 disable_sync_panes = "Stop broadcasting input"
 sync_panes_enabled = "Broadcasting input to all split panes"
 sync_panes_disabled = "Stopped broadcasting input to split panes"
-sync_panes_badge = "Broadcasting"
-zoomed_badge = "Zoomed"
 sync_sftp_cwd = "Sync SFTP to {path}"
 
 [chrome.menu]

@@ -398,8 +398,6 @@ impl WorkspacePanesAppViewExt for AppView {
             if material.dark { 65 } else { 50 },
         );
         let is_active = pane_id == self.workspace.workspace.active_pane_id;
-        let is_zoomed = self.workspace.workspace.zoomed_pane == Some(pane_id);
-        let sync_panes = self.workspace.workspace.sync_panes;
         let tab_index = if is_active {
             self.workspace.workspace.active_tab
         } else {
@@ -440,8 +438,6 @@ impl WorkspacePanesAppViewExt for AppView {
             .unwrap_or_else(|| (i18n::string("session.workspace.empty_tab_label"), None));
 
         let entity = cx.entity();
-        let sync_entity = entity.clone();
-        let zoom_entity = entity.clone();
 
         div()
             .id(SharedString::from(format!("pane-header-{}", pane_id.0)))
@@ -450,7 +446,6 @@ impl WorkspacePanesAppViewExt for AppView {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
             .gap_2()
             .px_4()
             .py_1()
@@ -490,60 +485,6 @@ impl WorkspacePanesAppViewExt for AppView {
                             .child(SharedString::from(label)),
                     ),
             )
-            .when(sync_panes || is_zoomed, |this| {
-                this.child(
-                    h_flex()
-                        .flex_shrink_0()
-                        .items_center()
-                        .gap_1p5()
-                        .when(sync_panes, |row| {
-                            let sync_entity = sync_entity.clone();
-                            row.child(
-                                Button::new(SharedString::from(format!(
-                                    "pane-header-sync-pill-{}",
-                                    pane_id.0
-                                )))
-                                .ghost()
-                                .xsmall()
-                                .compact()
-                                .rounded_full()
-                                .bg(rgb(roles.primary_container))
-                                .text_color(rgb(roles.on_primary_container))
-                                .label(i18n::string("session.workspace.sync_panes_badge"))
-                                .tooltip(i18n::string("session.workspace.disable_sync_panes"))
-                                .on_click(move |_, _, cx| {
-                                    sync_entity.update(cx, |this, cx| {
-                                        this.toggle_sync_panes(cx);
-                                    });
-                                }),
-                            )
-                        })
-                        .when(is_zoomed, |row| {
-                            let zoom_entity = zoom_entity.clone();
-                            row.child(
-                                Button::new(SharedString::from(format!(
-                                    "pane-header-zoom-pill-{}",
-                                    pane_id.0
-                                )))
-                                .ghost()
-                                .xsmall()
-                                .compact()
-                                .rounded_full()
-                                .bg(rgb(roles.secondary_container))
-                                .text_color(rgb(roles.on_secondary_container))
-                                .label(i18n::string("session.workspace.zoomed_badge"))
-                                .tooltip(i18n::string("session.workspace.unzoom_pane"))
-                                .on_click(
-                                    move |_, window, cx| {
-                                        zoom_entity.update(cx, |this, cx| {
-                                            this.toggle_zoom_pane(pane_id, window, cx);
-                                        });
-                                    },
-                                ),
-                            )
-                        }),
-                )
-            })
             .into_any_element()
     }
 
