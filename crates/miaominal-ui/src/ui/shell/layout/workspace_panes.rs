@@ -5,7 +5,9 @@ use miaominal_settings::TerminalRightClickBehavior;
 use super::super::metrics::TERMINAL_PANEL_BORDER;
 use super::super::*;
 use super::chrome::{status_indicator, tab_status_indicator_color};
-use super::workspace_terminal_menu::{build_terminal_context_menu, terminal_pane_surface_id};
+use super::workspace_terminal_menu::{
+    TerminalContextMenuState, build_terminal_context_menu, terminal_pane_surface_id,
+};
 
 /// Whether a right click is handled by the terminal itself (copy selection or
 /// paste) instead of opening the context menu.
@@ -403,7 +405,7 @@ impl WorkspacePanesAppViewExt for AppView {
         } else {
             self.parked_pane(pane_id).and_then(|p| p.active_tab)
         };
-        let (label, status_color, cwd_sync_target) = tab_index
+        let (label, status_color) = tab_index
             .and_then(|idx| self.workspace.tabs.get(idx))
             .map(|tab| {
                 let session = self.session_tab(tab.id, cx);
@@ -430,28 +432,16 @@ impl WorkspacePanesAppViewExt for AppView {
                 let has_activity = session
                     .as_ref()
                     .is_some_and(|session| session.has_activity());
-                let cwd_sync_target = session
-                    .as_ref()
-                    .and_then(|s| s.current_directory().map(|dir| (tab.id, dir.to_string())))
-                    .filter(|(tab_id, _)| self.controllers.sftp.read(cx).has_tab(*tab_id));
                 (
                     label,
                     tab_status_indicator_color(&tab, session.as_ref(), has_activity),
-                    cwd_sync_target,
                 )
             })
-            .unwrap_or_else(|| {
-                (
-                    i18n::string("session.workspace.empty_tab_label"),
-                    None,
-                    None,
-                )
-            });
+            .unwrap_or_else(|| (i18n::string("session.workspace.empty_tab_label"), None));
 
         let entity = cx.entity();
         let sync_entity = entity.clone();
         let zoom_entity = entity.clone();
-        let close_entity = entity.clone();
 
         div()
             .id(SharedString::from(format!("pane-header-{}", pane_id.0)))
@@ -462,7 +452,7 @@ impl WorkspacePanesAppViewExt for AppView {
             .items_center()
             .justify_between()
             .gap_2()
-            .px_3()
+            .px_4()
             .py_1()
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 entity.update(cx, |this, cx| {
@@ -488,7 +478,7 @@ impl WorkspacePanesAppViewExt for AppView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(miaominal_settings::FontSize::Body.scaled())
+                            .text_size(miaominal_settings::FontSize::Heading.scaled())
                             .text_color(rgb(if is_active {
                                 roles.on_surface
                             } else {
@@ -500,105 +490,60 @@ impl WorkspacePanesAppViewExt for AppView {
                             .child(SharedString::from(label)),
                     ),
             )
-            .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_1()
-                    .when_some(cwd_sync_target, |this, (tab_id, dir)| {
-                        let sftp_controller = self.controllers.sftp.clone();
-                        let tooltip = i18n::string_args(
-                            "session.workspace.sync_sftp_cwd",
-                            &[("path", dir.as_str())],
-                        );
-                        this.child(crate::ui::components::icon_button_with_tooltip(
-                            AppIcon::FolderOpen,
-                            tooltip,
-                            22.0,
-                            6.0,
-                            Some(roles.surface_container_high),
-                            Some(text_muted),
-                            None,
-                            move |_, cx| {
-                                let dir = dir.clone();
-                                sftp_controller.update(cx, |sftp, cx| {
-                                    sftp.navigate_remote_path(tab_id, dir, cx);
-                                });
-                            },
-                        ))
-                    })
-                    .child(crate::ui::components::icon_button_with_tooltip(
-                        AppIcon::ArrowUpDown,
-                        i18n::string(if sync_panes {
-                            "session.workspace.disable_sync_panes"
-                        } else {
-                            "session.workspace.enable_sync_panes"
+            .when(sync_panes || is_zoomed, |this| {
+                this.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1p5()
+                        .when(sync_panes, |row| {
+                            let sync_entity = sync_entity.clone();
+                            row.child(
+                                Button::new(SharedString::from(format!(
+                                    "pane-header-sync-pill-{}",
+                                    pane_id.0
+                                )))
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .rounded_full()
+                                .bg(rgb(roles.primary_container))
+                                .text_color(rgb(roles.on_primary_container))
+                                .label(i18n::string("session.workspace.sync_panes_badge"))
+                                .tooltip(i18n::string("session.workspace.disable_sync_panes"))
+                                .on_click(move |_, _, cx| {
+                                    sync_entity.update(cx, |this, cx| {
+                                        this.toggle_sync_panes(cx);
+                                    });
+                                }),
+                            )
+                        })
+                        .when(is_zoomed, |row| {
+                            let zoom_entity = zoom_entity.clone();
+                            row.child(
+                                Button::new(SharedString::from(format!(
+                                    "pane-header-zoom-pill-{}",
+                                    pane_id.0
+                                )))
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .rounded_full()
+                                .bg(rgb(roles.secondary_container))
+                                .text_color(rgb(roles.on_secondary_container))
+                                .label(i18n::string("session.workspace.zoomed_badge"))
+                                .tooltip(i18n::string("session.workspace.unzoom_pane"))
+                                .on_click(
+                                    move |_, window, cx| {
+                                        zoom_entity.update(cx, |this, cx| {
+                                            this.toggle_zoom_pane(pane_id, window, cx);
+                                        });
+                                    },
+                                ),
+                            )
                         }),
-                        22.0,
-                        6.0,
-                        Some(if sync_panes {
-                            roles.primary_container
-                        } else {
-                            roles.surface_container_high
-                        }),
-                        Some(if sync_panes {
-                            roles.on_primary_container
-                        } else {
-                            text_muted
-                        }),
-                        None,
-                        move |_, cx| {
-                            sync_entity.update(cx, |this, cx| {
-                                this.toggle_sync_panes(cx);
-                            });
-                        },
-                    ))
-                    .child(crate::ui::components::icon_button_with_tooltip(
-                        if is_zoomed {
-                            AppIcon::Restore
-                        } else {
-                            AppIcon::Maximize
-                        },
-                        i18n::string(if is_zoomed {
-                            "session.workspace.unzoom_pane"
-                        } else {
-                            "session.workspace.zoom_pane"
-                        }),
-                        22.0,
-                        6.0,
-                        Some(if is_zoomed {
-                            roles.primary_container
-                        } else {
-                            roles.surface_container_high
-                        }),
-                        Some(if is_zoomed {
-                            roles.on_primary_container
-                        } else {
-                            text_muted
-                        }),
-                        None,
-                        move |window, cx| {
-                            zoom_entity.update(cx, |this, cx| {
-                                this.toggle_zoom_pane(pane_id, window, cx);
-                            });
-                        },
-                    ))
-                    .child(crate::ui::components::icon_button_with_tooltip(
-                        AppIcon::Close,
-                        i18n::string("session.workspace.close_pane"),
-                        22.0,
-                        6.0,
-                        Some(roles.surface_container_high),
-                        Some(text_muted),
-                        None,
-                        move |window, cx| {
-                            close_entity.update(cx, |this, cx| {
-                                this.set_active_pane(pane_id, window, cx);
-                                this.close_active_pane(window, cx);
-                            });
-                        },
-                    )),
-            )
+                )
+            })
             .into_any_element()
     }
 
@@ -905,20 +850,38 @@ impl WorkspacePanesAppViewExt for AppView {
                                     .terminal_has_selection(tab_id)
                             });
                         let command_source = view.controllers.session.clone();
-                        let active_tab_is_local = view
+                        let tab_id = view
                             .workspace
                             .workspace
                             .parked_panes
                             .get(&pane_id)
-                            .and_then(|parked| parked.active_tab)
+                            .and_then(|parked| parked.active_tab);
+                        let active_tab_is_local = tab_id
                             .and_then(|tab_id| view.workspace.tabs.get(tab_id))
                             .is_some_and(|tab| tab.is_plain_terminal());
+                        let cwd_sync_path = tab_id.and_then(|tab_id| {
+                            view.controllers
+                                .sftp
+                                .read(cx)
+                                .has_tab(tab_id)
+                                .then(|| {
+                                    view.session_tab(tab_id, cx)
+                                        .and_then(|s| s.current_directory().map(ToOwned::to_owned))
+                                })
+                                .flatten()
+                        });
 
                         build_terminal_context_menu(
                             menu,
                             command_source,
-                            has_selection,
-                            !active_tab_is_local,
+                            TerminalContextMenuState {
+                                has_selection,
+                                allow_sftp: !active_tab_is_local,
+                                is_split: view.workspace_is_split(),
+                                is_zoomed: view.workspace.workspace.zoomed_pane == Some(pane_id),
+                                sync_panes: view.workspace.workspace.sync_panes,
+                                cwd_sync_path,
+                            },
                             Some(pane_id),
                             window,
                             cx,
@@ -1107,18 +1070,34 @@ impl WorkspacePanesAppViewExt for AppView {
                                     .terminal_has_selection(tab_id)
                             });
                         let command_source = view.controllers.session.clone();
-                        let active_tab_is_local = view
-                            .workspace
-                            .workspace
-                            .active_tab
+                        let tab_id = view.workspace.workspace.active_tab;
+                        let active_tab_is_local = tab_id
                             .and_then(|tab_id| view.workspace.tabs.get(tab_id))
                             .is_some_and(|tab| tab.is_plain_terminal());
+                        let cwd_sync_path = tab_id.and_then(|tab_id| {
+                            view.controllers
+                                .sftp
+                                .read(cx)
+                                .has_tab(tab_id)
+                                .then(|| {
+                                    view.session_tab(tab_id, cx)
+                                        .and_then(|s| s.current_directory().map(ToOwned::to_owned))
+                                })
+                                .flatten()
+                        });
 
                         build_terminal_context_menu(
                             menu,
                             command_source,
-                            has_selection,
-                            !active_tab_is_local,
+                            TerminalContextMenuState {
+                                has_selection,
+                                allow_sftp: !active_tab_is_local,
+                                is_split: view.workspace_is_split(),
+                                is_zoomed: view.workspace.workspace.zoomed_pane
+                                    == Some(view.workspace.workspace.active_pane_id),
+                                sync_panes: view.workspace.workspace.sync_panes,
+                                cwd_sync_path,
+                            },
                             None,
                             window,
                             cx,

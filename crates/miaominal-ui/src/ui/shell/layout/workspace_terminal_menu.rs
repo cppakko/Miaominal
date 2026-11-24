@@ -19,11 +19,19 @@ fn emit_terminal_menu_command(
     });
 }
 
+pub(in crate::ui::shell::layout) struct TerminalContextMenuState {
+    pub(in crate::ui::shell::layout) has_selection: bool,
+    pub(in crate::ui::shell::layout) allow_sftp: bool,
+    pub(in crate::ui::shell::layout) is_split: bool,
+    pub(in crate::ui::shell::layout) is_zoomed: bool,
+    pub(in crate::ui::shell::layout) sync_panes: bool,
+    pub(in crate::ui::shell::layout) cwd_sync_path: Option<String>,
+}
+
 pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
     menu: PopupMenu,
     command_source: Entity<SessionController>,
-    has_selection: bool,
-    allow_sftp: bool,
+    state: TerminalContextMenuState,
     target_pane_id: Option<PaneId>,
     _window: &mut Window,
     _cx: &mut App,
@@ -34,13 +42,16 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
     let split_down = command_source.clone();
     let split_left = command_source.clone();
     let split_up = command_source.clone();
+    let zoom_pane = command_source.clone();
+    let sync_panes = command_source.clone();
     let sftp_entry = command_source.clone();
+    let sftp_cwd = command_source.clone();
     let close = command_source;
 
     let menu = menu
         .item(
             PopupMenuItem::new(i18n::string("workspace.menu.copy"))
-                .disabled(!has_selection)
+                .disabled(!state.has_selection)
                 .on_click(move |_, _window, cx| {
                     emit_terminal_menu_command(
                         &copy,
@@ -111,8 +122,44 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
                 },
             ),
         );
-    let menu = if allow_sftp {
-        menu.item(PopupMenuItem::separator()).item(
+    let menu = if state.is_split {
+        menu.item(PopupMenuItem::separator())
+            .item(
+                PopupMenuItem::new(i18n::string(if state.is_zoomed {
+                    "session.workspace.unzoom_pane"
+                } else {
+                    "session.workspace.zoom_pane"
+                }))
+                .on_click(move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &zoom_pane,
+                        target_pane_id,
+                        TerminalMenuCommand::ToggleZoomPane,
+                        cx,
+                    );
+                }),
+            )
+            .item(
+                PopupMenuItem::new(i18n::string(if state.sync_panes {
+                    "session.workspace.disable_sync_panes"
+                } else {
+                    "session.workspace.enable_sync_panes"
+                }))
+                .checked(state.sync_panes)
+                .on_click(move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &sync_panes,
+                        target_pane_id,
+                        TerminalMenuCommand::ToggleSyncPanes,
+                        cx,
+                    );
+                }),
+            )
+    } else {
+        menu
+    };
+    let menu = if state.allow_sftp {
+        let menu = menu.item(PopupMenuItem::separator()).item(
             PopupMenuItem::new(i18n::string("workspace.menu.open_sftp_tab")).on_click(
                 move |_, _window, cx| {
                     emit_terminal_menu_command(
@@ -123,7 +170,25 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
                     );
                 },
             ),
-        )
+        );
+        if let Some(path) = state.cwd_sync_path {
+            menu.item(
+                PopupMenuItem::new(i18n::string_args(
+                    "session.workspace.sync_sftp_cwd",
+                    &[("path", path.as_str())],
+                ))
+                .on_click(move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &sftp_cwd,
+                        target_pane_id,
+                        TerminalMenuCommand::SyncSftpCwd,
+                        cx,
+                    );
+                }),
+            )
+        } else {
+            menu
+        }
     } else {
         menu
     };

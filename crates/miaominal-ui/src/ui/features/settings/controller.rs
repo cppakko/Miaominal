@@ -573,6 +573,13 @@ pub(in crate::ui) struct SettingsForms {
         Entity<SelectState<Vec<SelectOption<LocalVaultAutoLockDuration>>>>,
     pub(in crate::ui) monitor_history_select:
         Entity<SelectState<Vec<SelectOption<MonitorHistoryDuration>>>>,
+    pub(in crate::ui) terminal_color_scheme_select:
+        Entity<SelectState<Vec<SelectOption<miaominal_settings::TerminalColorScheme>>>>,
+    pub(in crate::ui) terminal_cursor_style_select:
+        Entity<SelectState<Vec<SelectOption<miaominal_settings::TerminalCursorStyle>>>>,
+    pub(in crate::ui) ssh_keepalive_interval_select: Entity<SelectState<Vec<SelectOption<u64>>>>,
+    pub(in crate::ui) ssh_keepalive_max_select: Entity<SelectState<Vec<SelectOption<u32>>>>,
+    pub(in crate::ui) ssh_connect_timeout_select: Entity<SelectState<Vec<SelectOption<u64>>>>,
     pub(in crate::ui) terminal_right_click_behavior_select:
         Entity<SelectState<Vec<SelectOption<TerminalRightClickBehavior>>>>,
     pub(in crate::ui) open_ssh_integration_mode_select:
@@ -818,6 +825,31 @@ impl SettingsController {
             .iter()
             .position(|duration| *duration.value() == settings.monitor_history_duration)
             .map(|index| IndexPath::default().row(index));
+        let terminal_color_scheme_options = terminal_color_scheme_select_options();
+        let selected_terminal_color_scheme = terminal_color_scheme_options
+            .iter()
+            .position(|option| *option.value() == settings.terminal_color_scheme)
+            .map(|index| IndexPath::default().row(index));
+        let terminal_cursor_style_options = terminal_cursor_style_select_options();
+        let selected_terminal_cursor_style = terminal_cursor_style_options
+            .iter()
+            .position(|option| *option.value() == settings.terminal_cursor_style)
+            .map(|index| IndexPath::default().row(index));
+        let ssh_keepalive_interval_options = ssh_keepalive_interval_select_options();
+        let selected_ssh_keepalive_interval = ssh_keepalive_interval_options
+            .iter()
+            .position(|option| *option.value() == settings.ssh_keepalive_interval_secs)
+            .map(|index| IndexPath::default().row(index));
+        let ssh_keepalive_max_options = ssh_keepalive_max_select_options();
+        let selected_ssh_keepalive_max = ssh_keepalive_max_options
+            .iter()
+            .position(|option| *option.value() == settings.ssh_keepalive_max)
+            .map(|index| IndexPath::default().row(index));
+        let ssh_connect_timeout_options = ssh_connect_timeout_select_options();
+        let selected_ssh_connect_timeout = ssh_connect_timeout_options
+            .iter()
+            .position(|option| *option.value() == settings.ssh_connect_timeout_secs)
+            .map(|index| IndexPath::default().row(index));
         let terminal_right_click_behavior_options = vec![
             SelectOption::new(
                 TerminalRightClickBehavior::ContextMenu,
@@ -972,6 +1004,46 @@ impl SettingsController {
                 SelectState::new(
                     monitor_history_options,
                     selected_monitor_history,
+                    window,
+                    cx,
+                )
+            }),
+            terminal_color_scheme_select: cx.new(|cx| {
+                SelectState::new(
+                    terminal_color_scheme_options,
+                    selected_terminal_color_scheme,
+                    window,
+                    cx,
+                )
+            }),
+            terminal_cursor_style_select: cx.new(|cx| {
+                SelectState::new(
+                    terminal_cursor_style_options,
+                    selected_terminal_cursor_style,
+                    window,
+                    cx,
+                )
+            }),
+            ssh_keepalive_interval_select: cx.new(|cx| {
+                SelectState::new(
+                    ssh_keepalive_interval_options,
+                    selected_ssh_keepalive_interval,
+                    window,
+                    cx,
+                )
+            }),
+            ssh_keepalive_max_select: cx.new(|cx| {
+                SelectState::new(
+                    ssh_keepalive_max_options,
+                    selected_ssh_keepalive_max,
+                    window,
+                    cx,
+                )
+            }),
+            ssh_connect_timeout_select: cx.new(|cx| {
+                SelectState::new(
+                    ssh_connect_timeout_options,
+                    selected_ssh_connect_timeout,
                     window,
                     cx,
                 )
@@ -1383,6 +1455,37 @@ impl SettingsController {
             window,
             cx,
         );
+        let settings = self.settings();
+        self.forms
+            .terminal_color_scheme_select
+            .update(cx, |select, cx| {
+                select.set_items(terminal_color_scheme_select_options(), window, cx);
+                select.set_selected_value(&settings.terminal_color_scheme, window, cx);
+            });
+        self.forms
+            .terminal_cursor_style_select
+            .update(cx, |select, cx| {
+                select.set_items(terminal_cursor_style_select_options(), window, cx);
+                select.set_selected_value(&settings.terminal_cursor_style, window, cx);
+            });
+        self.forms
+            .ssh_keepalive_interval_select
+            .update(cx, |select, cx| {
+                select.set_items(ssh_keepalive_interval_select_options(), window, cx);
+                select.set_selected_value(&settings.ssh_keepalive_interval_secs, window, cx);
+            });
+        self.forms
+            .ssh_keepalive_max_select
+            .update(cx, |select, cx| {
+                select.set_items(ssh_keepalive_max_select_options(), window, cx);
+                select.set_selected_value(&settings.ssh_keepalive_max, window, cx);
+            });
+        self.forms
+            .ssh_connect_timeout_select
+            .update(cx, |select, cx| {
+                select.set_items(ssh_connect_timeout_select_options(), window, cx);
+                select.set_selected_value(&settings.ssh_connect_timeout_secs, window, cx);
+            });
     }
 
     pub(in crate::ui) fn emit(&mut self, command: AppCommand, cx: &mut Context<Self>) {
@@ -1671,6 +1774,11 @@ impl SettingsController {
         let local_vault_auto_lock_duration_select =
             forms.local_vault_auto_lock_duration_select.clone();
         let monitor_history_select = forms.monitor_history_select.clone();
+        let terminal_color_scheme_select = forms.terminal_color_scheme_select.clone();
+        let terminal_cursor_style_select = forms.terminal_cursor_style_select.clone();
+        let ssh_keepalive_interval_select = forms.ssh_keepalive_interval_select.clone();
+        let ssh_keepalive_max_select = forms.ssh_keepalive_max_select.clone();
+        let ssh_connect_timeout_select = forms.ssh_connect_timeout_select.clone();
         let terminal_right_click_behavior_select =
             forms.terminal_right_click_behavior_select.clone();
         let open_ssh_integration_mode_select = forms.open_ssh_integration_mode_select.clone();
@@ -1774,6 +1882,51 @@ impl SettingsController {
                     cx.notify();
                 }
             });
+        let terminal_color_scheme_subscription = cx.subscribe(
+            &terminal_color_scheme_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(scheme) = selected.as_ref().copied() {
+                    this.set_terminal_color_scheme(scheme, cx);
+                }
+            },
+        );
+        let terminal_cursor_style_subscription = cx.subscribe(
+            &terminal_cursor_style_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(style) = selected.as_ref().copied() {
+                    this.set_terminal_cursor_style(style, cx);
+                }
+            },
+        );
+        let ssh_keepalive_interval_subscription = cx.subscribe(
+            &ssh_keepalive_interval_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(secs) = selected.as_ref().copied() {
+                    this.set_ssh_keepalive_interval_secs(secs, cx);
+                }
+            },
+        );
+        let ssh_keepalive_max_subscription = cx.subscribe(
+            &ssh_keepalive_max_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(count) = selected.as_ref().copied() {
+                    this.set_ssh_keepalive_max(count, cx);
+                }
+            },
+        );
+        let ssh_connect_timeout_subscription = cx.subscribe(
+            &ssh_connect_timeout_select,
+            |this: &mut Self, _, event, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                if let Some(secs) = selected.as_ref().copied() {
+                    this.set_ssh_connect_timeout_secs(secs, cx);
+                }
+            },
+        );
         let terminal_right_click_behavior_subscription = cx.subscribe(
             &terminal_right_click_behavior_select,
             |this: &mut Self, _, event, cx| {
@@ -1964,6 +2117,11 @@ impl SettingsController {
                 window_close_behavior_subscription,
                 local_vault_auto_lock_duration_subscription,
                 monitor_history_subscription,
+                terminal_color_scheme_subscription,
+                terminal_cursor_style_subscription,
+                ssh_keepalive_interval_subscription,
+                ssh_keepalive_max_subscription,
+                ssh_connect_timeout_subscription,
                 terminal_right_click_behavior_subscription,
                 open_ssh_integration_mode_subscription,
                 ssh_bridge_security_level_subscription,
@@ -2818,6 +2976,32 @@ impl SettingsController {
             select.set_selected_value(&settings.monitor_history_duration, window, cx);
         });
         self.forms
+            .terminal_color_scheme_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.terminal_color_scheme, window, cx);
+            });
+        self.forms
+            .terminal_cursor_style_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.terminal_cursor_style, window, cx);
+            });
+        self.forms
+            .ssh_keepalive_interval_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.ssh_keepalive_interval_secs, window, cx);
+            });
+        self.forms
+            .ssh_keepalive_max_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.ssh_keepalive_max, window, cx);
+            });
+        self.forms
+            .ssh_connect_timeout_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(&settings.ssh_connect_timeout_secs, window, cx);
+            });
+        self.apply_ssh_network_timeouts();
+        self.forms
             .terminal_right_click_behavior_select
             .update(cx, |select, cx| {
                 select.set_selected_value(&settings.terminal_right_click_behavior, window, cx);
@@ -3079,9 +3263,10 @@ impl SettingsController {
         normalized: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        let changed = self
-            .settings_store
-            .update(|settings| settings.seed_color = normalized.clone());
+        let changed = self.settings_store.update(|settings| {
+            settings.seed_color = normalized.clone();
+            settings.terminal_color_scheme = miaominal_settings::TerminalColorScheme::ThemeDefault;
+        });
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -3099,9 +3284,10 @@ impl SettingsController {
         cx: &mut Context<Self>,
     ) -> bool {
         let default_seed = crate::ui::theme::DEFAULT_SEED_COLOR.to_string();
-        let changed = self
-            .settings_store
-            .update(|settings| settings.seed_color = default_seed.clone());
+        let changed = self.settings_store.update(|settings| {
+            settings.seed_color = default_seed.clone();
+            settings.terminal_color_scheme = miaominal_settings::TerminalColorScheme::ThemeDefault;
+        });
         let default_color =
             miaominal_settings::Theme::from_settings(self.settings_store.settings())
                 .material
@@ -3109,6 +3295,15 @@ impl SettingsController {
         self.forms.seed_color_picker.update(cx, |picker, cx| {
             picker.set_value(rgb(default_color), window, cx);
         });
+        self.forms
+            .terminal_color_scheme_select
+            .update(cx, |select, cx| {
+                select.set_selected_value(
+                    &miaominal_settings::TerminalColorScheme::ThemeDefault,
+                    window,
+                    cx,
+                );
+            });
         if changed {
             miaominal_settings::sync_component_theme(cx);
             cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -3121,10 +3316,10 @@ impl SettingsController {
     }
 
     pub(in crate::ui) fn set_theme(&mut self, theme_id: ThemeId, cx: &mut Context<Self>) {
-        if self
-            .settings_store
-            .update(|settings| settings.theme_id = theme_id)
-        {
+        if self.settings_store.update(|settings| {
+            settings.theme_id = theme_id;
+            settings.terminal_color_scheme = miaominal_settings::TerminalColorScheme::ThemeDefault;
+        }) {
             miaominal_settings::sync_component_theme(cx);
             let theme = theme_id_label(theme_id);
             cx.emit(AppCommand::Feedback(i18n::string_args(
@@ -3140,10 +3335,12 @@ impl SettingsController {
         scheme: miaominal_settings::TerminalColorScheme,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .settings_store
-            .update(|settings| settings.terminal_color_scheme = scheme)
-        {
+        if self.settings_store.update(|settings| {
+            settings.terminal_color_scheme = scheme;
+            if scheme != miaominal_settings::TerminalColorScheme::ThemeDefault {
+                settings.theme_id = ThemeId::Dark;
+            }
+        }) {
             miaominal_settings::sync_component_theme(cx);
             cx.notify();
         }
@@ -3217,7 +3414,94 @@ impl SettingsController {
             cx.notify();
         }
     }
+}
 
+fn terminal_color_scheme_label(scheme: miaominal_settings::TerminalColorScheme) -> String {
+    match scheme {
+        miaominal_settings::TerminalColorScheme::ThemeDefault => {
+            i18n::string("settings.appearance.terminal_color_schemes.theme_default")
+        }
+        miaominal_settings::TerminalColorScheme::Dracula => "Dracula".to_string(),
+        miaominal_settings::TerminalColorScheme::Nord => "Nord".to_string(),
+        miaominal_settings::TerminalColorScheme::CatppuccinMocha => "Catppuccin Mocha".to_string(),
+        miaominal_settings::TerminalColorScheme::SolarizedDark => "Solarized Dark".to_string(),
+        miaominal_settings::TerminalColorScheme::TokyoNight => "Tokyo Night".to_string(),
+        miaominal_settings::TerminalColorScheme::OneDark => "One Dark".to_string(),
+    }
+}
+
+fn terminal_color_scheme_select_options()
+-> Vec<SelectOption<miaominal_settings::TerminalColorScheme>> {
+    miaominal_settings::TerminalColorScheme::ALL
+        .iter()
+        .copied()
+        .map(|scheme| SelectOption::new(scheme, terminal_color_scheme_label(scheme)))
+        .collect()
+}
+
+fn terminal_cursor_style_label(style: miaominal_settings::TerminalCursorStyle) -> String {
+    match style {
+        miaominal_settings::TerminalCursorStyle::Block => {
+            i18n::string("settings.appearance.terminal_cursor_styles.block")
+        }
+        miaominal_settings::TerminalCursorStyle::Beam => {
+            i18n::string("settings.appearance.terminal_cursor_styles.beam")
+        }
+        miaominal_settings::TerminalCursorStyle::Underline => {
+            i18n::string("settings.appearance.terminal_cursor_styles.underline")
+        }
+    }
+}
+
+fn terminal_cursor_style_select_options()
+-> Vec<SelectOption<miaominal_settings::TerminalCursorStyle>> {
+    miaominal_settings::TerminalCursorStyle::ALL
+        .iter()
+        .copied()
+        .map(|style| SelectOption::new(style, terminal_cursor_style_label(style)))
+        .collect()
+}
+
+fn ssh_keepalive_interval_select_options() -> Vec<SelectOption<u64>> {
+    [0u64, 15, 30, 60, 120, 300]
+        .into_iter()
+        .map(|secs| {
+            let label = if secs == 0 {
+                i18n::string("settings.connections.ssh_keepalive_disabled")
+            } else {
+                i18n::string_args(
+                    "settings.connections.seconds_option",
+                    &[("seconds", &secs.to_string())],
+                )
+            };
+            SelectOption::new(secs, label)
+        })
+        .collect()
+}
+
+fn ssh_keepalive_max_select_options() -> Vec<SelectOption<u32>> {
+    [1u32, 3, 5, 10]
+        .into_iter()
+        .map(|count| SelectOption::new(count, count.to_string()))
+        .collect()
+}
+
+fn ssh_connect_timeout_select_options() -> Vec<SelectOption<u64>> {
+    [5u64, 10, 15, 30, 60]
+        .into_iter()
+        .map(|secs| {
+            SelectOption::new(
+                secs,
+                i18n::string_args(
+                    "settings.connections.seconds_option",
+                    &[("seconds", &secs.to_string())],
+                ),
+            )
+        })
+        .collect()
+}
+
+impl SettingsController {
     pub(in crate::ui) fn set_language(&mut self, language: AppLanguage, cx: &mut Context<Self>) {
         if self
             .settings_store

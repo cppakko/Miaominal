@@ -1410,6 +1410,13 @@ impl ChromeAppViewExt for AppView {
             f32::from(window.bounds().size.width) / (f32::from(window.rem_size()) / 14.0) > 1100.0;
         let monitor = entity.clone();
         let agent = entity.clone();
+        let sync_panes_entity = entity.clone();
+        let zoom_pane_entity = entity.clone();
+        let workspace_is_split = workspace && self.workspace_is_split();
+        let sync_panes_active = workspace_is_split && self.workspace.workspace.sync_panes;
+        let active_pane_id = self.workspace.workspace.active_pane_id;
+        let zoom_pane_active =
+            workspace_is_split && self.workspace.workspace.zoomed_pane == Some(active_pane_id);
         let session_id = self
             .active_terminal_session_index(cx)
             .and_then(|index| self.workspace.tabs.id_at(index));
@@ -1537,7 +1544,55 @@ impl ChromeAppViewExt for AppView {
                             .flex_shrink_0()
                             .gap(space(4.0))
                             .when(workspace, |row| {
-                                row.when_some(favorite_toggle, |row, (id, open)| {
+                                row.when(workspace_is_split, |row| {
+                                    row.child(
+                                        tool(
+                                            "workspace-sync-panes-toggle",
+                                            AppIcon::ArrowUpDown,
+                                            i18n::string(if sync_panes_active {
+                                                "session.workspace.disable_sync_panes"
+                                            } else {
+                                                "session.workspace.enable_sync_panes"
+                                            }),
+                                            sync_panes_active,
+                                        )
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                sync_panes_entity.update(cx, |this, cx| {
+                                                    this.toggle_sync_panes(cx);
+                                                });
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        tool(
+                                            "workspace-zoom-pane-toggle",
+                                            if zoom_pane_active {
+                                                AppIcon::Restore
+                                            } else {
+                                                AppIcon::Maximize
+                                            },
+                                            i18n::string(if zoom_pane_active {
+                                                "session.workspace.unzoom_pane"
+                                            } else {
+                                                "session.workspace.zoom_pane"
+                                            }),
+                                            zoom_pane_active,
+                                        )
+                                        .on_click(
+                                            move |_, window, cx| {
+                                                zoom_pane_entity.update(cx, |this, cx| {
+                                                    this.toggle_zoom_pane(
+                                                        active_pane_id,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        ),
+                                    )
+                                })
+                                .when_some(favorite_toggle, |row, (id, open)| {
                                     row.child(
                                         tool(
                                             "sftp-favorites-panel-toggle",

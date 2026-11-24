@@ -116,6 +116,153 @@ impl TerminalPalette {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SchemeSurfacePreset {
+    seed: u32,
+    background: u32,
+    surface: u32,
+    surface_dim: u32,
+    surface_bright: u32,
+    surface_container_lowest: u32,
+    surface_container_low: u32,
+    surface_container: u32,
+    surface_container_high: u32,
+    surface_container_highest: u32,
+    surface_variant: u32,
+    on_surface: u32,
+    on_surface_variant: u32,
+    outline: u32,
+    outline_variant: u32,
+}
+
+impl SchemeSurfacePreset {
+    fn for_scheme(scheme: TerminalColorScheme) -> Option<Self> {
+        match scheme {
+            TerminalColorScheme::ThemeDefault => None,
+            TerminalColorScheme::Dracula => Some(Self {
+                seed: 0xbd93f9,
+                background: 0x21222c,
+                surface: 0x282a36,
+                surface_dim: 0x1e1f29,
+                surface_bright: 0x3b3e52,
+                surface_container_lowest: 0x191a21,
+                surface_container_low: 0x21222c,
+                surface_container: 0x2c2f3d,
+                surface_container_high: 0x343746,
+                surface_container_highest: 0x44475a,
+                surface_variant: 0x383a59,
+                on_surface: 0xf8f8f2,
+                on_surface_variant: 0xb6b9d1,
+                outline: 0x6272a4,
+                outline_variant: 0x44475a,
+            }),
+            TerminalColorScheme::Nord => Some(Self {
+                seed: 0x88c0d0,
+                background: 0x242933,
+                surface: 0x2e3440,
+                surface_dim: 0x242933,
+                surface_bright: 0x434c5e,
+                surface_container_lowest: 0x1f242d,
+                surface_container_low: 0x272c36,
+                surface_container: 0x343b49,
+                surface_container_high: 0x3b4252,
+                surface_container_highest: 0x434c5e,
+                surface_variant: 0x3b4252,
+                on_surface: 0xeceff4,
+                on_surface_variant: 0xbac4d4,
+                outline: 0x6c7a96,
+                outline_variant: 0x434c5e,
+            }),
+            TerminalColorScheme::CatppuccinMocha => Some(Self {
+                seed: 0x89b4fa,
+                background: 0x181825,
+                surface: 0x1e1e2e,
+                surface_dim: 0x11111b,
+                surface_bright: 0x313244,
+                surface_container_lowest: 0x11111b,
+                surface_container_low: 0x181825,
+                surface_container: 0x242537,
+                surface_container_high: 0x313244,
+                surface_container_highest: 0x45475a,
+                surface_variant: 0x313244,
+                on_surface: 0xcdd6f4,
+                on_surface_variant: 0xa6adc8,
+                outline: 0x6c7086,
+                outline_variant: 0x45475a,
+            }),
+            TerminalColorScheme::SolarizedDark => Some(Self {
+                seed: 0x2aa198,
+                background: 0x00212b,
+                surface: 0x002b36,
+                surface_dim: 0x001e26,
+                surface_bright: 0x0b4352,
+                surface_container_lowest: 0x001a21,
+                surface_container_low: 0x00242e,
+                surface_container: 0x04313d,
+                surface_container_high: 0x073642,
+                surface_container_highest: 0x0e4452,
+                surface_variant: 0x073642,
+                on_surface: 0xeee8d5,
+                on_surface_variant: 0x93a1a1,
+                outline: 0x586e75,
+                outline_variant: 0x1a4b57,
+            }),
+            TerminalColorScheme::TokyoNight => Some(Self {
+                seed: 0x7aa2f7,
+                background: 0x16161e,
+                surface: 0x1a1b26,
+                surface_dim: 0x13141c,
+                surface_bright: 0x2f3549,
+                surface_container_lowest: 0x11121a,
+                surface_container_low: 0x16161e,
+                surface_container: 0x1f2335,
+                surface_container_high: 0x24283b,
+                surface_container_highest: 0x2f3549,
+                surface_variant: 0x24283b,
+                on_surface: 0xc0caf5,
+                on_surface_variant: 0x9aa5ce,
+                outline: 0x565f89,
+                outline_variant: 0x3b4261,
+            }),
+            TerminalColorScheme::OneDark => Some(Self {
+                seed: 0x61afef,
+                background: 0x21252b,
+                surface: 0x282c34,
+                surface_dim: 0x1d2026,
+                surface_bright: 0x3a404c,
+                surface_container_lowest: 0x1b1e24,
+                surface_container_low: 0x21252b,
+                surface_container: 0x2c313c,
+                surface_container_high: 0x333844,
+                surface_container_highest: 0x3e4451,
+                surface_variant: 0x333844,
+                on_surface: 0xd7dae0,
+                on_surface_variant: 0x9da5b4,
+                outline: 0x5c6370,
+                outline_variant: 0x3e4451,
+            }),
+        }
+    }
+
+    fn apply_to_material(self, material: &mut MaterialTheme) {
+        material.roles.background = self.background;
+        material.roles.on_background = self.on_surface;
+        material.roles.surface = self.surface;
+        material.roles.surface_dim = self.surface_dim;
+        material.roles.surface_bright = self.surface_bright;
+        material.roles.surface_container_lowest = self.surface_container_lowest;
+        material.roles.surface_container_low = self.surface_container_low;
+        material.roles.surface_container = self.surface_container;
+        material.roles.surface_container_high = self.surface_container_high;
+        material.roles.surface_container_highest = self.surface_container_highest;
+        material.roles.surface_variant = self.surface_variant;
+        material.roles.on_surface = self.on_surface;
+        material.roles.on_surface_variant = self.on_surface_variant;
+        material.roles.outline = self.outline;
+        material.roles.outline_variant = self.outline_variant;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub material: MaterialTheme,
@@ -125,7 +272,14 @@ pub struct Theme {
 impl Theme {
     pub fn from_settings(settings: &AppSettings) -> Self {
         let material =
-            material_theme::build_theme(settings.seed_argb(), settings.theme_id.is_dark());
+            if let Some(preset) = SchemeSurfacePreset::for_scheme(settings.terminal_color_scheme) {
+                let seed = material_colors::color::Argb::from_u32(0xff00_0000 | preset.seed);
+                let mut theme = material_theme::build_theme(seed, true);
+                preset.apply_to_material(&mut theme);
+                theme
+            } else {
+                material_theme::build_theme(settings.seed_argb(), settings.theme_id.is_dark())
+            };
 
         Self {
             terminal: TerminalPalette::from_scheme_and_material(
@@ -485,5 +639,25 @@ max_channels_per_connection = 1000
             settings.completed_onboarding_version,
             CURRENT_ONBOARDING_VERSION
         );
+    }
+
+    #[test]
+    fn terminal_color_scheme_preset_harmonizes_app_and_terminal_surfaces() {
+        let settings = AppSettings {
+            theme_id: ThemeId::Light,
+            terminal_color_scheme: TerminalColorScheme::Dracula,
+            ..AppSettings::default()
+        };
+        let theme = Theme::from_settings(&settings);
+        assert!(theme.material.dark);
+        assert_eq!(theme.material.roles.surface, theme.terminal.default_bg);
+        assert_eq!(theme.material.roles.on_surface, theme.terminal.default_fg);
+
+        let nord = Theme::from_settings(&AppSettings {
+            terminal_color_scheme: TerminalColorScheme::Nord,
+            ..AppSettings::default()
+        });
+        assert!(nord.material.dark);
+        assert_eq!(nord.material.roles.surface, nord.terminal.default_bg);
     }
 }

@@ -89,11 +89,11 @@ label = "Seed color"
 description = "Sets the application colors, terminal background, and ANSI palette."
 
 [settings.appearance.terminal_color_scheme]
-label = "Terminal color scheme"
-description = "Use the Material 3 theme palette or choose an independent terminal color scheme."
+label = "Color theme preset"
+description = "Follow the custom Material 3 seed theme, or apply a coordinated palette preset across both the interface and terminal."
 
 [settings.appearance.terminal_color_schemes]
-theme_default = "Follow app theme"
+theme_default = "Follow Material 3 seed"
 
 [settings.appearance.terminal_cursor_style]
 label = "Terminal cursor style"
@@ -891,7 +891,8 @@ enable_sync_panes = "Broadcast input to all panes"
 disable_sync_panes = "Stop broadcasting input"
 sync_panes_enabled = "Broadcasting input to all split panes"
 sync_panes_disabled = "Stopped broadcasting input to split panes"
-close_pane = "Close pane"
+sync_panes_badge = "Broadcasting"
+zoomed_badge = "Zoomed"
 sync_sftp_cwd = "Sync SFTP to {path}"
 
 [chrome.menu]

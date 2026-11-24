@@ -363,32 +363,14 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
                     .description(i18n::string("settings.appearance.seed_color.description")),
                     SettingItem::new(
                         i18n::string("settings.appearance.terminal_color_scheme.label"),
-                        SettingField::render({
-                            let entity = entity.clone();
-                            move |options, _, cx| {
-                                render_terminal_color_scheme_menu(
-                                    entity.clone(),
-                                    options.size(),
-                                    cx,
-                                )
-                            }
-                        }),
+                        SettingField::element(TerminalColorSchemeField::new(entity.clone())),
                     )
                     .description(i18n::string(
                         "settings.appearance.terminal_color_scheme.description",
                     )),
                     SettingItem::new(
                         i18n::string("settings.appearance.terminal_cursor_style.label"),
-                        SettingField::render({
-                            let entity = entity.clone();
-                            move |options, _, cx| {
-                                render_terminal_cursor_style_menu(
-                                    entity.clone(),
-                                    options.size(),
-                                    cx,
-                                )
-                            }
-                        }),
+                        SettingField::element(TerminalCursorStyleField::new(entity.clone())),
                     )
                     .description(i18n::string(
                         "settings.appearance.terminal_cursor_style.description",
@@ -397,211 +379,82 @@ fn appearance_page(entity: Entity<SettingsController>) -> SettingPage {
         ]))
 }
 
-fn terminal_color_scheme_label(scheme: miaominal_settings::TerminalColorScheme) -> String {
-    match scheme {
-        miaominal_settings::TerminalColorScheme::ThemeDefault => {
-            i18n::string("settings.appearance.terminal_color_schemes.theme_default")
+macro_rules! settings_select_field {
+    ($name:ident, $field:ident) => {
+        #[derive(Clone)]
+        struct $name {
+            controller: Entity<SettingsController>,
         }
-        miaominal_settings::TerminalColorScheme::Dracula => "Dracula".to_string(),
-        miaominal_settings::TerminalColorScheme::Nord => "Nord".to_string(),
-        miaominal_settings::TerminalColorScheme::CatppuccinMocha => "Catppuccin Mocha".to_string(),
-        miaominal_settings::TerminalColorScheme::SolarizedDark => "Solarized Dark".to_string(),
-        miaominal_settings::TerminalColorScheme::TokyoNight => "Tokyo Night".to_string(),
-        miaominal_settings::TerminalColorScheme::OneDark => "One Dark".to_string(),
+
+        impl $name {
+            fn new(controller: Entity<SettingsController>) -> Self {
+                Self { controller }
+            }
+        }
+
+        impl SettingFieldElement for $name {
+            type Element = AnyElement;
+
+            fn render_field(
+                &self,
+                options: &RenderOptions,
+                _window: &mut Window,
+                cx: &mut App,
+            ) -> Self::Element {
+                let select_state = self.controller.read(cx).forms.$field.clone();
+
+                md3_select(&select_state)
+                    .with_size(options.size())
+                    .w_full()
+                    .into_any_element()
+            }
+        }
+    };
+}
+
+struct TerminalColorSchemeField {
+    controller: Entity<SettingsController>,
+}
+
+impl TerminalColorSchemeField {
+    fn new(controller: Entity<SettingsController>) -> Self {
+        Self { controller }
     }
 }
 
-fn terminal_cursor_style_label(style: miaominal_settings::TerminalCursorStyle) -> String {
-    match style {
-        miaominal_settings::TerminalCursorStyle::Block => {
-            i18n::string("settings.appearance.terminal_cursor_styles.block")
-        }
-        miaominal_settings::TerminalCursorStyle::Beam => {
-            i18n::string("settings.appearance.terminal_cursor_styles.beam")
-        }
-        miaominal_settings::TerminalCursorStyle::Underline => {
-            i18n::string("settings.appearance.terminal_cursor_styles.underline")
-        }
-    }
-}
+impl SettingFieldElement for TerminalColorSchemeField {
+    type Element = AnyElement;
 
-fn render_terminal_color_scheme_menu(
-    entity: Entity<SettingsController>,
-    size: Size,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-    let current = entity.read(cx).settings().terminal_color_scheme;
-    let label = terminal_color_scheme_label(current);
-    let menu_entity = entity.clone();
-    Button::new("settings-terminal-color-scheme")
-        .outline()
-        .with_size(size)
-        .dropdown_caret(true)
-        .label(label)
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(180.0);
-            for scheme in miaominal_settings::TerminalColorScheme::ALL {
-                let entity = menu_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(terminal_color_scheme_label(scheme))
-                        .checked(current == scheme)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.set_terminal_color_scheme(scheme, cx);
-                            });
-                        }),
-                );
-            }
-            menu
-        })
-        .into_any_element()
-}
-
-fn render_terminal_cursor_style_menu(
-    entity: Entity<SettingsController>,
-    size: Size,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-    let current = entity.read(cx).settings().terminal_cursor_style;
-    let label = terminal_cursor_style_label(current);
-    let menu_entity = entity.clone();
-    Button::new("settings-terminal-cursor-style")
-        .outline()
-        .with_size(size)
-        .dropdown_caret(true)
-        .label(label)
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(160.0);
-            for style in miaominal_settings::TerminalCursorStyle::ALL {
-                let entity = menu_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(terminal_cursor_style_label(style))
-                        .checked(current == style)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.set_terminal_cursor_style(style, cx);
-                            });
-                        }),
-                );
-            }
-            menu
-        })
-        .into_any_element()
-}
-
-fn render_ssh_keepalive_interval_menu(
-    entity: Entity<SettingsController>,
-    size: Size,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-    let current = entity.read(cx).settings().ssh_keepalive_interval_secs;
-    let label_for = |secs: u64| {
-        if secs == 0 {
-            i18n::string("settings.connections.ssh_keepalive_disabled")
-        } else {
-            i18n::string_args(
-                "settings.connections.seconds_option",
-                &[("seconds", &secs.to_string())],
+    fn render_field(
+        &self,
+        options: &RenderOptions,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::Element {
+        let (select_state, current_scheme) = {
+            let controller = self.controller.read(cx);
+            (
+                controller.forms.terminal_color_scheme_select.clone(),
+                controller.settings().terminal_color_scheme,
             )
+        };
+        if select_state.read(cx).selected_value() != Some(&current_scheme) {
+            select_state.update(cx, |select, cx| {
+                select.set_selected_value(&current_scheme, window, cx);
+            });
         }
-    };
-    let menu_entity = entity.clone();
-    Button::new("settings-ssh-keepalive-interval")
-        .outline()
-        .with_size(size)
-        .dropdown_caret(true)
-        .label(label_for(current))
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(140.0);
-            for secs in [0u64, 15, 30, 60, 120, 300] {
-                let entity = menu_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(label_for(secs))
-                        .checked(current == secs)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.set_ssh_keepalive_interval_secs(secs, cx);
-                            });
-                        }),
-                );
-            }
-            menu
-        })
-        .into_any_element()
+
+        md3_select(&select_state)
+            .with_size(options.size())
+            .w_full()
+            .into_any_element()
+    }
 }
 
-fn render_ssh_keepalive_max_menu(
-    entity: Entity<SettingsController>,
-    size: Size,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-    let current = entity.read(cx).settings().ssh_keepalive_max;
-    let menu_entity = entity.clone();
-    Button::new("settings-ssh-keepalive-max")
-        .outline()
-        .with_size(size)
-        .dropdown_caret(true)
-        .label(current.to_string())
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(120.0);
-            for count in [1u32, 3, 5, 10] {
-                let entity = menu_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(count.to_string())
-                        .checked(current == count)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.set_ssh_keepalive_max(count, cx);
-                            });
-                        }),
-                );
-            }
-            menu
-        })
-        .into_any_element()
-}
-
-fn render_ssh_connect_timeout_menu(
-    entity: Entity<SettingsController>,
-    size: Size,
-    cx: &App,
-) -> gpui_kit::AnyElement {
-    use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-    let current = entity.read(cx).settings().ssh_connect_timeout_secs;
-    let label_for = |secs: u64| {
-        i18n::string_args(
-            "settings.connections.seconds_option",
-            &[("seconds", &secs.to_string())],
-        )
-    };
-    let menu_entity = entity.clone();
-    Button::new("settings-ssh-connect-timeout")
-        .outline()
-        .with_size(size)
-        .dropdown_caret(true)
-        .label(label_for(current))
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu.min_w(140.0);
-            for secs in [5u64, 10, 15, 30, 60] {
-                let entity = menu_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(label_for(secs))
-                        .checked(current == secs)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.set_ssh_connect_timeout_secs(secs, cx);
-                            });
-                        }),
-                );
-            }
-            menu
-        })
-        .into_any_element()
-}
+settings_select_field!(TerminalCursorStyleField, terminal_cursor_style_select);
+settings_select_field!(SshKeepaliveIntervalField, ssh_keepalive_interval_select);
+settings_select_field!(SshKeepaliveMaxField, ssh_keepalive_max_select);
+settings_select_field!(SshConnectTimeoutField, ssh_connect_timeout_select);
 
 fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
     let (group_ids, groups) = named_setting_groups![
@@ -646,36 +499,21 @@ fn connections_page(settings: Entity<SettingsController>) -> NamedSettingPage {
             .items(vec![
                 SettingItem::new(
                     i18n::string("settings.connections.ssh_keepalive_interval.label"),
-                    SettingField::render({
-                        let entity = settings.clone();
-                        move |options, _, cx| {
-                            render_ssh_keepalive_interval_menu(entity.clone(), options.size(), cx)
-                        }
-                    }),
+                    SettingField::element(SshKeepaliveIntervalField::new(settings.clone())),
                 )
                 .description(i18n::string(
                     "settings.connections.ssh_keepalive_interval.description",
                 )),
                 SettingItem::new(
                     i18n::string("settings.connections.ssh_keepalive_max.label"),
-                    SettingField::render({
-                        let entity = settings.clone();
-                        move |options, _, cx| {
-                            render_ssh_keepalive_max_menu(entity.clone(), options.size(), cx)
-                        }
-                    }),
+                    SettingField::element(SshKeepaliveMaxField::new(settings.clone())),
                 )
                 .description(i18n::string(
                     "settings.connections.ssh_keepalive_max.description",
                 )),
                 SettingItem::new(
                     i18n::string("settings.connections.ssh_connect_timeout.label"),
-                    SettingField::render({
-                        let entity = settings.clone();
-                        move |options, _, cx| {
-                            render_ssh_connect_timeout_menu(entity.clone(), options.size(), cx)
-                        }
-                    }),
+                    SettingField::element(SshConnectTimeoutField::new(settings.clone())),
                 )
                 .description(i18n::string(
                     "settings.connections.ssh_connect_timeout.description",

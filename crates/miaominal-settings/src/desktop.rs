@@ -13,7 +13,7 @@ pub fn sync_component_theme(cx: &mut App) {
     let app_settings = current_settings();
     let theme = current_theme();
     let material = theme.material;
-    let is_dark = app_settings.theme_id.is_dark();
+    let is_dark = material.dark;
     let primary_hover_tone = if is_dark { 70 } else { 35 };
     let primary_active_tone = if is_dark { 60 } else { 30 };
     let secondary_hover_tone = if is_dark { 80 } else { 88 };

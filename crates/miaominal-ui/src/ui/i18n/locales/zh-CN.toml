@@ -85,11 +85,11 @@ label = "种子色"
 description = "设置应用配色、终端背景和 ANSI 调色板。"
 
 [settings.appearance.terminal_color_scheme]
-label = "终端配色方案"
-description = "跟随 Material 3 主题配色，或选择独立的经典终端配色方案。"
+label = "配色主题预设"
+description = "使用上方自定义 Material 3 种子色主题，或将经典配色预设同步应用到整个界面与终端。"
 
 [settings.appearance.terminal_color_schemes]
-theme_default = "跟随应用主题"
+theme_default = "跟随 Material 3 种子色"
 
 [settings.appearance.terminal_cursor_style]
 label = "终端光标样式"
@@ -746,7 +746,8 @@ enable_sync_panes = "向所有分屏窗格广播输入"
 disable_sync_panes = "停止广播输入"
 sync_panes_enabled = "已开启多窗格广播输入"
 sync_panes_disabled = "已关闭多窗格广播输入"
-close_pane = "关闭窗格"
+sync_panes_badge = "广播中"
+zoomed_badge = "已最大化"
 sync_sftp_cwd = "同步 SFTP 目录到 {path}"
 
 [chrome.menu]

@@ -80,7 +80,10 @@ pub(in crate::ui) enum TerminalMenuCommand {
     Copy,
     Paste,
     Split(SplitDirection),
+    ToggleZoomPane,
+    ToggleSyncPanes,
     OpenSftp,
+    SyncSftpCwd,
     ClosePane,
 }
 

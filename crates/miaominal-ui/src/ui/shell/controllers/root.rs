@@ -887,11 +887,30 @@ impl AppView {
                     TerminalMenuCommand::Split(direction) => {
                         self.split_active_pane(*direction, window, cx)
                     }
+                    TerminalMenuCommand::ToggleZoomPane => {
+                        let pane_id = self.workspace.workspace.active_pane_id;
+                        self.toggle_zoom_pane(pane_id, window, cx);
+                    }
+                    TerminalMenuCommand::ToggleSyncPanes => {
+                        self.toggle_sync_panes(cx);
+                    }
                     TerminalMenuCommand::OpenSftp => self.open_sftp_tab_for_session(
                         self.workspace.workspace.active_tab,
                         window,
                         cx,
                     ),
+                    TerminalMenuCommand::SyncSftpCwd => {
+                        if let Some(tab_id) = self.workspace.workspace.active_tab
+                            && let Some(dir) = self
+                                .session_tab(tab_id, cx)
+                                .and_then(|s| s.current_directory().map(ToOwned::to_owned))
+                        {
+                            let sftp = self.controllers.sftp.clone();
+                            sftp.update(cx, |controller, cx| {
+                                controller.navigate_remote_path(tab_id, dir, cx);
+                            });
+                        }
+                    }
                     TerminalMenuCommand::ClosePane => self.close_active_pane(window, cx),
                 }
             }
