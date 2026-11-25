@@ -85,6 +85,10 @@ pub(in crate::ui) enum TerminalMenuCommand {
     OpenSftp,
     SyncSftpCwd,
     ClosePane,
+    JumpPreviousCommand,
+    JumpNextCommand,
+    CopyCommandOutput(u64),
+    DiagnoseCommandWithAi(u64),
 }
 
 #[derive(Clone, Debug)]

@@ -19,6 +19,7 @@ use std::thread;
 
 mod color;
 mod input;
+mod shell_integration;
 
 pub use color::TerminalColor;
 pub use input::{
@@ -27,6 +28,10 @@ pub use input::{
     sanitize_paste,
 };
 use miaominal_settings as settings;
+pub use shell_integration::{
+    CommandBlockStatus, TerminalCommandBlockContent, TerminalCommandMarker,
+};
+use shell_integration::{Osc133Scanner, ShellIntegrationState, TerminalControlEvent};
 
 /// Maximum number of regex matches retained when running a scrollback search.
 pub const MAX_SEARCH_MATCHES: usize = 1000;
@@ -383,6 +388,8 @@ pub struct TerminalSnapshot {
     pub search_total: usize,
     #[allow(dead_code)]
     pub search_current: Option<usize>,
+    pub command_markers: Vec<TerminalCommandMarker>,
+    pub focused_command_id: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -514,6 +521,8 @@ struct TerminalCore {
     term: Term<MiaominalListener>,
     parser: Processor,
     osc7_scanner: Osc7Scanner,
+    osc133_scanner: Osc133Scanner,
+    shell_integration: ShellIntegrationState,
     event_sender: Sender<TerminalEvent>,
     columns: usize,
     screen_lines: usize,
@@ -615,6 +624,8 @@ impl TerminalCore {
             term: Term::new(config, &dimensions, listener),
             parser: Processor::new(),
             osc7_scanner: Osc7Scanner::default(),
+            osc133_scanner: Osc133Scanner::default(),
+            shell_integration: ShellIntegrationState::default(),
             event_sender: sender,
             columns,
             screen_lines,
@@ -634,18 +645,68 @@ impl TerminalCore {
             return;
         }
 
-        let mut dirs = Vec::new();
-        self.osc7_scanner.feed(bytes, &mut dirs);
-        for dir in dirs {
-            let _ = self
-                .event_sender
-                .send(TerminalEvent::CurrentDirectoryChanged(dir));
-        }
+        let mut scanner = std::mem::take(&mut self.osc133_scanner);
+        scanner.feed_segments(bytes, |slice, event| {
+            if !slice.is_empty() {
+                let mut dirs = Vec::new();
+                self.osc7_scanner.feed(slice, &mut dirs);
+                for dir in dirs {
+                    self.shell_integration.set_cwd(dir.clone());
+                    let _ = self
+                        .event_sender
+                        .send(TerminalEvent::CurrentDirectoryChanged(dir));
+                }
+                self.advance_and_track_scroll(slice, event);
+            }
+            if let Some(event) = event {
+                self.shell_integration.handle_event(&self.term, event);
+            }
+        });
+        self.osc133_scanner = scanner;
 
-        self.parser.advance(&mut self.term, bytes);
         if self.term.selection.is_none() {
             self.selection_purpose = None;
             self.free_type_selection_bounds = None;
+        }
+    }
+
+    fn advance_and_track_scroll(&mut self, slice: &[u8], event: Option<TerminalControlEvent>) {
+        let was_alt = self.term.mode().contains(TermMode::ALT_SCREEN);
+        if was_alt {
+            self.parser.advance(&mut self.term, slice);
+            return;
+        }
+
+        let before_history = self.term.grid().history_size();
+        let headroom = slice.len().saturating_add(self.screen_lines).max(256);
+        let expanded = before_history.saturating_add(headroom) > SCROLLBACK_LINES;
+        if expanded {
+            self.term
+                .grid_mut()
+                .update_history(SCROLLBACK_LINES.saturating_add(headroom));
+        }
+
+        self.parser.advance(&mut self.term, slice);
+        let now_alt = self.term.mode().contains(TermMode::ALT_SCREEN);
+        let after_history = self.term.grid().history_size();
+
+        if expanded {
+            self.term.grid_mut().update_history(SCROLLBACK_LINES);
+        }
+        let final_history = self.term.grid().history_size();
+
+        if !now_alt {
+            if after_history > before_history {
+                let delta = i32::try_from(after_history - before_history).unwrap_or(i32::MAX);
+                self.shell_integration.shift_lines(delta, final_history);
+            } else if final_history < before_history
+                && !matches!(
+                    event,
+                    Some(TerminalControlEvent::ClearSaved | TerminalControlEvent::Reset)
+                )
+            {
+                self.shell_integration.prune_history(final_history);
+            }
         }
     }
 
@@ -660,6 +721,7 @@ impl TerminalCore {
         let old_screen_lines = self.screen_lines;
         let was_scrolled = self.term.grid().display_offset() != 0;
         let is_alternate_screen = self.term.mode().contains(TermMode::ALT_SCREEN);
+        let before_history = (!is_alternate_screen).then(|| self.term.grid().history_size());
 
         if columns < old_columns {
             // Alacritty applies height changes before column reflow. Keep that order, but split
@@ -726,6 +788,15 @@ impl TerminalCore {
             });
         }
 
+        if let Some(before_history) = before_history
+            && !self.term.mode().contains(TermMode::ALT_SCREEN)
+        {
+            let after_history = self.term.grid().history_size();
+            let delta = after_history as isize - before_history as isize;
+            let delta = i32::try_from(delta).unwrap_or(if delta > 0 { i32::MAX } else { i32::MIN });
+            self.shell_integration.shift_lines(delta, after_history);
+        }
+
         self.columns = columns;
         self.screen_lines = screen_lines;
 
@@ -757,6 +828,7 @@ impl TerminalCore {
     }
 
     pub fn scroll(&mut self, scroll: TerminalScroll) {
+        self.shell_integration.clear_focused_command();
         let scroll = match scroll {
             TerminalScroll::Lines(delta) => Scroll::Delta(delta),
             TerminalScroll::PageUp => Scroll::PageUp,
@@ -771,6 +843,7 @@ impl TerminalCore {
     }
 
     pub fn scroll_to_display_offset(&mut self, target_offset: usize) {
+        self.shell_integration.clear_focused_command();
         let target_offset = target_offset.min(self.history_size());
         let current_offset = self.display_offset();
         if current_offset == target_offset {
@@ -791,9 +864,88 @@ impl TerminalCore {
     }
 
     pub fn scroll_to_bottom(&mut self) {
+        self.shell_integration.clear_focused_command();
         if self.display_offset() != 0 {
             self.term.scroll_display(Scroll::Bottom);
         }
+    }
+
+    pub fn jump_to_previous_command(&mut self) -> bool {
+        let prev_focused = self.shell_integration.focused_command_id();
+        let prev_offset = self.display_offset();
+        let Some(target_offset) = self.shell_integration.jump_previous(
+            self.screen_lines,
+            prev_offset,
+            self.history_size(),
+        ) else {
+            return false;
+        };
+        self.apply_command_jump_offset(target_offset);
+        self.shell_integration.focused_command_id() != prev_focused
+            || self.display_offset() != prev_offset
+    }
+
+    pub fn jump_to_next_command(&mut self) -> bool {
+        let prev_focused = self.shell_integration.focused_command_id();
+        let prev_offset = self.display_offset();
+        let Some(target_offset) =
+            self.shell_integration
+                .jump_next(self.screen_lines, prev_offset, self.history_size())
+        else {
+            return false;
+        };
+        self.apply_command_jump_offset(target_offset);
+        self.shell_integration.focused_command_id() != prev_focused
+            || self.display_offset() != prev_offset
+    }
+
+    fn apply_command_jump_offset(&mut self, target_offset: usize) {
+        let target_offset = target_offset.min(self.history_size());
+        let current_offset = self.display_offset();
+        if current_offset == target_offset {
+            return;
+        }
+        let delta = target_offset as isize - current_offset as isize;
+        let delta = match i32::try_from(delta) {
+            Ok(delta) => delta,
+            Err(_) if delta > 0 => i32::MAX,
+            Err(_) => i32::MIN,
+        };
+        self.term.scroll_display(Scroll::Delta(delta));
+        if self.display_offset() != 0 {
+            self.clear_free_type_selection();
+        }
+    }
+
+    pub fn clear_focused_command(&mut self) -> bool {
+        let had = self.shell_integration.focused_command_id().is_some();
+        self.shell_integration.clear_focused_command();
+        had
+    }
+
+    pub fn has_command_blocks(&self) -> bool {
+        self.shell_integration.has_command_blocks()
+    }
+
+    pub fn command_block_at_viewport_line(
+        &self,
+        viewport_line: usize,
+    ) -> Option<TerminalCommandBlockContent> {
+        if viewport_line >= self.screen_lines || self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let grid_line = viewport_line as i32 - self.display_offset() as i32;
+        self.shell_integration
+            .extract_block_at_grid_line(&self.term, grid_line)
+    }
+
+    pub fn command_block_by_id(&self, block_id: u64) -> Option<TerminalCommandBlockContent> {
+        self.shell_integration
+            .extract_block_by_id(&self.term, block_id)
+    }
+
+    pub fn latest_command_block(&self) -> Option<TerminalCommandBlockContent> {
+        self.shell_integration.extract_latest_block(&self.term)
     }
 
     pub fn input_modes(&self) -> TerminalInputModes {
@@ -1677,6 +1829,14 @@ impl TerminalCore {
 
         let (search_total, search_current) =
             self.apply_search_highlights(&mut cells, display_offset);
+        let command_markers = self.shell_integration.markers_for_viewport(
+            &self.term,
+            screen_lines,
+            renderable.display_offset,
+        );
+        let focused_command_id = (!self.term.mode().contains(TermMode::ALT_SCREEN))
+            .then(|| self.shell_integration.focused_command_id())
+            .flatten();
 
         TerminalSnapshot {
             cells,
@@ -1694,6 +1854,8 @@ impl TerminalCore {
             cursor_blinking: cursor_state.blinking,
             search_total,
             search_current,
+            command_markers,
+            focused_command_id,
         }
     }
 
@@ -1929,6 +2091,37 @@ impl TerminalState {
 
     pub fn scroll_to_bottom(&mut self) {
         self.with_core_mut_and_mark(TerminalCore::scroll_to_bottom);
+    }
+
+    pub fn jump_to_previous_command(&mut self) -> bool {
+        self.with_core_mut_if_changed(TerminalCore::jump_to_previous_command)
+    }
+
+    pub fn jump_to_next_command(&mut self) -> bool {
+        self.with_core_mut_if_changed(TerminalCore::jump_to_next_command)
+    }
+
+    pub fn clear_focused_command(&mut self) -> bool {
+        self.with_core_mut_if_changed(TerminalCore::clear_focused_command)
+    }
+
+    pub fn has_command_blocks(&self) -> bool {
+        self.with_core(TerminalCore::has_command_blocks)
+    }
+
+    pub fn command_block_at_viewport_line(
+        &self,
+        viewport_line: usize,
+    ) -> Option<TerminalCommandBlockContent> {
+        self.with_core(|core| core.command_block_at_viewport_line(viewport_line))
+    }
+
+    pub fn command_block_by_id(&self, block_id: u64) -> Option<TerminalCommandBlockContent> {
+        self.with_core(|core| core.command_block_by_id(block_id))
+    }
+
+    pub fn latest_command_block(&self) -> Option<TerminalCommandBlockContent> {
+        self.with_core(TerminalCore::latest_command_block)
     }
 
     pub fn input_modes(&self) -> TerminalInputModes {
@@ -2238,6 +2431,19 @@ impl TerminalState {
         let result = f(&mut core);
         self.mark_dirty_locked();
         result
+    }
+
+    fn with_core_mut_if_changed(&self, f: impl FnOnce(&mut TerminalCore) -> bool) -> bool {
+        let mut core = self
+            .shared
+            .core
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let changed = f(&mut core);
+        if changed {
+            self.mark_dirty_locked();
+        }
+        changed
     }
 
     fn mark_dirty_locked(&self) {
@@ -4132,5 +4338,228 @@ mod tests {
         let updated_off = terminal.snapshot_with_cursor(true, false);
         assert!(!Arc::ptr_eq(&first_on, &updated_on));
         assert!(!Arc::ptr_eq(&first_off, &updated_off));
+    }
+
+    #[test]
+    fn osc133_tracks_command_blocks_exit_codes_output_and_jumps() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 6);
+
+        // Command 1: success with multi-line output
+        core.push_bytes(b"\x1b]7;file://host/var/log\x07");
+        core.push_bytes(b"\x1b]133;A\x07$ \x1b]133;B\x07ls -la\r\n\x1b]133;C\x07");
+        core.push_bytes(b"line 1\r\nline 2\r\n");
+        core.push_bytes(b"\x1b]133;D;0\x07");
+
+        // Empty prompt hit: should be discarded without emitting a marker.
+        core.push_bytes(b"\x1b]133;A\x07$ \x1b]133;B\x07\r\n\x1b]133;D;0\x07");
+
+        // Command 2: failure with exit code 127 and output
+        core.push_bytes(b"\x1b]133;A\x07$ \x1b]133;B\x07missing_cmd\r\n\x1b]133;C\x07");
+        core.push_bytes(b"bash: missing_cmd: command not found\r\n");
+        core.push_bytes(b"\x1b]133;D;127\x07");
+
+        // Command 3: success with no output (e.g. `true`)
+        core.push_bytes(b"\x1b]133;A\x07$ \x1b]133;B\x07true\r\n\x1b]133;C\x07\x1b]133;D;0\x07");
+        core.push_bytes(b"\x1b]133;A\x07$ ");
+
+        let latest = core.latest_command_block().expect("latest block");
+        assert_eq!(latest.command, "true");
+        assert_eq!(latest.output, "");
+        assert_eq!(latest.status, CommandBlockStatus::Finished(0));
+        assert_eq!(latest.cwd.as_deref(), Some("/var/log"));
+
+        // Jump backwards through Command 3 -> Command 2 -> Command 1 (in scrollback).
+        assert!(core.jump_to_previous_command());
+        let snap1 = core.snapshot(false, &theme);
+        let id3 = snap1.focused_command_id.expect("should focus cmd 3");
+        let cmd3 = core.command_block_by_id(id3).unwrap();
+        assert_eq!(cmd3.command, "true");
+
+        assert!(core.jump_to_previous_command());
+        let snap2 = core.snapshot(false, &theme);
+        let id2 = snap2.focused_command_id.expect("should focus cmd 2");
+        let cmd2 = core.command_block_by_id(id2).unwrap();
+        assert_eq!(cmd2.command, "missing_cmd");
+        assert_eq!(cmd2.status, CommandBlockStatus::Finished(127));
+        assert_eq!(cmd2.output, "bash: missing_cmd: command not found");
+
+        assert!(core.jump_to_previous_command());
+        let snap3 = core.snapshot(false, &theme);
+        let id1 = snap3.focused_command_id.expect("should focus cmd 1");
+        let cmd1 = core.command_block_by_id(id1).unwrap();
+        assert_eq!(cmd1.command, "ls -la");
+        assert_eq!(cmd1.status, CommandBlockStatus::Finished(0));
+        assert_eq!(cmd1.output, "line 1\nline 2");
+        assert!(
+            snap3
+                .command_markers
+                .iter()
+                .any(|marker| marker.id == id1 && marker.has_output)
+        );
+        assert!(core.display_offset() > 0);
+
+        // Lookup by viewport line on Command 1's output row.
+        let marker1 = snap3
+            .command_markers
+            .iter()
+            .find(|marker| marker.id == id1)
+            .unwrap();
+        let hovered = core
+            .command_block_at_viewport_line(marker1.visible_end_line)
+            .expect("hovered block");
+        assert_eq!(hovered.id, id1);
+
+        // Jump forward back down to bottom.
+        assert!(core.jump_to_next_command());
+        assert_eq!(core.snapshot(false, &theme).focused_command_id, Some(id2));
+        assert!(core.jump_to_next_command());
+        assert_eq!(core.snapshot(false, &theme).focused_command_id, Some(id3));
+        assert!(core.jump_to_next_command());
+        assert_eq!(core.display_offset(), 0);
+        assert_eq!(core.snapshot(false, &theme).focused_command_id, None);
+    }
+
+    #[test]
+    fn osc133_tracks_line_shifts_at_full_scrollback_and_ignores_alt_screen() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 8);
+        fill_scrollback_to_limit(&mut core);
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
+
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07uname -a\r\n\x1b]133;C\x07Linux\r\n\x1b]133;D;0\x07",
+        );
+        // Push 20 more lines while scrollback is already full.
+        for i in 0..20 {
+            core.push_bytes(format!("tail-{i}\r\n").as_bytes());
+        }
+        // Enter alt screen and emit OSC 133 there — must be ignored.
+        core.push_bytes(
+            b"\x1b[?1049h\x1b]133;A\x07$ \x1b]133;B\x07vim\r\n\x1b]133;C\x07\x1b]133;D;1\x07",
+        );
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+        assert_eq!(core.snapshot(false, &theme).focused_command_id, None);
+        core.push_bytes(b"\x1b[?1049l");
+
+        assert!(core.jump_to_previous_command());
+        let snap = core.snapshot(false, &theme);
+        let id = snap.focused_command_id.expect("should jump to uname block");
+        let block = core.command_block_by_id(id).unwrap();
+        assert_eq!(block.command, "uname -a");
+        assert_eq!(block.output, "Linux");
+        assert_eq!(block.status, CommandBlockStatus::Finished(0));
+    }
+
+    #[test]
+    fn osc133_clear_command_removes_viewport_and_scrollback_dots_including_running_clear() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 8);
+
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07ls\r\n\x1b]133;C\x07file1\r\n\x1b]133;D;0\x07",
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07missing\r\n\x1b]133;C\x07err\r\n\x1b]133;D;127\x07",
+        );
+        assert_eq!(core.snapshot(false, &theme).command_markers.len(), 2);
+
+        // Standard Linux `clear`: CSI H, CSI 2 J, CSI 3 J followed by D;0 and fresh prompt.
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07clear\r\n\x1b]133;C\x07\x1b[H\x1b[2J\x1b[3J\x1b]133;D;0\x07\x1b]133;A\x07$ ",
+        );
+
+        assert_eq!(core.history_size(), 0);
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+        assert!(core.latest_command_block().is_none());
+        assert!(!core.jump_to_previous_command());
+    }
+
+    #[test]
+    fn osc133_clear_3j_before_2j_clears_viewport_and_purges_prior_scrollback() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 6);
+
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07old\r\n\x1b]133;C\x071\r\n2\r\n3\r\n4\r\n5\r\n6\r\n\x1b]133;D;0\x07",
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07pwd\r\n\x1b]133;C\x07/tmp\r\n\x1b]133;D;0\x07",
+        );
+        assert!(core.history_size() > 0);
+
+        core.push_bytes(b"\x1b[3J\x1b[H\x1b[2J\x1b]133;A\x07$ ");
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+
+        // Only `pwd` (pushed into history by 2J) survives; `old` was cleared by 3J.
+        assert!(core.jump_to_previous_command());
+        let focused_id = core.snapshot(false, &theme).focused_command_id.unwrap();
+        assert_eq!(core.command_block_by_id(focused_id).unwrap().command, "pwd");
+        assert!(!core.jump_to_previous_command());
+    }
+
+    #[test]
+    fn osc133_clear_2j_and_ctrl_l_preserve_scrollback_and_reset_pending_prompt() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 6);
+
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07echo ok\r\n\x1b]133;C\x07ok\r\n\x1b]133;D;0\x07",
+        );
+        // Pending idle prompt, then Ctrl+L (\x1b[H\x1b[2J) redraws `$ ` without a new 133;A.
+        core.push_bytes(b"\x1b]133;A\x07$ \x1b[H\x1b[2J$ ");
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+
+        // Subsequent command anchored with 133;B must bind to viewport row 0, not scrollback.
+        core.push_bytes(b"\x1b]133;B\x07echo two\r\n\x1b]133;C\x07two\r\n\x1b]133;D;0\x07");
+        let snap = core.snapshot(false, &theme);
+        assert_eq!(snap.command_markers.len(), 1);
+        assert_eq!(snap.command_markers[0].command, "echo two");
+        assert_eq!(snap.command_markers[0].viewport_line, 0);
+
+        // `echo ok` remains reachable in scrollback.
+        assert!(core.jump_to_previous_command()); // focuses `echo two`
+        assert!(core.jump_to_previous_command()); // jumps to `echo ok` in scrollback
+        let ok_id = core.snapshot(false, &theme).focused_command_id.unwrap();
+        assert_eq!(core.command_block_by_id(ok_id).unwrap().command, "echo ok");
+    }
+
+    #[test]
+    fn osc133_clear_below_above_reset_and_alt_screen_behave_accurately() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 6);
+
+        // Put `scrolled` into scrollback, then two blocks into viewport rows 0 and 2.
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07scrolled\r\n\x1b]133;C\x071\r\n2\r\n3\r\n4\r\n5\r\n6\r\n\x1b]133;D;0\x07",
+        );
+        core.push_bytes(b"\x1b[H\x1b[2J");
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07top_cmd\r\n\x1b]133;C\x07top_out\r\n\x1b]133;D;0\x07",
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07bot_cmd\r\n\x1b]133;C\x07bot_out\r\n\x1b]133;D;0\x07",
+        );
+        assert_eq!(core.snapshot(false, &theme).command_markers.len(), 2);
+
+        // CSI 1 J from row 1 clears `top_cmd` (row 0) and leaves `bot_cmd` (row 2).
+        core.push_bytes(b"\x1b[2;1H\x1b[1J");
+        let after_1j = core.snapshot(false, &theme);
+        assert_eq!(after_1j.command_markers.len(), 1);
+        assert_eq!(after_1j.command_markers[0].command, "bot_cmd");
+
+        // Alt screen CSI 2 J must not disturb main screen markers.
+        core.push_bytes(b"\x1b[?1049h\x1b[H\x1b[2J\x1b[?1049l");
+        assert_eq!(core.snapshot(false, &theme).command_markers.len(), 1);
+
+        // CSI H CSI J clears remaining viewport dots while keeping `scrolled` in scrollback.
+        core.push_bytes(b"\x1b[H\x1b[J");
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+        assert_eq!(core.latest_command_block().unwrap().command, "scrolled");
+
+        // ESC c clears everything including scrollback.
+        core.push_bytes(b"\x1bc");
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+        assert!(core.latest_command_block().is_none());
     }
 }

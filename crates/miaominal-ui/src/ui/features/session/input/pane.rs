@@ -83,6 +83,9 @@ pub(crate) struct PaneViewState {
     pub terminal_link_open_modifier: bool,
     pub terminal_scrollbar_drag: Option<TerminalScrollbarDrag>,
     pub terminal_scrollbar_last_interaction_at: Option<Instant>,
+    pub terminal_pinned_command_id: Option<(TabId, u64)>,
+    pub terminal_hovered_command_id: Option<(TabId, u64)>,
+    pub terminal_hovered_command_bar: Option<(TabId, u64)>,
 }
 
 impl PaneViewState {
@@ -104,6 +107,9 @@ impl PaneViewState {
             terminal_link_open_modifier: false,
             terminal_scrollbar_drag: None,
             terminal_scrollbar_last_interaction_at: None,
+            terminal_pinned_command_id: None,
+            terminal_hovered_command_id: None,
+            terminal_hovered_command_bar: None,
         }
     }
 }
@@ -123,5 +129,8 @@ impl PaneViewState {
         self.terminal_link_open_modifier = false;
         self.terminal_scrollbar_drag = None;
         self.terminal_scrollbar_last_interaction_at = None;
+        self.terminal_pinned_command_id = None;
+        self.terminal_hovered_command_id = None;
+        self.terminal_hovered_command_bar = None;
     }
 }

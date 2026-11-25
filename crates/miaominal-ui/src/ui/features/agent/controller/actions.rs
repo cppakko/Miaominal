@@ -246,6 +246,24 @@ impl AgentController {
         cx.notify();
     }
 
+    pub(in crate::ui) fn diagnose_terminal_command(
+        &mut self,
+        prompt: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_panel_open(true);
+        self.runtime.get_mut().foreground.panel_view = ChatPanelView::Conversation;
+        crate::ui::components::forms::set_textarea_value(
+            &self.forms.prompt_input,
+            prompt.clone(),
+            window,
+            cx,
+        );
+        self.prompt_input_changed(&prompt);
+        self.submit_session_agent_prompt(window, cx);
+    }
+
     /// True when the foreground conversation is idle and has enough user turns
     /// for manual context compaction.
     pub(in crate::ui) fn can_compact_session_agent_context(&self) -> bool {

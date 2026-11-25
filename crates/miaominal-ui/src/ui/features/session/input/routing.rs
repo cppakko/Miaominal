@@ -156,6 +156,12 @@ impl SessionController {
                     cx.notify();
                 }
             }
+            TerminalKeyAction::JumpToPreviousCommand => {
+                dispatch.scrolled = self.jump_terminal_previous_command(tab_id, cx);
+            }
+            TerminalKeyAction::JumpToNextCommand => {
+                dispatch.scrolled = self.jump_terminal_next_command(tab_id, cx);
+            }
             TerminalKeyAction::Copy => {
                 self.copy_terminal_selection(tab_id, cx);
             }

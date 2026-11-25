@@ -92,6 +92,24 @@ impl AppView {
                     .active_pane
                     .terminal_scrollbar_last_interaction_at
                     .take(),
+                terminal_pinned_command_id: self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_pinned_command_id
+                    .take(),
+                terminal_hovered_command_id: self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_hovered_command_id
+                    .take(),
+                terminal_hovered_command_bar: self
+                    .workspace
+                    .workspace
+                    .active_pane
+                    .terminal_hovered_command_bar
+                    .take(),
             },
             parked_panes: std::mem::take(&mut self.workspace.workspace.parked_panes),
             pane_layout: std::mem::replace(
@@ -147,6 +165,18 @@ impl AppView {
             .active_pane
             .terminal_scrollbar_last_interaction_at =
             workspace.active_pane.terminal_scrollbar_last_interaction_at;
+        self.workspace
+            .workspace
+            .active_pane
+            .terminal_pinned_command_id = workspace.active_pane.terminal_pinned_command_id;
+        self.workspace
+            .workspace
+            .active_pane
+            .terminal_hovered_command_id = workspace.active_pane.terminal_hovered_command_id;
+        self.workspace
+            .workspace
+            .active_pane
+            .terminal_hovered_command_bar = workspace.active_pane.terminal_hovered_command_bar;
         self.workspace.workspace.parked_panes = workspace.parked_panes;
         self.workspace.workspace.pane_layout = workspace.pane_layout;
         self.workspace.workspace.next_pane_id = workspace.next_pane_id;

@@ -571,6 +571,14 @@ description = "将当前窗格向下拆分。"
 label = "关闭窗格"
 description = "关闭当前终端窗格。"
 
+[settings.key_bindings.slots.prev_command]
+label = "上一条命令"
+description = "跳转到终端中的上一条命令提示符。"
+
+[settings.key_bindings.slots.next_command]
+label = "下一条命令"
+description = "跳转到终端中的下一条命令提示符。"
+
 [settings.values]
 off = "关闭"
 on = "开启"
@@ -765,6 +773,10 @@ cut = "剪切"
 copy = "复制"
 paste = "粘贴"
 select_all = "全选"
+copy_command_output = "复制命令输出"
+diagnose_with_ai = "让 AI 诊断"
+prev_command = "上一条命令"
+next_command = "下一条命令"
 split_right = "向右拆分"
 split_down = "向下拆分"
 split_left = "向左拆分"
@@ -1127,6 +1139,47 @@ opened_link = "已打开 {uri}"
 nothing_to_paste = "没有可粘贴的内容"
 focus_report_failed = "焦点上报失败：{error}"
 mouse_report_failed = "鼠标上报失败：{error}"
+
+[session.command_blocks]
+exit_ok = "退出码 0"
+exit_failed = "退出码 {code}"
+running = "运行中"
+finished = "已完成"
+copy_output = "复制命令输出"
+diagnose_ai = "AI 诊断"
+copied_output = "已复制命令输出（{count} 个字符）"
+no_output = "该命令没有输出"
+diagnose_prompt = """
+这条终端命令执行失败，退出码为 {code}。请帮我诊断失败原因并给出修复建议。
+
+命令：
+```sh
+{command}
+```
+
+输出：
+```
+{output}
+```"""
+diagnose_prompt_with_cwd = """
+这条终端命令在 `{cwd}` 中执行失败，退出码为 {code}。请帮我诊断失败原因并给出修复建议。
+
+命令：
+```sh
+{command}
+```
+
+输出：
+```
+{output}
+```"""
+diagnose_prompt_no_output = """
+这条终端命令执行失败，退出码为 {code}，且没有输出。请帮我分析可能的原因和排查思路。
+
+命令：
+```sh
+{command}
+```"""
 
 [sftp_browser.columns]
 name = "名称"

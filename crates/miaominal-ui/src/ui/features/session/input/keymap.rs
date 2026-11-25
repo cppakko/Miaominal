@@ -43,6 +43,8 @@ fn gpui_keystroke(keystroke: &TerminalKeyStroke) -> gpui_kit::Keystroke {
 pub(crate) enum TerminalKeyAction {
     Bytes(Vec<u8>),
     Scroll(TerminalScroll),
+    JumpToPreviousCommand,
+    JumpToNextCommand,
     Copy,
     Paste,
     OpenSearch,
@@ -114,6 +116,12 @@ pub(crate) fn classify_terminal_key(
         if bindings.search.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::OpenSearch);
         }
+        if bindings.prev_command.matches_keystroke(&settings_keystroke) {
+            return Some(TerminalKeyAction::JumpToPreviousCommand);
+        }
+        if bindings.next_command.matches_keystroke(&settings_keystroke) {
+            return Some(TerminalKeyAction::JumpToNextCommand);
+        }
         if bindings.split_right.matches_keystroke(&settings_keystroke) {
             return Some(TerminalKeyAction::Split(SplitDirection::Right));
         }
@@ -159,5 +167,38 @@ mod tests {
     fn terminal_line_height_falls_back_to_measured_value_when_config_is_invalid() {
         assert_eq!(resolved_terminal_line_height(0.0, 20.0), 20.0);
         assert_eq!(resolved_terminal_line_height(f32::NAN, 20.0), 20.0);
+    }
+
+    #[test]
+    fn default_prev_and_next_command_bindings_classify_jump_actions() {
+        let prev = super::TerminalKeyStroke {
+            modifiers: super::TerminalModifiers {
+                control: true,
+                shift: true,
+                alt: false,
+                platform: false,
+                function: false,
+            },
+            key: "up".to_string(),
+            key_char: None,
+        };
+        let next = super::TerminalKeyStroke {
+            key: "down".to_string(),
+            ..prev.clone()
+        };
+        assert!(matches!(
+            super::classify_terminal_key(
+                super::TerminalKeyEvent::new(&prev, super::TerminalKeyPhase::Press),
+                super::TerminalInputModes::default(),
+            ),
+            Some(super::TerminalKeyAction::JumpToPreviousCommand)
+        ));
+        assert!(matches!(
+            super::classify_terminal_key(
+                super::TerminalKeyEvent::new(&next, super::TerminalKeyPhase::Press),
+                super::TerminalInputModes::default(),
+            ),
+            Some(super::TerminalKeyAction::JumpToNextCommand)
+        ));
     }
 }

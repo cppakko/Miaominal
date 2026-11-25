@@ -10,6 +10,8 @@ mod workspace_panes;
 pub(in crate::ui::shell) use workspace_panes::WorkspacePanesAppViewExt;
 #[path = "layout/workspace_side_panel.rs"]
 mod workspace_side_panel;
+#[path = "layout/workspace_terminal_commands.rs"]
+pub(in crate::ui::shell) mod workspace_terminal_commands;
 #[path = "layout/workspace_terminal_menu.rs"]
 mod workspace_terminal_menu;
 #[path = "layout/workspace_terminal_search.rs"]

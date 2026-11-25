@@ -575,6 +575,14 @@ description = "Split the active pane downward."
 label = "Close pane"
 description = "Close the active terminal pane."
 
+[settings.key_bindings.slots.prev_command]
+label = "Previous command"
+description = "Jump to the previous command prompt in the terminal."
+
+[settings.key_bindings.slots.next_command]
+label = "Next command"
+description = "Jump to the next command prompt in the terminal."
+
 [settings.ai_providers.providers_group]
 title = "Configured providers"
 description = "Model providers available to the AI assistant."
@@ -910,6 +918,10 @@ cut = "Cut"
 copy = "Copy"
 paste = "Paste"
 select_all = "Select All"
+copy_command_output = "Copy command output"
+diagnose_with_ai = "Diagnose with AI"
+prev_command = "Previous command"
+next_command = "Next command"
 split_right = "Split right"
 split_down = "Split down"
 split_left = "Split left"
@@ -1272,6 +1284,47 @@ opened_link = "Opened {uri}"
 nothing_to_paste = "Nothing to paste"
 focus_report_failed = "Focus report failed: {error}"
 mouse_report_failed = "Mouse report failed: {error}"
+
+[session.command_blocks]
+exit_ok = "Exit 0"
+exit_failed = "Exit {code}"
+running = "Running"
+finished = "Finished"
+copy_output = "Copy command output"
+diagnose_ai = "Diagnose"
+copied_output = "Copied command output ({count} characters)"
+no_output = "This command produced no output"
+diagnose_prompt = """
+This terminal command failed with exit code {code}. Help me diagnose what went wrong and how to fix it.
+
+Command:
+```sh
+{command}
+```
+
+Output:
+```
+{output}
+```"""
+diagnose_prompt_with_cwd = """
+This terminal command failed with exit code {code} in `{cwd}`. Help me diagnose what went wrong and how to fix it.
+
+Command:
+```sh
+{command}
+```
+
+Output:
+```
+{output}
+```"""
+diagnose_prompt_no_output = """
+This terminal command failed with exit code {code} and produced no output. Help me diagnose why it failed and how to fix it.
+
+Command:
+```sh
+{command}
+```"""
 
 [sftp_browser.columns]
 name = "Name"

@@ -397,6 +397,10 @@ pub struct TerminalKeyBindings {
     pub split_down: KeyBinding,
     #[serde(default = "default_binding_close_pane")]
     pub close_pane: KeyBinding,
+    #[serde(default = "default_binding_prev_command")]
+    pub prev_command: KeyBinding,
+    #[serde(default = "default_binding_next_command")]
+    pub next_command: KeyBinding,
     #[serde(default = "default_binding_next_tab")]
     pub next_tab: KeyBinding,
     #[serde(default = "default_binding_close_tab")]
@@ -416,6 +420,8 @@ impl Default for TerminalKeyBindings {
             split_right: default_binding_split_right(),
             split_down: default_binding_split_down(),
             close_pane: default_binding_close_pane(),
+            prev_command: default_binding_prev_command(),
+            next_command: default_binding_next_command(),
             next_tab: default_binding_next_tab(),
             close_tab: default_binding_close_tab(),
             reopen_tab: default_binding_reopen_tab(),
@@ -446,6 +452,14 @@ fn default_binding_split_down() -> KeyBinding {
 
 fn default_binding_close_pane() -> KeyBinding {
     KeyBinding::new(true, true, false, "w")
+}
+
+fn default_binding_prev_command() -> KeyBinding {
+    KeyBinding::new(true, true, false, "up")
+}
+
+fn default_binding_next_command() -> KeyBinding {
+    KeyBinding::new(true, true, false, "down")
 }
 
 fn default_binding_next_tab() -> KeyBinding {
@@ -1510,5 +1524,13 @@ model = "gpt-4o"
             toml::from_str("").expect("legacy synced settings should deserialize");
 
         assert!(!restored.terminal_free_type_mode);
+        assert_eq!(
+            restored.key_bindings.prev_command,
+            default_binding_prev_command()
+        );
+        assert_eq!(
+            restored.key_bindings.next_command,
+            default_binding_next_command()
+        );
     }
 }

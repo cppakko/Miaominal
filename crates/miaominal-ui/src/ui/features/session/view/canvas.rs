@@ -6,10 +6,11 @@ use gpui_kit::{
     Background, Bounds, Context, Corners, DispatchPhase, FocusHandle, Font, FontFallbacks,
     FontStyle, FontWeight, Hsla, InputHandler, IntoElement, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, Render, Rgba, SharedString, StrikethroughStyle, Styled, TextAlign, TextRun,
-    UTF16Selection, UnderlineStyle, WeakEntity, Window, canvas, fill, font, px, quad, rgba, size,
+    UTF16Selection, UnderlineStyle, WeakEntity, Window, canvas, fill, font, px, quad, rgb, rgba,
+    size,
 };
 use miaominal_terminal::{
-    SearchMatchKind, TerminalColor, TerminalFreeTypeTarget, TerminalSnapshot,
+    CommandBlockStatus, SearchMatchKind, TerminalColor, TerminalFreeTypeTarget, TerminalSnapshot,
 };
 use std::{ops::Range, sync::Arc};
 
@@ -427,6 +428,7 @@ fn paint_snapshot(
             window,
         );
     }
+    paint_focused_command_highlight(bounds, snapshot, origin, line_height_px, window);
     paint_backgrounds(snapshot, origin, cell_width_px, line_height_px, window);
     paint_search_highlights(snapshot, origin, cell_width_px, line_height_px, window);
     custom_glyphs::paint_custom_glyphs(snapshot, origin, cell_width_px, line_height_px, window);
@@ -473,6 +475,71 @@ fn paint_snapshot(
             window,
         );
     }
+}
+
+fn paint_focused_command_highlight(
+    bounds: Bounds<Pixels>,
+    snapshot: &TerminalSnapshot,
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    window: &mut gpui_kit::Window,
+) {
+    let Some(focused_id) = snapshot.focused_command_id else {
+        return;
+    };
+    let Some(marker) = snapshot
+        .command_markers
+        .iter()
+        .find(|marker| marker.id == focused_id)
+    else {
+        return;
+    };
+
+    let scale_factor = window.scale_factor();
+    let band_top = snap_to_physical(
+        origin.y + line_height * marker.visible_start_line as f32,
+        scale_factor,
+    );
+    let band_bottom = snap_to_physical(
+        origin.y + line_height * (marker.visible_end_line + 1) as f32,
+        scale_factor,
+    );
+    let band_bounds = Bounds {
+        origin: Point {
+            x: origin.x,
+            y: band_top,
+        },
+        size: size(bounds.size.width, (band_bottom - band_top).max(px(0.0))),
+    };
+    let band_color = Hsla {
+        a: 0.05,
+        ..terminal_hsla(snapshot.default_fg)
+    };
+    window.paint_quad(fill(band_bounds, Background::from(band_color)));
+
+    let theme = miaominal_settings::current_theme();
+    let accent_hex = match marker.status {
+        CommandBlockStatus::Finished(0) => theme.terminal.ansi[2],
+        CommandBlockStatus::Finished(_) => theme.terminal.ansi[1],
+        CommandBlockStatus::Running => theme.material.roles.primary,
+        CommandBlockStatus::FinishedUnknown => theme.material.roles.on_surface_variant,
+    };
+    let row_top = snap_to_physical(
+        origin.y + line_height * marker.viewport_line as f32,
+        scale_factor,
+    );
+    let row_bottom = snap_to_physical(
+        origin.y + line_height * (marker.viewport_line + 1) as f32,
+        scale_factor,
+    );
+    let bar_bounds = Bounds {
+        origin: Point {
+            x: origin.x,
+            y: row_top,
+        },
+        size: size(px(2.0), (row_bottom - row_top).max(px(0.0))),
+    };
+    window.paint_quad(fill(bar_bounds, Background::from(rgb(accent_hex))));
 }
 
 fn paint_free_type_drop_line_highlight(
@@ -1004,6 +1071,8 @@ mod tests {
             cursor_blinking: true,
             search_total: 0,
             search_current: None,
+            command_markers: Vec::new(),
+            focused_command_id: None,
         }
     }
 

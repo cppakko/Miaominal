@@ -4,10 +4,10 @@ use alacritty_terminal::index::Side;
 use gpui_kit::{ClipboardItem, Context};
 use miaominal_ssh::SessionEventReceiver;
 use miaominal_terminal::{
-    MouseEncoding, MouseProtocol, TerminalEditStep, TerminalFreeTypeDropPlan,
-    TerminalFreeTypeTarget, TerminalInputModes, TerminalLink, TerminalNamedKey, TerminalScroll,
-    TerminalSelectionKind, TerminalSelectionPurpose, TerminalSnapshot, TerminalState,
-    encode_terminal_named_key, sanitize_paste,
+    MouseEncoding, MouseProtocol, TerminalCommandBlockContent, TerminalEditStep,
+    TerminalFreeTypeDropPlan, TerminalFreeTypeTarget, TerminalInputModes, TerminalLink,
+    TerminalNamedKey, TerminalScroll, TerminalSelectionKind, TerminalSelectionPurpose,
+    TerminalSnapshot, TerminalState, encode_terminal_named_key, sanitize_paste,
 };
 
 use super::{SessionConnectionState, SessionController};
@@ -29,8 +29,14 @@ enum TerminalWriteResult {
     Missing,
     ReadOnly,
     Connecting,
-    Sent { was_scrolled: bool },
-    Failed { was_scrolled: bool, error: String },
+    Sent {
+        was_scrolled: bool,
+        cleared_command_focus: bool,
+    },
+    Failed {
+        was_scrolled: bool,
+        error: String,
+    },
 }
 
 enum FreeTypeWriteResult {
@@ -48,11 +54,13 @@ impl TerminalWriteResult {
     fn was_scrolled(&self) -> bool {
         matches!(
             self,
-            Self::Sent { was_scrolled: true }
-                | Self::Failed {
-                    was_scrolled: true,
-                    ..
-                }
+            Self::Sent {
+                was_scrolled: true,
+                ..
+            } | Self::Failed {
+                was_scrolled: true,
+                ..
+            }
         )
     }
 }
@@ -132,6 +140,98 @@ impl SessionController {
             return false;
         };
         session.terminal.scroll(scroll);
+        true
+    }
+
+    pub(in crate::ui) fn jump_terminal_previous_command(
+        &self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed = {
+            let Some(mut session) = self.tab_mut(tab_id) else {
+                return false;
+            };
+            session.terminal.jump_to_previous_command()
+        };
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(in crate::ui) fn jump_terminal_next_command(
+        &self,
+        tab_id: TabId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed = {
+            let Some(mut session) = self.tab_mut(tab_id) else {
+                return false;
+            };
+            session.terminal.jump_to_next_command()
+        };
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(in crate::ui) fn terminal_has_command_blocks(&self, tab_id: TabId) -> bool {
+        self.tab(tab_id)
+            .is_some_and(|session| session.terminal.has_command_blocks())
+    }
+
+    pub(in crate::ui) fn terminal_command_block_at_viewport_line(
+        &self,
+        tab_id: TabId,
+        viewport_line: usize,
+    ) -> Option<TerminalCommandBlockContent> {
+        self.tab(tab_id)?
+            .terminal
+            .command_block_at_viewport_line(viewport_line)
+    }
+
+    pub(in crate::ui) fn terminal_command_block_by_id(
+        &self,
+        tab_id: TabId,
+        block_id: u64,
+    ) -> Option<TerminalCommandBlockContent> {
+        self.tab(tab_id)?.terminal.command_block_by_id(block_id)
+    }
+
+    pub(in crate::ui) fn terminal_latest_command_block(
+        &self,
+        tab_id: TabId,
+    ) -> Option<TerminalCommandBlockContent> {
+        self.tab(tab_id)?.terminal.latest_command_block()
+    }
+
+    pub(in crate::ui) fn copy_terminal_command_output(
+        &mut self,
+        tab_id: TabId,
+        block_id: u64,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let output = self
+            .terminal_command_block_by_id(tab_id, block_id)
+            .map(|block| block.output)
+            .filter(|output| !output.is_empty());
+        let Some(output) = output else {
+            cx.emit(AppCommand::Feedback(i18n::string(
+                "session.command_blocks.no_output",
+            )));
+            cx.notify();
+            return false;
+        };
+
+        let length = output.chars().count().to_string();
+        cx.write_to_clipboard(ClipboardItem::new_string(output));
+        cx.emit(AppCommand::Feedback(i18n::string_args(
+            "session.command_blocks.copied_output",
+            &[("count", &length)],
+        )));
+        cx.notify();
         true
     }
 
@@ -474,11 +574,14 @@ impl SessionController {
                 )));
                 cx.notify();
             }
-            TerminalWriteResult::Sent { .. } => {
+            TerminalWriteResult::Sent {
+                cleared_command_focus,
+                ..
+            } => {
                 if let Some(message) = sent_announce {
                     cx.emit(AppCommand::Feedback(message));
                     cx.notify();
-                } else if was_scrolled {
+                } else if was_scrolled || cleared_command_focus {
                     cx.notify();
                 }
             }
@@ -1017,6 +1120,7 @@ impl SessionController {
         };
 
         let was_scrolled = scroll_to_bottom && session.terminal.display_offset() != 0;
+        let cleared_command_focus = scroll_to_bottom && session.terminal.clear_focused_command();
         if scroll_to_bottom {
             session.terminal.scroll_to_bottom();
         }
@@ -1029,7 +1133,10 @@ impl SessionController {
             }
         } else {
             session.bytes_out = session.bytes_out.saturating_add(len);
-            TerminalWriteResult::Sent { was_scrolled }
+            TerminalWriteResult::Sent {
+                was_scrolled,
+                cleared_command_focus,
+            }
         }
     }
 
@@ -1066,6 +1173,7 @@ impl SessionController {
                 session.bytes_out = session.bytes_out.saturating_add(len);
                 FreeTypeWriteResult::Complete(TerminalWriteResult::Sent {
                     was_scrolled: false,
+                    cleared_command_focus: false,
                 })
             }
             Err(error) => {

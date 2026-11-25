@@ -914,6 +914,100 @@ impl AppView {
                         }
                     }
                     TerminalMenuCommand::ClosePane => self.close_active_pane(window, cx),
+                    TerminalMenuCommand::JumpPreviousCommand => {
+                        if let Some(tab_id) = self.workspace.workspace.active_tab {
+                            let jumped = self.controllers.session.update(cx, |controller, cx| {
+                                controller.jump_terminal_previous_command(tab_id, cx)
+                            });
+                            if jumped {
+                                self.workspace
+                                    .workspace
+                                    .active_pane
+                                    .terminal_pinned_command_id = None;
+                                self.workspace
+                                    .workspace
+                                    .active_pane
+                                    .terminal_hovered_command_bar = None;
+                                self.touch_terminal_scrollbar_visibility(
+                                    self.workspace.workspace.active_pane_id,
+                                    cx,
+                                );
+                                self.sync_terminal_cursor_blink(window, cx);
+                            }
+                        }
+                        window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
+                        self.sync_terminal_focus_reporting(window, cx);
+                    }
+                    TerminalMenuCommand::JumpNextCommand => {
+                        if let Some(tab_id) = self.workspace.workspace.active_tab {
+                            let jumped = self.controllers.session.update(cx, |controller, cx| {
+                                controller.jump_terminal_next_command(tab_id, cx)
+                            });
+                            if jumped {
+                                self.workspace
+                                    .workspace
+                                    .active_pane
+                                    .terminal_pinned_command_id = None;
+                                self.workspace
+                                    .workspace
+                                    .active_pane
+                                    .terminal_hovered_command_bar = None;
+                                self.touch_terminal_scrollbar_visibility(
+                                    self.workspace.workspace.active_pane_id,
+                                    cx,
+                                );
+                                self.sync_terminal_cursor_blink(window, cx);
+                            }
+                        }
+                        window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
+                        self.sync_terminal_focus_reporting(window, cx);
+                    }
+                    TerminalMenuCommand::CopyCommandOutput(block_id) => {
+                        if let Some(tab_id) = self.workspace.workspace.active_tab {
+                            self.workspace
+                                .workspace
+                                .active_pane
+                                .terminal_pinned_command_id = None;
+                            self.workspace
+                                .workspace
+                                .active_pane
+                                .terminal_hovered_command_bar = None;
+                            let controller = self.controllers.session.clone();
+                            controller.update(cx, |controller, cx| {
+                                controller.copy_terminal_command_output(tab_id, *block_id, cx);
+                            });
+                        }
+                        window.focus(&self.workspace.workspace.active_pane.terminal_focus, cx);
+                        self.sync_terminal_focus_reporting(window, cx);
+                    }
+                    TerminalMenuCommand::DiagnoseCommandWithAi(block_id) => {
+                        if let Some(tab_id) = self.workspace.workspace.active_tab
+                            && self
+                                .workspace
+                                .tabs
+                                .get(tab_id)
+                                .is_some_and(|tab| !tab.is_plain_terminal())
+                            && let Some(block) = self
+                                .controllers
+                                .session
+                                .read(cx)
+                                .terminal_command_block_by_id(tab_id, *block_id)
+                        {
+                            self.workspace
+                                .workspace
+                                .active_pane
+                                .terminal_pinned_command_id = None;
+                            self.workspace
+                                .workspace
+                                .active_pane
+                                .terminal_hovered_command_bar = None;
+                            let prompt = crate::ui::shell::layout::workspace_terminal_commands::format_command_diagnostic_prompt(&block);
+                            self.controllers.agent.update(cx, |controller, cx| {
+                                controller.diagnose_terminal_command(prompt, window, cx);
+                            });
+                            cx.notify();
+                        }
+                    }
                 }
             }
             AppCommand::VaultActionRequested(request) => {

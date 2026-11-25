@@ -3020,6 +3020,8 @@ fn key_bindings_page(entity: Entity<SettingsController>) -> SettingPage {
         KeyBindingSlot::Copy,
         KeyBindingSlot::Paste,
         KeyBindingSlot::Search,
+        KeyBindingSlot::PrevCommand,
+        KeyBindingSlot::NextCommand,
         KeyBindingSlot::SplitRight,
         KeyBindingSlot::SplitDown,
         KeyBindingSlot::ClosePane,
@@ -3271,6 +3273,8 @@ impl SettingFieldElement for KeyBindingCaptureField {
             KeyBindingSlot::SplitRight => settings.key_bindings.split_right.display(),
             KeyBindingSlot::SplitDown => settings.key_bindings.split_down.display(),
             KeyBindingSlot::ClosePane => settings.key_bindings.close_pane.display(),
+            KeyBindingSlot::PrevCommand => settings.key_bindings.prev_command.display(),
+            KeyBindingSlot::NextCommand => settings.key_bindings.next_command.display(),
         };
 
         let controller = self.controller.clone();

@@ -1,3 +1,4 @@
+use crate::ui::features::session::TerminalInputHost as _;
 use crate::ui::i18n;
 use gpui_kit::StatefulInteractiveElement;
 use miaominal_settings::TerminalRightClickBehavior;
@@ -6,7 +7,8 @@ use super::super::metrics::TERMINAL_PANEL_BORDER;
 use super::super::*;
 use super::chrome::{status_indicator, tab_status_indicator_color};
 use super::workspace_terminal_menu::{
-    TerminalContextMenuState, build_terminal_context_menu, terminal_pane_surface_id,
+    TerminalContextCommandInfo, TerminalContextMenuState, build_terminal_context_menu,
+    terminal_pane_surface_id,
 };
 
 /// Whether a right click is handled by the terminal itself (copy selection or
@@ -108,6 +110,7 @@ pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
         &mut self,
         pane_id: super::super::panes::PaneId,
         embedded_in_split: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement;
 
@@ -134,7 +137,7 @@ impl WorkspacePanesAppViewExt for AppView {
                 let body = if *pane_id == self.workspace.workspace.active_pane_id {
                     self.render_active_pane_surface(embedded_in_split, window, cx)
                 } else {
-                    self.render_parked_pane_surface(*pane_id, embedded_in_split, cx)
+                    self.render_parked_pane_surface(*pane_id, embedded_in_split, window, cx)
                 };
                 let content = if path.is_empty() {
                     body
@@ -626,6 +629,7 @@ impl WorkspacePanesAppViewExt for AppView {
         &mut self,
         pane_id: super::super::panes::PaneId,
         embedded_in_split: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let material = miaominal_settings::current_theme().material;
@@ -691,6 +695,10 @@ impl WorkspacePanesAppViewExt for AppView {
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.set_active_pane(pane_id, window, cx);
+                    this.workspace
+                        .workspace
+                        .active_pane
+                        .terminal_pointer_position = Some(event.position);
                     stop_plain_right_click_reaching_context_menu(event, cx);
                 }),
             )
@@ -723,8 +731,28 @@ impl WorkspacePanesAppViewExt for AppView {
                 }),
             )
             .child(if has_terminal {
+                let parked_tab_id = parked_tab_index;
+                let parked_is_local = parked_tab
+                    .as_ref()
+                    .is_some_and(|tab| tab.is_plain_terminal());
+                let command_overlay = parked_tab_id.and_then(|tab_id| {
+                    super::workspace_terminal_commands::render_terminal_command_overlay(
+                        self,
+                        pane_id,
+                        tab_id,
+                        false,
+                        embedded_in_split,
+                        !parked_is_local,
+                        false,
+                        false,
+                        line_height,
+                        window,
+                        cx,
+                    )
+                });
                 div()
                     .size_full()
+                    .relative()
                     .px_4()
                     .when(!embedded_in_split, |this| this.pt_4())
                     .child(render_terminal_canvas_for_pane(
@@ -735,6 +763,7 @@ impl WorkspacePanesAppViewExt for AppView {
                         pane_id,
                         show_scrollbar,
                     ))
+                    .when_some(command_overlay, |this, overlay| this.child(overlay))
                     .into_any_element()
             } else {
                 div()
@@ -780,18 +809,6 @@ impl WorkspacePanesAppViewExt for AppView {
                         }
 
                         let view = entity.read(cx);
-                        let has_selection = view
-                            .workspace
-                            .workspace
-                            .parked_panes
-                            .get(&pane_id)
-                            .and_then(|parked| parked.active_tab)
-                            .is_some_and(|tab_id| {
-                                view.controllers
-                                    .session
-                                    .read(cx)
-                                    .terminal_has_selection(tab_id)
-                            });
                         let command_source = view.controllers.session.clone();
                         let tab_id = view
                             .workspace
@@ -799,32 +816,12 @@ impl WorkspacePanesAppViewExt for AppView {
                             .parked_panes
                             .get(&pane_id)
                             .and_then(|parked| parked.active_tab);
-                        let active_tab_is_local = tab_id
-                            .and_then(|tab_id| view.workspace.tabs.get(tab_id))
-                            .is_some_and(|tab| tab.is_plain_terminal());
-                        let cwd_sync_path = tab_id.and_then(|tab_id| {
-                            view.controllers
-                                .sftp
-                                .read(cx)
-                                .has_tab(tab_id)
-                                .then(|| {
-                                    view.session_tab(tab_id, cx)
-                                        .and_then(|s| s.current_directory().map(ToOwned::to_owned))
-                                })
-                                .flatten()
-                        });
+                        let state = terminal_context_menu_state(view, pane_id, tab_id, cx);
 
                         build_terminal_context_menu(
                             menu,
                             command_source,
-                            TerminalContextMenuState {
-                                has_selection,
-                                allow_sftp: !active_tab_is_local,
-                                is_split: view.workspace_is_split(),
-                                is_zoomed: view.workspace.workspace.zoomed_pane == Some(pane_id),
-                                sync_panes: view.workspace.workspace.sync_panes,
-                                cwd_sync_path,
-                            },
+                            state,
                             Some(pane_id),
                             window,
                             cx,
@@ -919,6 +916,22 @@ impl WorkspacePanesAppViewExt for AppView {
                     .bg(rgb(roles.background))
                     .text_color(rgb(roles.on_surface))
                     .when(show_link_cursor, |this| this.cursor_pointer());
+                let cursor_visible =
+                    !terminal_focused || self.shell.terminal_cursor_blink.read(cx).is_visible();
+                let command_overlay =
+                    super::workspace_terminal_commands::render_terminal_command_overlay(
+                        self,
+                        active_pane_id,
+                        tab_id,
+                        true,
+                        embedded_in_split,
+                        !tab.is_plain_terminal(),
+                        terminal_focused,
+                        cursor_visible,
+                        line_height,
+                        window,
+                        cx,
+                    );
                 let terminal_surface = crate::ui::features::session::bind_terminal_input_handlers(
                     terminal_surface,
                     line_height,
@@ -932,6 +945,7 @@ impl WorkspacePanesAppViewExt for AppView {
                     active_pane_id,
                     show_scrollbar,
                 ))
+                .when_some(command_overlay, |this, overlay| this.child(overlay))
                 .when_some(
                     super::workspace_terminal_search::advance_terminal_search_overlay(
                         self, window, cx,
@@ -1005,51 +1019,81 @@ impl WorkspacePanesAppViewExt for AppView {
                         }
 
                         let view = entity.read(cx);
-                        let has_selection =
-                            view.workspace.workspace.active_tab.is_some_and(|tab_id| {
-                                view.controllers
-                                    .session
-                                    .read(cx)
-                                    .terminal_has_selection(tab_id)
-                            });
                         let command_source = view.controllers.session.clone();
                         let tab_id = view.workspace.workspace.active_tab;
-                        let active_tab_is_local = tab_id
-                            .and_then(|tab_id| view.workspace.tabs.get(tab_id))
-                            .is_some_and(|tab| tab.is_plain_terminal());
-                        let cwd_sync_path = tab_id.and_then(|tab_id| {
-                            view.controllers
-                                .sftp
-                                .read(cx)
-                                .has_tab(tab_id)
-                                .then(|| {
-                                    view.session_tab(tab_id, cx)
-                                        .and_then(|s| s.current_directory().map(ToOwned::to_owned))
-                                })
-                                .flatten()
-                        });
+                        let pane_id = view.workspace.workspace.active_pane_id;
+                        let state = terminal_context_menu_state(view, pane_id, tab_id, cx);
 
-                        build_terminal_context_menu(
-                            menu,
-                            command_source,
-                            TerminalContextMenuState {
-                                has_selection,
-                                allow_sftp: !active_tab_is_local,
-                                is_split: view.workspace_is_split(),
-                                is_zoomed: view.workspace.workspace.zoomed_pane
-                                    == Some(view.workspace.workspace.active_pane_id),
-                                sync_panes: view.workspace.workspace.sync_panes,
-                                cwd_sync_path,
-                            },
-                            None,
-                            window,
-                            cx,
-                        )
+                        build_terminal_context_menu(menu, command_source, state, None, window, cx)
                     }
                 })
                 .into_any_element()
         } else {
             pane_surface.into_any_element()
         }
+    }
+}
+
+fn terminal_context_menu_state(
+    view: &AppView,
+    pane_id: super::super::panes::PaneId,
+    tab_id: Option<TabId>,
+    cx: &App,
+) -> TerminalContextMenuState {
+    let session = view.controllers.session.read(cx);
+    let has_selection = tab_id.is_some_and(|tab_id| session.terminal_has_selection(tab_id));
+    let active_tab_is_local = tab_id
+        .and_then(|tab_id| view.workspace.tabs.get(tab_id))
+        .is_some_and(|tab| tab.is_plain_terminal());
+    let cwd_sync_path = tab_id.and_then(|tab_id| {
+        view.controllers
+            .sftp
+            .read(cx)
+            .has_tab(tab_id)
+            .then(|| {
+                view.session_tab(tab_id, cx)
+                    .and_then(|s| s.current_directory().map(ToOwned::to_owned))
+            })
+            .flatten()
+    });
+    let has_command_blocks =
+        tab_id.is_some_and(|tab_id| session.terminal_has_command_blocks(tab_id));
+    let command = tab_id.and_then(|tab_id| {
+        let block = view
+            .terminal_pane_presentation(pane_id)
+            .and_then(|pane| {
+                let bounds = pane.bounds?;
+                let pos = pane.pointer_position?;
+                let min_y = f32::from(bounds.origin.y);
+                let max_y = min_y + f32::from(bounds.size.height);
+                let py = f32::from(pos.y);
+                if py < min_y || py > max_y {
+                    return None;
+                }
+                let row = ((py - min_y) / pane.line_height.max(1.0)).floor() as usize;
+                session.terminal_command_block_at_viewport_line(tab_id, row)
+            })
+            .or_else(|| session.terminal_latest_command_block(tab_id))?;
+
+        Some(TerminalContextCommandInfo {
+            id: block.id,
+            has_output: !block.output.trim().is_empty(),
+            failed_exit_code: match block.status {
+                miaominal_terminal::CommandBlockStatus::Finished(code) if code != 0 => Some(code),
+                _ => None,
+            },
+            allow_agent: !active_tab_is_local,
+        })
+    });
+
+    TerminalContextMenuState {
+        has_selection,
+        allow_sftp: !active_tab_is_local,
+        is_split: view.workspace_is_split(),
+        is_zoomed: view.workspace.workspace.zoomed_pane == Some(pane_id),
+        sync_panes: view.workspace.workspace.sync_panes,
+        cwd_sync_path,
+        has_command_blocks,
+        command,
     }
 }

@@ -298,6 +298,8 @@ pub(in crate::ui) enum KeyBindingSlot {
     SplitRight,
     SplitDown,
     ClosePane,
+    PrevCommand,
+    NextCommand,
 }
 
 impl KeyBindingSlot {
@@ -313,6 +315,8 @@ impl KeyBindingSlot {
             Self::SplitRight => "settings.key_bindings.slots.split_right.label",
             Self::SplitDown => "settings.key_bindings.slots.split_down.label",
             Self::ClosePane => "settings.key_bindings.slots.close_pane.label",
+            Self::PrevCommand => "settings.key_bindings.slots.prev_command.label",
+            Self::NextCommand => "settings.key_bindings.slots.next_command.label",
         }
     }
 
@@ -328,6 +332,8 @@ impl KeyBindingSlot {
             Self::SplitRight => "settings.key_bindings.slots.split_right.description",
             Self::SplitDown => "settings.key_bindings.slots.split_down.description",
             Self::ClosePane => "settings.key_bindings.slots.close_pane.description",
+            Self::PrevCommand => "settings.key_bindings.slots.prev_command.description",
+            Self::NextCommand => "settings.key_bindings.slots.next_command.description",
         }
     }
 
@@ -3685,6 +3691,8 @@ impl SettingsController {
             KeyBindingSlot::SplitRight => settings.key_bindings.split_right = binding.clone(),
             KeyBindingSlot::SplitDown => settings.key_bindings.split_down = binding.clone(),
             KeyBindingSlot::ClosePane => settings.key_bindings.close_pane = binding.clone(),
+            KeyBindingSlot::PrevCommand => settings.key_bindings.prev_command = binding.clone(),
+            KeyBindingSlot::NextCommand => settings.key_bindings.next_command = binding.clone(),
         });
         if changed {
             let name = slot.label();
@@ -3740,6 +3748,8 @@ impl SettingsController {
             KeyBindingSlot::SplitRight => defaults.split_right,
             KeyBindingSlot::SplitDown => defaults.split_down,
             KeyBindingSlot::ClosePane => defaults.close_pane,
+            KeyBindingSlot::PrevCommand => defaults.prev_command,
+            KeyBindingSlot::NextCommand => defaults.next_command,
         };
         let changed = self.settings_store.update(|settings| match slot {
             KeyBindingSlot::NextTab => settings.key_bindings.next_tab = default_binding.clone(),
@@ -3756,6 +3766,12 @@ impl SettingsController {
             }
             KeyBindingSlot::SplitDown => settings.key_bindings.split_down = default_binding.clone(),
             KeyBindingSlot::ClosePane => settings.key_bindings.close_pane = default_binding.clone(),
+            KeyBindingSlot::PrevCommand => {
+                settings.key_bindings.prev_command = default_binding.clone()
+            }
+            KeyBindingSlot::NextCommand => {
+                settings.key_bindings.next_command = default_binding.clone()
+            }
         });
         if changed {
             let name = slot.label();

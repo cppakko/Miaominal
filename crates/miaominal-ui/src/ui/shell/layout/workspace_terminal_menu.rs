@@ -19,6 +19,13 @@ fn emit_terminal_menu_command(
     });
 }
 
+pub(in crate::ui::shell::layout) struct TerminalContextCommandInfo {
+    pub(in crate::ui::shell::layout) id: u64,
+    pub(in crate::ui::shell::layout) has_output: bool,
+    pub(in crate::ui::shell::layout) failed_exit_code: Option<i32>,
+    pub(in crate::ui::shell::layout) allow_agent: bool,
+}
+
 pub(in crate::ui::shell::layout) struct TerminalContextMenuState {
     pub(in crate::ui::shell::layout) has_selection: bool,
     pub(in crate::ui::shell::layout) allow_sftp: bool,
@@ -26,6 +33,8 @@ pub(in crate::ui::shell::layout) struct TerminalContextMenuState {
     pub(in crate::ui::shell::layout) is_zoomed: bool,
     pub(in crate::ui::shell::layout) sync_panes: bool,
     pub(in crate::ui::shell::layout) cwd_sync_path: Option<String>,
+    pub(in crate::ui::shell::layout) has_command_blocks: bool,
+    pub(in crate::ui::shell::layout) command: Option<TerminalContextCommandInfo>,
 }
 
 pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
@@ -38,6 +47,10 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
 ) -> PopupMenu {
     let copy = command_source.clone();
     let paste = command_source.clone();
+    let copy_command_output = command_source.clone();
+    let diagnose_command = command_source.clone();
+    let prev_command = command_source.clone();
+    let next_command = command_source.clone();
     let split_right = command_source.clone();
     let split_down = command_source.clone();
     let split_left = command_source.clone();
@@ -72,7 +85,66 @@ pub(in crate::ui::shell::layout) fn build_terminal_context_menu(
                     );
                 },
             ),
+        );
+    let menu = if state.has_command_blocks {
+        let mut menu = menu.item(PopupMenuItem::separator());
+        if let Some(cmd) = state.command {
+            let cmd_id = cmd.id;
+            menu = menu.item(
+                PopupMenuItem::new(i18n::string("workspace.menu.copy_command_output"))
+                    .disabled(!cmd.has_output)
+                    .on_click(move |_, _window, cx| {
+                        emit_terminal_menu_command(
+                            &copy_command_output,
+                            target_pane_id,
+                            TerminalMenuCommand::CopyCommandOutput(cmd_id),
+                            cx,
+                        );
+                    }),
+            );
+            if cmd.failed_exit_code.is_some() && cmd.allow_agent {
+                menu = menu.item(
+                    PopupMenuItem::new(i18n::string("workspace.menu.diagnose_with_ai")).on_click(
+                        move |_, _window, cx| {
+                            emit_terminal_menu_command(
+                                &diagnose_command,
+                                target_pane_id,
+                                TerminalMenuCommand::DiagnoseCommandWithAi(cmd_id),
+                                cx,
+                            );
+                        },
+                    ),
+                );
+            }
+        }
+        menu.item(
+            PopupMenuItem::new(i18n::string("workspace.menu.prev_command")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &prev_command,
+                        target_pane_id,
+                        TerminalMenuCommand::JumpPreviousCommand,
+                        cx,
+                    );
+                },
+            ),
         )
+        .item(
+            PopupMenuItem::new(i18n::string("workspace.menu.next_command")).on_click(
+                move |_, _window, cx| {
+                    emit_terminal_menu_command(
+                        &next_command,
+                        target_pane_id,
+                        TerminalMenuCommand::JumpNextCommand,
+                        cx,
+                    );
+                },
+            ),
+        )
+    } else {
+        menu
+    };
+    let menu = menu
         .item(PopupMenuItem::separator())
         .item(
             PopupMenuItem::new(i18n::string("workspace.menu.split_right")).on_click(

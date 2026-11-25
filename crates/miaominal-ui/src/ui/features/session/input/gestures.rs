@@ -440,6 +440,34 @@ fn active_terminal_mouse_mode<V: TerminalInputHost>(
     this.terminal_owner().read(cx).terminal_mouse_mode(tab_id)
 }
 
+fn terminal_hovered_command_id<V: TerminalInputHost>(
+    this: &V,
+    position: Option<Point<Pixels>>,
+    cx: &App,
+) -> Option<(TabId, u64)> {
+    let position = position?;
+    let pane = this.active_terminal_pane();
+    let bounds = pane.terminal_bounds?;
+    let tab_id = this.active_terminal_tab_id()?;
+    let gutter_allowance = 24.0;
+    let min_x = f32::from(bounds.origin.x) - gutter_allowance;
+    let max_x = f32::from(bounds.origin.x) + f32::from(bounds.size.width) + gutter_allowance;
+    let min_y = f32::from(bounds.origin.y);
+    let max_y = min_y + f32::from(bounds.size.height);
+    let px_x = f32::from(position.x);
+    let px_y = f32::from(position.y);
+    if px_x < min_x || px_x > max_x || px_y < min_y || px_y > max_y {
+        return None;
+    }
+    let line_height = pane.terminal_line_height.max(1.0);
+    let row = ((px_y - min_y) / line_height).floor() as usize;
+    let block = this
+        .terminal_owner()
+        .read(cx)
+        .terminal_command_block_at_viewport_line(tab_id, row)?;
+    Some((tab_id, block.id))
+}
+
 pub(crate) trait WorkspaceTerminalInputExt: Sized {
     fn clear_terminal_free_type_interactions(&mut self, cx: &mut Context<Self>);
     fn handle_terminal_key_down(
@@ -643,9 +671,13 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
             controller.route_terminal_key_down(tab_id, event, cx)
         });
         if dispatch.scrolled() {
+            self.active_terminal_pane_mut().terminal_pinned_command_id = None;
+            self.active_terminal_pane_mut().terminal_hovered_command_bar = None;
             self.touch_terminal_scrollbar_visibility(self.active_terminal_pane_id(), cx);
             self.sync_terminal_cursor_blink(window, cx);
         } else if tab_id.is_some() && dispatch.request().is_none() {
+            self.active_terminal_pane_mut().terminal_pinned_command_id = None;
+            self.active_terminal_pane_mut().terminal_hovered_command_bar = None;
             self.pause_terminal_cursor_blink(cx);
         }
         if let Some(request) = dispatch.request() {
@@ -764,6 +796,11 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
             return;
         }
 
+        self.active_terminal_pane_mut().terminal_pointer_position = Some(event.position);
+        if event.button == MouseButton::Left {
+            self.active_terminal_pane_mut().terminal_pinned_command_id = None;
+            self.active_terminal_pane_mut().terminal_hovered_command_bar = None;
+        }
         self.pause_terminal_cursor_blink(cx);
 
         let free_type_enabled = miaominal_settings::current_settings().terminal_free_type_mode;
@@ -1273,7 +1310,15 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
             return;
         }
 
+        let bar_cleared = self
+            .active_terminal_pane_mut()
+            .terminal_hovered_command_bar
+            .take()
+            .is_some();
         self.set_terminal_hover_state(None, false, cx);
+        if bar_cleared {
+            cx.notify();
+        }
     }
 
     fn handle_terminal_modifiers_changed(
@@ -1504,13 +1549,18 @@ impl<V: TerminalInputHost> WorkspaceTerminalInputExt for V {
         } else {
             previous_link.clone()
         };
-        let changed = previous_modifier != open_modifier || previous_link != hovered_link;
+        let previous_hovered_command = self.active_terminal_pane().terminal_hovered_command_id;
+        let hovered_command = terminal_hovered_command_id(self, position, cx);
+        let changed = previous_modifier != open_modifier
+            || previous_link != hovered_link
+            || previous_hovered_command != hovered_command;
 
         self.active_terminal_pane_mut().terminal_pointer_position = position;
         self.active_terminal_pane_mut().terminal_link_query =
             open_modifier.then_some(query).flatten();
         self.active_terminal_pane_mut().terminal_link_open_modifier = open_modifier;
         self.active_terminal_pane_mut().terminal_hovered_link = hovered_link;
+        self.active_terminal_pane_mut().terminal_hovered_command_id = hovered_command;
 
         if changed {
             cx.notify();
