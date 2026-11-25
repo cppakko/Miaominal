@@ -616,9 +616,7 @@ impl ShellIntegrationState {
         let min_line = -(history_size as i32);
         let active_id = self.active_block_id;
         self.blocks.retain(|block| {
-            let keep =
-                block.end_line.max(block.prompt_line) >= min_line || Some(block.id) == active_id;
-            keep
+            block.end_line.max(block.prompt_line) >= min_line || Some(block.id) == active_id
         });
         if let Some(active_id) = active_id
             && let Some(block) = self.blocks.iter_mut().find(|b| b.id == active_id)
