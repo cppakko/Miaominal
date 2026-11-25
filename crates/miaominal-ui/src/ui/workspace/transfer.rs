@@ -736,13 +736,15 @@ fn install_transferred_topbar_bundle<V: WorkspaceTransferHost + 'static>(
         host.transfer_restore_session_ui(session_ui, active_tab_id, window, cx);
     }
 
-    host.transfer_state_mut()
-        .topbar_previous_visible_tabs
-        .clear();
-    host.transfer_state_mut().topbar_entering_tabs.clear();
-    host.transfer_state_mut().topbar_exiting_tabs.clear();
-    host.transfer_state_mut().topbar_active_transition = None;
-    host.transfer_state_mut().topbar_visible_active_tab_id = Some(root_id);
+    if raw_insert_index.is_none() {
+        host.transfer_state_mut()
+            .topbar_previous_visible_tabs
+            .clear();
+        host.transfer_state_mut().topbar_entering_tabs.clear();
+        host.transfer_state_mut().topbar_exiting_tabs.clear();
+        host.transfer_state_mut().topbar_active_transition = None;
+        host.transfer_state_mut().topbar_visible_active_tab_id = Some(root_id);
+    }
     host.transfer_sync_transferred_sftp_browser(root_id, window, cx);
     if let Some(sftp_ui) = bundle.sftp_ui.take() {
         host.transfer_restore_sftp_ui(sftp_ui, window, cx);

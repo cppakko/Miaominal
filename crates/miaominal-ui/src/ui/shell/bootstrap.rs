@@ -503,6 +503,7 @@ impl AppView {
                 shell_state: ShellState::default(),
                 tab_drag_ghost: None,
                 topbar_drop_geometry: Default::default(),
+                topbar_drop_slots: Vec::new(),
                 external_tab_drop: None,
                 hovered_external_target: None,
                 overlay_state: super::overlays::WindowOverlayState::default(),

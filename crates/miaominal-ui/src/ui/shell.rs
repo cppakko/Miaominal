@@ -91,7 +91,9 @@ use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, Park
 
 pub(in crate::ui::shell) use state::{
     DraggedTab, ExternalTabDropTarget, ShellState, TAB_DRAG_GHOST_HEIGHT, TAB_DRAG_GHOST_RADIUS,
-    TabDragDetachState, TabDragGhostCue, TabDragGhostView, TopbarDropGeometry, tab_drag_ghost_size,
+    TabDragDetachState, TabDragGhostCue, TabDragGhostView, TopbarDropGeometry,
+    TopbarDropSlotTransition, consume_topbar_drop_slot, prune_closed_topbar_drop_slots,
+    sync_topbar_drop_slots, tab_drag_ghost_size,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};

@@ -87,7 +87,7 @@ pub(in crate::ui::shell) fn hit_test_topbar_drop(
     local_pos: Point<Pixels>,
     geometry: &TopbarDropGeometry,
     exclude_right_controls_width: f32,
-) -> Option<(usize, Pixels)> {
+) -> Option<usize> {
     let bar = geometry.bar_bounds?;
     let bar_left = f32::from(bar.origin.x);
     let bar_top = f32::from(bar.origin.y);
@@ -110,23 +110,16 @@ pub(in crate::ui::shell) fn hit_test_topbar_drop(
         .collect();
     tabs.sort_by(|a, b| f32::from(a.origin.x).total_cmp(&f32::from(b.origin.x)));
 
-    let min_x = bar_left + 4.0;
-    let max_x = (right_limit - 4.0).max(min_x);
-    let raw_indicator = if tabs.is_empty() {
-        (0, bar_left + 16.0)
-    } else if let Some((index, rect)) = tabs.iter().enumerate().find(|(_, rect)| {
+    if tabs.is_empty() {
+        Some(0)
+    } else if let Some((index, _)) = tabs.iter().enumerate().find(|(_, rect)| {
         let mid_x = f32::from(rect.origin.x) + f32::from(rect.size.width) * 0.5;
         x < mid_x
     }) {
-        (index, f32::from(rect.origin.x) - 4.0)
+        Some(index)
     } else {
-        let last = tabs.last().expect("tabs is non-empty");
-        (
-            tabs.len(),
-            f32::from(last.origin.x) + f32::from(last.size.width) + 4.0,
-        )
-    };
-    Some((raw_indicator.0, px(raw_indicator.1.clamp(min_x, max_x))))
+        Some(tabs.len())
+    }
 }
 
 pub(in crate::ui::shell) fn hit_test_pane_drop_zone(
@@ -509,15 +502,12 @@ impl AppView {
         } else {
             RIGHT_WINDOW_CONTROLS_BASE_WIDTH * scale
         };
-        if let Some((insertion_index, indicator_x)) = hit_test_topbar_drop(
+        if let Some(insertion_index) = hit_test_topbar_drop(
             local_pos,
             &self.shell.topbar_drop_geometry.borrow(),
             exclude_right_controls_width,
         ) {
-            return Some(ExternalTabDropTarget::TabBar {
-                insertion_index,
-                indicator_x,
-            });
+            return Some(ExternalTabDropTarget::TabBar { insertion_index });
         }
 
         if !allow_pane_drop || !self.has_active_session() {
@@ -572,24 +562,73 @@ impl AppView {
             }
             _ => None,
         };
-        if self.shell.external_tab_drop == target
-            && self.workspace.workspace.pane_tab_drop_target == next_pane_target
-        {
-            return;
-        }
+        let slot_target = match target {
+            Some(ExternalTabDropTarget::TabBar { insertion_index }) => Some(insertion_index),
+            _ => None,
+        };
+        let had_slots = !self.shell.topbar_drop_slots.is_empty();
+        sync_topbar_drop_slots(
+            &mut self.shell.topbar_drop_slots,
+            slot_target,
+            Instant::now(),
+            support::CONTAINER_TRANSITION_DURATION,
+        );
+        let has_slots = !self.shell.topbar_drop_slots.is_empty();
+        let target_changed = self.shell.external_tab_drop != target
+            || self.workspace.workspace.pane_tab_drop_target != next_pane_target;
         self.shell.external_tab_drop = target;
         self.workspace.workspace.pane_tab_drop_target = next_pane_target;
-        cx.notify();
+        if target_changed || had_slots || has_slots {
+            cx.notify();
+        }
     }
 
-    fn clear_hovered_external_target(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(in crate::ui::shell) fn consume_external_tab_drop_for_merge(
+        &mut self,
+        insertion_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        let now = Instant::now();
+        self.shell.external_tab_drop = None;
+        self.workspace.workspace.pane_tab_drop_target = None;
+        let handoff = if let Some(index) = insertion_index {
+            consume_topbar_drop_slot(
+                &mut self.shell.topbar_drop_slots,
+                index,
+                now,
+                support::CONTAINER_TRANSITION_DURATION,
+            )
+        } else {
+            sync_topbar_drop_slots(
+                &mut self.shell.topbar_drop_slots,
+                None,
+                now,
+                support::CONTAINER_TRANSITION_DURATION,
+            );
+            0.0
+        };
+        cx.notify();
+        handoff
+    }
+
+    fn clear_stale_hovered_external_target(
+        &mut self,
+        keep_window_id: Option<WindowId>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(hovered) = self.shell.hovered_external_target.take() else {
             return false;
         };
-        let _ = hovered.view.update(cx, |view, cx| {
-            view.set_external_tab_drop_preview(None, cx);
-        });
+        if keep_window_id != Some(hovered.window.window_id()) {
+            let _ = hovered.view.update(cx, |view, cx| {
+                view.set_external_tab_drop_preview(None, cx);
+            });
+        }
         true
+    }
+
+    fn clear_hovered_external_target(&mut self, cx: &mut Context<Self>) -> bool {
+        self.clear_stale_hovered_external_target(None, cx)
     }
 
     fn can_drag_merge_tab_into_pane(&self, tab_id: TabId, cx: &App) -> bool {
@@ -829,6 +868,7 @@ impl AppView {
         let Some(bundle) = self.extract_detached_tab_bundle(tab_id, window, cx) else {
             return;
         };
+        let root_id = bundle.root_id();
         let source = bundle.source();
         let transaction = Rc::new(RefCell::new(TransferTransaction::prepare(Box::new(bundle))));
         let target_transaction = transaction.clone();
@@ -836,17 +876,21 @@ impl AppView {
         let target_spec = target.target;
         let result = target.window.update(cx, move |_, target_window, cx| {
             target_view.update(cx, |view, cx| {
-                view.set_external_tab_drop_preview(None, cx);
-                target_transaction.borrow_mut().install(|bundle| {
+                let tab_bar_insertion = match target_spec {
+                    ExternalTabDropTarget::TabBar { insertion_index } => Some(insertion_index),
+                    ExternalTabDropTarget::TerminalPane { .. } => None,
+                };
+                let handoff_visibility =
+                    view.consume_external_tab_drop_for_merge(tab_bar_insertion, cx);
+                let install_result = target_transaction.borrow_mut().install(|bundle| {
                     let merge_result = match target_spec {
-                        ExternalTabDropTarget::TabBar {
-                            insertion_index, ..
-                        } => view.merge_transferred_tab_into_topbar(
-                            *bundle,
-                            insertion_index,
-                            target_window,
-                            cx,
-                        ),
+                        ExternalTabDropTarget::TabBar { insertion_index } => view
+                            .merge_transferred_tab_into_topbar(
+                                *bundle,
+                                insertion_index,
+                                target_window,
+                                cx,
+                            ),
                         ExternalTabDropTarget::TerminalPane { pane_id, zone } => view
                             .merge_transferred_tab_into_pane(
                                 *bundle,
@@ -862,7 +906,13 @@ impl AppView {
                             bundle,
                         )
                     })
-                })
+                });
+                if install_result.is_ok()
+                    && matches!(target_spec, ExternalTabDropTarget::TabBar { .. })
+                {
+                    view.seed_topbar_tab_enter_visibility(root_id, handoff_visibility);
+                }
+                install_result
             })?;
             target_window.activate_window();
             Ok::<(), String>(())
@@ -904,7 +954,7 @@ impl AppView {
             }
             return false;
         };
-        self.clear_hovered_external_target(cx);
+        self.clear_stale_hovered_external_target(Some(target.window.window_id()), cx);
         self.shell.shell_state.tab_drag_detach = None;
         self.shell.shell_state.dragging_tab_id = None;
         cx.stop_active_drag(window);
@@ -920,7 +970,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let dragging_tab_id = self.shell.shell_state.dragging_tab_id.take();
-        self.clear_hovered_external_target(cx);
         let pending = self.shell.shell_state.tab_drag_detach.take();
         let active_tab_id = dragging_tab_id.or_else(|| pending.map(|state| state.tab_id));
         if cx.has_active_drag()
@@ -928,11 +977,13 @@ impl AppView {
             && let Some(target) =
                 self.resolve_external_tab_drop_target(tab_id, position, window, cx)
         {
+            self.clear_stale_hovered_external_target(Some(target.window.window_id()), cx);
             cx.stop_active_drag(window);
             self.close_tab_drag_ghost(cx);
             self.move_tab_to_existing_window(tab_id, target, window, cx);
             return;
         }
+        self.clear_hovered_external_target(cx);
 
         let should_detach = pending.is_some_and(|pending| {
             let can_detach = self.can_drag_detach_tab(pending.tab_id, cx);
@@ -1367,7 +1418,7 @@ mod tests {
         };
         assert_eq!(
             hit_test_topbar_drop(point(px(120.0), px(24.0)), &empty, 128.0),
-            Some((0, px(16.0)))
+            Some(0)
         );
         // Right window controls exclusion zone.
         assert_eq!(
@@ -1399,17 +1450,17 @@ mod tests {
         // Left of tab 1 midpoint (108) -> index 0.
         assert_eq!(
             hit_test_topbar_drop(point(px(60.0), px(24.0)), &geometry, 128.0),
-            Some((0, px(24.0)))
+            Some(0)
         );
         // Right of tab 1 midpoint, left of tab 2 midpoint (280) -> index 1.
         assert_eq!(
             hit_test_topbar_drop(point(px(220.0), px(24.0)), &geometry, 128.0),
-            Some((1, px(196.0)))
+            Some(1)
         );
         // Right of tab 2 midpoint -> index 2 after tab 2.
         assert_eq!(
             hit_test_topbar_drop(point(px(340.0), px(24.0)), &geometry, 128.0),
-            Some((2, px(364.0)))
+            Some(2)
         );
     }
 

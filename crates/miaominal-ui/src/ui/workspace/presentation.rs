@@ -37,6 +37,7 @@ pub(crate) struct TopbarTabSnapshot {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TopbarTabEnterTransition {
     pub(crate) tab_id: TabId,
+    pub(crate) from_visibility: f32,
     pub(crate) started_at: Instant,
     pub(crate) duration: Duration,
 }

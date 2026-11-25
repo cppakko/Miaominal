@@ -669,6 +669,8 @@ pub(in crate::ui::shell) trait ChromeAppViewExt: Sized {
         window: &mut Window,
     );
 
+    fn seed_topbar_tab_enter_visibility(&mut self, tab_id: TabId, from_visibility: f32);
+
     fn topbar_tab_visibility(&self, tab_id: TabId) -> f32;
 
     fn topbar_active_strength(&self, tab_id: TabId, current_active_tab_id: Option<TabId>) -> f32;
@@ -766,6 +768,7 @@ impl ChromeAppViewExt for AppView {
                     .topbar_entering_tabs
                     .push(TopbarTabEnterTransition {
                         tab_id: tab.snapshot.tab_id,
+                        from_visibility: 0.0,
                         started_at: now,
                         duration,
                     });
@@ -827,13 +830,36 @@ impl ChromeAppViewExt for AppView {
         }
     }
 
+    fn seed_topbar_tab_enter_visibility(&mut self, tab_id: TabId, from_visibility: f32) {
+        let from = from_visibility.clamp(0.0, 1.0);
+        self.workspace
+            .topbar_entering_tabs
+            .retain(|transition| transition.tab_id != tab_id);
+        let duration = if from >= 0.999 {
+            Duration::ZERO
+        } else {
+            support::CONTAINER_TRANSITION_DURATION.mul_f32((1.0 - from).clamp(0.15, 1.0))
+        };
+        self.workspace
+            .topbar_entering_tabs
+            .push(TopbarTabEnterTransition {
+                tab_id,
+                from_visibility: from,
+                started_at: Instant::now(),
+                duration,
+            });
+    }
+
     fn topbar_tab_visibility(&self, tab_id: TabId) -> f32 {
         self.workspace
             .topbar_entering_tabs
             .iter()
             .find(|transition| transition.tab_id == tab_id)
             .map(|transition| {
-                topbar_transition_progress(transition.started_at, transition.duration)
+                let progress =
+                    topbar_transition_progress(transition.started_at, transition.duration);
+                (transition.from_visibility + (1.0 - transition.from_visibility) * progress)
+                    .clamp(0.0, 1.0)
             })
             .unwrap_or(1.0)
     }
@@ -891,16 +917,31 @@ impl ChromeAppViewExt for AppView {
             .tab_bounds
             .clear();
         let drop_geometry = self.shell.topbar_drop_geometry.clone();
-        let external_tab_bar_drop = match self.shell.external_tab_drop {
-            Some(ExternalTabDropTarget::TabBar { indicator_x, .. }) => Some(indicator_x),
-            _ => None,
-        };
+        let now = Instant::now();
+        prune_closed_topbar_drop_slots(&mut self.shell.topbar_drop_slots, now);
         let active = self.workspace.active_topbar_tab;
         let tabs = self.collect_visible_topbar_tabs(active, cx);
         let active_changed = self.workspace.topbar_visible_active_tab_id != active;
         let tab_layout_animating = !self.workspace.topbar_entering_tabs.is_empty()
             || !self.workspace.topbar_exiting_tabs.is_empty();
         self.sync_topbar_tab_animation_state(&tabs, active, window);
+        if self
+            .shell
+            .topbar_drop_slots
+            .iter()
+            .any(|slot| slot.is_animating(now))
+        {
+            window.request_animation_frame();
+        }
+        let mut drop_slots: Vec<(usize, f32)> = self
+            .shell
+            .topbar_drop_slots
+            .iter()
+            .filter_map(|slot| {
+                let visibility = slot.progress(now);
+                (visibility > 0.001).then_some((slot.insertion_index, visibility))
+            })
+            .collect();
         let should_scroll_to_active = active_changed
             || tab_layout_animating
             || !self.workspace.topbar_entering_tabs.is_empty()
@@ -936,6 +977,7 @@ impl ChromeAppViewExt for AppView {
             .iter()
             .map(|tab| self.topbar_tab_visibility(tab.snapshot.tab_id))
             .chain(exiting_tabs.iter().map(|exiting| exiting.visibility))
+            .chain(drop_slots.iter().map(|(_, visibility)| *visibility))
             .sum::<f32>();
         let content_width = animated_tab_count * tab_footprint + 4.0;
         let available_strip_width = (width - controls_width - 88.0).max(0.0);
@@ -1051,7 +1093,7 @@ impl ChromeAppViewExt for AppView {
                         .absolute()
                         .bottom_0()
                         .size(space(8.0))
-                        .bg(colors.canvas)
+                        .bg(tab_background)
                         .when(left, |element| element.left(space(-8.0)))
                         .when(!left, |element| element.right(space(-8.0)))
                         .child(
@@ -1097,7 +1139,7 @@ impl ChromeAppViewExt for AppView {
                             .hover(|style| style.bg(colors.hover))
                             .active(|style| style.bg(colors.selected))
                     })
-                    .when(is_active, |element| {
+                    .when(strength > 0.01 && visibility > 0.35, |element| {
                         element.child(corner(true)).child(corner(false))
                     })
                     .on_key_down(move |event, window, cx| {
@@ -1197,6 +1239,7 @@ impl ChromeAppViewExt for AppView {
                     .child(
                         h_flex()
                             .size_full()
+                            .overflow_hidden()
                             .px(space(8.0))
                             .pl(space(16.0))
                             .gap(space(8.0))
@@ -1270,6 +1313,32 @@ impl ChromeAppViewExt for AppView {
                     .into_any_element(),
             );
         }
+        drop_slots.sort_by(|a, b| b.0.cmp(&a.0));
+        for (insertion_index, visibility) in drop_slots {
+            let index = insertion_index.min(tab_elements.len());
+            let roles = miaominal_settings::current_theme().material.roles;
+            element_tab_ids.insert(index, None);
+            tab_elements.insert(
+                index,
+                div()
+                    .w(space(tab_width * visibility))
+                    .mr(space(-TOPBAR_TAB_STRIP_GAP * (1.0 - visibility)))
+                    .h(space(ShellMetrics::TAB_HEIGHT))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .opacity(visibility)
+                    .px(space(2.0))
+                    .pt(space(3.0))
+                    .pb(space(5.0))
+                    .child(
+                        div()
+                            .size_full()
+                            .rounded(space(12.0))
+                            .bg(color_with_alpha(roles.primary, 0x14)),
+                    )
+                    .into_any_element(),
+            );
+        }
         if tabs_fit {
             let offset = self.workspace.topbar_tab_scroll_handle.offset();
             if offset.x != px(0.0) {
@@ -1291,14 +1360,6 @@ impl ChromeAppViewExt for AppView {
         let chrome_scroll = scroll.clone();
         let chrome_entity = entity.clone();
         let bar_geometry = drop_geometry.clone();
-        let bar_origin_x = drop_geometry
-            .borrow()
-            .bar_bounds
-            .map_or(px(0.0), |bounds| bounds.origin.x);
-        let strip_highlight_color = external_tab_bar_drop.map(|_| {
-            let roles = miaominal_settings::current_theme().material.roles;
-            color_with_alpha(roles.primary, 0x18)
-        });
         topbar_drag_surface()
             .test_support()
             .on_scroll(move |event, _, cx| {
@@ -1331,7 +1392,6 @@ impl ChromeAppViewExt for AppView {
                     .gap(space(12.0))
                     .px(space(8.0))
                     .rounded_t(space(12.0))
-                    .when_some(strip_highlight_color, |element, color| element.bg(color))
                     .overflow_x_scroll()
                     .track_scroll(&scroll)
                     .children(tab_elements)
@@ -1367,19 +1427,6 @@ impl ChromeAppViewExt for AppView {
                 .absolute()
                 .inset_0(),
             )
-            .when_some(external_tab_bar_drop, |element, indicator_x| {
-                let left_x = (indicator_x - bar_origin_x).max(px(0.0));
-                element.child(
-                    div()
-                        .absolute()
-                        .left(left_x)
-                        .bottom(px(4.0))
-                        .w(px(3.0))
-                        .h(space(ShellMetrics::TAB_HEIGHT - 6.0))
-                        .rounded_full()
-                        .bg(colors.primary),
-                )
-            })
     }
 
     fn render_status_footer(
