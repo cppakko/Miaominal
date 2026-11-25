@@ -60,6 +60,7 @@ pub enum AppIcon {
     PanelLeft,
     PanelRight,
     MoreHorizontal,
+    Radio,
     Sliders,
     Send,
     Copy,
@@ -113,6 +114,7 @@ impl IconNamed for AppIcon {
             Self::PanelLeft => "icons/panel-left.svg",
             Self::PanelRight => "icons/panel-right.svg",
             Self::MoreHorizontal => "icons/ellipsis.svg",
+            Self::Radio => "icons/radio.svg",
             Self::Sliders => "icons/sliders-horizontal.svg",
             Self::Send => "icons/send.svg",
             Self::Copy => "icons/copy.svg",
@@ -158,5 +160,21 @@ impl AssetSource for AppAssets {
         items.sort();
         items.dedup();
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radio_icon_loads_embedded_svg() {
+        let path = AppIcon::Radio.path();
+        let bytes = AppAssets
+            .load(path.as_ref())
+            .expect("asset lookup should succeed")
+            .expect("radio icon SVG should be embedded");
+        let svg = std::str::from_utf8(bytes.as_ref()).expect("radio icon should be valid UTF-8");
+        assert!(svg.contains("<svg") && svg.contains("<circle"));
     }
 }

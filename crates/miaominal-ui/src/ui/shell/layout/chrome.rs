@@ -1548,7 +1548,7 @@ impl ChromeAppViewExt for AppView {
                                     row.child(
                                         tool(
                                             "workspace-sync-panes-toggle",
-                                            AppIcon::ArrowUpDown,
+                                            AppIcon::Radio,
                                             i18n::string(if sync_panes_active {
                                                 "session.workspace.disable_sync_panes"
                                             } else {
