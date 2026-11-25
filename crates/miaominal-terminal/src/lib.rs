@@ -31,7 +31,9 @@ use miaominal_settings as settings;
 pub use shell_integration::{
     CommandBlockStatus, TerminalCommandBlockContent, TerminalCommandMarker,
 };
-use shell_integration::{Osc133Scanner, ShellIntegrationState, TerminalControlEvent};
+use shell_integration::{
+    Osc133Scanner, ShellIntegrationState, TerminalControlEvent, height_resize_line_shift,
+};
 
 /// Maximum number of regex matches retained when running a scrollback search.
 pub const MAX_SEARCH_MATCHES: usize = 1000;
@@ -721,80 +723,107 @@ impl TerminalCore {
         let old_screen_lines = self.screen_lines;
         let was_scrolled = self.term.grid().display_offset() != 0;
         let is_alternate_screen = self.term.mode().contains(TermMode::ALT_SCREEN);
-        let before_history = (!is_alternate_screen).then(|| self.term.grid().history_size());
 
-        if columns < old_columns {
-            // Alacritty applies height changes before column reflow. Keep that order, but split
-            // the operations so history created specifically by reflow can be identified.
-            if screen_lines != old_screen_lines {
-                self.term.resize(TerminalDimensions {
-                    columns: old_columns,
-                    screen_lines,
-                });
-            }
-
-            let absorbable_lines = if was_scrolled || is_alternate_screen {
+        // Apply height changes before column reflow, matching Alacritty's ordering while
+        // tracking height-induced line shifts separately from per-line wrapping.
+        if screen_lines != old_screen_lines {
+            let height_shift = if is_alternate_screen {
                 0
             } else {
-                self.trailing_clear_screen_lines()
+                height_resize_line_shift(
+                    old_screen_lines,
+                    screen_lines,
+                    self.term.grid().cursor.point.line.0,
+                    self.term.grid().history_size(),
+                )
             };
-
-            // Give reflow enough temporary scrollback headroom to expose every row we could
-            // absorb. Without this, a full history buffer evicts old rows while reflowing and the
-            // net history size does not reveal how many new rows were created.
-            if absorbable_lines != 0 {
-                self.term
-                    .grid_mut()
-                    .update_history(SCROLLBACK_LINES.saturating_add(absorbable_lines));
-            }
-            let history_before_reflow = self.term.grid().history_size();
-
             self.term.resize(TerminalDimensions {
-                columns,
+                columns: old_columns,
                 screen_lines,
             });
+            if !is_alternate_screen && !self.term.mode().contains(TermMode::ALT_SCREEN) {
+                self.shell_integration
+                    .shift_lines(-height_shift, self.term.grid().history_size());
+            }
+        }
 
-            let reflow_history_growth = self
-                .term
-                .grid()
-                .history_size()
-                .saturating_sub(history_before_reflow);
-            let lines_to_absorb = reflow_history_growth.min(absorbable_lines);
+        if columns != old_columns {
+            let reflow_snapshot = (!is_alternate_screen && !self.shell_integration.is_empty())
+                .then(|| self.shell_integration.capture_reflow_anchors(&self.term));
 
-            // Column reflow anchors the cursor in place and puts newly wrapped rows into
-            // scrollback, even when the bottom of the viewport is empty. Temporarily growing the
-            // viewport pulls only those rows back from history; restoring the requested height
-            // then removes the same number of unused trailing rows.
-            if lines_to_absorb != 0
-                && let Some(expanded_lines) = screen_lines.checked_add(lines_to_absorb)
-            {
-                self.term.resize(TerminalDimensions {
-                    columns,
-                    screen_lines: expanded_lines,
-                });
+            if columns < old_columns {
+                let absorbable_lines = if was_scrolled || is_alternate_screen {
+                    0
+                } else {
+                    self.trailing_clear_screen_lines()
+                };
+
+                // Give reflow enough temporary scrollback headroom so neither absorbable overflow
+                // nor command-block logical lines are evicted from the top before remapping.
+                let needs_headroom = absorbable_lines != 0 || reflow_snapshot.is_some();
+                if needs_headroom {
+                    let old_total = self.term.grid().history_size().saturating_add(screen_lines);
+                    let max_wrap_factor = old_columns.div_ceil(columns).max(1);
+                    let headroom = old_total
+                        .saturating_mul(max_wrap_factor)
+                        .saturating_add(absorbable_lines)
+                        .max(SCROLLBACK_LINES);
+                    self.term.grid_mut().update_history(headroom);
+                }
+                let history_before_reflow = self.term.grid().history_size();
+
                 self.term.resize(TerminalDimensions {
                     columns,
                     screen_lines,
                 });
+
+                let reflow_history_growth = self
+                    .term
+                    .grid()
+                    .history_size()
+                    .saturating_sub(history_before_reflow);
+                let lines_to_absorb = reflow_history_growth.min(absorbable_lines);
+
+                // Column reflow anchors the cursor in place and puts newly wrapped rows into
+                // scrollback, even when the bottom of the viewport is empty. Temporarily growing
+                // the viewport pulls only those rows back from history; restoring the requested
+                // height then removes the same number of unused trailing rows.
+                if lines_to_absorb != 0
+                    && let Some(expanded_lines) = screen_lines.checked_add(lines_to_absorb)
+                {
+                    self.term.resize(TerminalDimensions {
+                        columns,
+                        screen_lines: expanded_lines,
+                    });
+                    self.term.resize(TerminalDimensions {
+                        columns,
+                        screen_lines,
+                    });
+                }
+
+                if let Some(snapshot) = reflow_snapshot {
+                    self.shell_integration
+                        .apply_reflow_anchors(&self.term, snapshot);
+                }
+
+                if needs_headroom {
+                    self.term.grid_mut().update_history(SCROLLBACK_LINES);
+                }
+            } else {
+                self.term.resize(TerminalDimensions {
+                    columns,
+                    screen_lines,
+                });
+                if let Some(snapshot) = reflow_snapshot {
+                    self.shell_integration
+                        .apply_reflow_anchors(&self.term, snapshot);
+                }
             }
 
-            if absorbable_lines != 0 {
-                self.term.grid_mut().update_history(SCROLLBACK_LINES);
+            if !is_alternate_screen {
+                self.shell_integration
+                    .prune_history(self.term.grid().history_size());
             }
-        } else {
-            self.term.resize(TerminalDimensions {
-                columns,
-                screen_lines,
-            });
-        }
-
-        if let Some(before_history) = before_history
-            && !self.term.mode().contains(TermMode::ALT_SCREEN)
-        {
-            let after_history = self.term.grid().history_size();
-            let delta = after_history as isize - before_history as isize;
-            let delta = i32::try_from(delta).unwrap_or(if delta > 0 { i32::MAX } else { i32::MIN });
-            self.shell_integration.shift_lines(delta, after_history);
         }
 
         self.columns = columns;
@@ -4561,5 +4590,201 @@ mod tests {
         core.push_bytes(b"\x1bc");
         assert!(core.snapshot(false, &theme).command_markers.is_empty());
         assert!(core.latest_command_block().is_none());
+    }
+
+    #[test]
+    fn osc133_markers_realign_when_widening_unwraps_lines_above_prompts() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(40, 12);
+
+        core.push_bytes(b"Welcome to fish, the friendly interactive shell today!\r\n");
+        core.push_bytes(b"Type help for instructions on how to use fish easily\r\n");
+        core.push_bytes(
+            b"\x1b]133;A\x07root@localhost ~# \x1b]133;B\x07s\r\n\x1b]133;C\x07fish: Unknown command: s\r\n\x1b]133;D;127\x07",
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07root@localhost ~ [127]# \x1b]133;B\x07screenfetch\r\n\x1b]133;C\x07OS: Debian\r\nKernel: Linux\r\n\x1b]133;D;0\x07",
+        );
+
+        let before = core.snapshot(false, &theme);
+        assert_eq!(before.command_markers.len(), 2);
+        assert_eq!(before.command_markers[0].viewport_line, 4);
+        assert_eq!(before.command_markers[1].viewport_line, 6);
+
+        assert!(core.resize(80, 12));
+        let after = core.snapshot(false, &theme);
+        assert_eq!(core.history_size(), 0);
+        assert_eq!(after.command_markers.len(), 2);
+        assert_eq!(after.command_markers[0].viewport_line, 2);
+        assert_eq!(after.command_markers[1].viewport_line, 4);
+        assert_eq!(
+            terminal_grid_row_text(&core, after.command_markers[0].viewport_line as i32),
+            "root@localhost ~# s"
+        );
+        assert_eq!(
+            terminal_grid_row_text(&core, after.command_markers[1].viewport_line as i32),
+            "root@localhost ~ [127]# screenfetch"
+        );
+        assert_eq!(
+            core.command_block_by_id(after.command_markers[0].id)
+                .unwrap()
+                .output,
+            "fish: Unknown command: s"
+        );
+        assert_eq!(
+            core.command_block_by_id(after.command_markers[1].id)
+                .unwrap()
+                .output,
+            "OS: Debian\nKernel: Linux"
+        );
+    }
+
+    #[test]
+    fn osc133_markers_track_non_uniform_wrapping_when_narrowing_with_absorbable_rows() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(80, 14);
+
+        let banner = "A".repeat(64);
+        let long_out = "B".repeat(64);
+        core.push_bytes(format!("{banner}\r\n").as_bytes());
+        core.push_bytes(
+            format!(
+                "\x1b]133;A\x07$ \x1b]133;B\x07cmd1\r\n\x1b]133;C\x07{long_out}\r\n\x1b]133;D;0\x07"
+            )
+            .as_bytes(),
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07cmd2\r\n\x1b]133;C\x07short\r\n\x1b]133;D;0\x07",
+        );
+
+        assert!(core.resize(40, 14));
+        assert_eq!(core.history_size(), 0);
+
+        let snap = core.snapshot(false, &theme);
+        assert_eq!(snap.command_markers.len(), 2);
+        assert_eq!(snap.command_markers[0].viewport_line, 2);
+        assert_eq!(snap.command_markers[0].visible_end_line, 4);
+        assert_eq!(snap.command_markers[1].viewport_line, 5);
+        assert_eq!(
+            terminal_grid_row_text(&core, snap.command_markers[0].viewport_line as i32),
+            "$ cmd1"
+        );
+        assert_eq!(
+            terminal_grid_row_text(&core, snap.command_markers[1].viewport_line as i32),
+            "$ cmd2"
+        );
+        assert_eq!(
+            core.command_block_by_id(snap.command_markers[1].id)
+                .unwrap()
+                .output,
+            "short"
+        );
+    }
+
+    #[test]
+    fn osc133_markers_survive_repeated_narrow_widen_narrow_roundtrip() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(80, 10);
+
+        let cmd = format!("echo {}", "z".repeat(50));
+        let out = "y".repeat(70);
+        core.push_bytes(
+            format!(
+                "\x1b]133;A\x07$ \x1b]133;B\x07{cmd}\r\n\x1b]133;C\x07{out}\r\n\x1b]133;D;0\x07"
+            )
+            .as_bytes(),
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07ok_after\r\n\x1b]133;C\x07done\r\n\x1b]133;D;0\x07",
+        );
+
+        assert!(core.resize(40, 10));
+        let snap_narrow = core.snapshot(false, &theme);
+        assert_eq!(snap_narrow.command_markers.len(), 2);
+        assert!(
+            terminal_grid_row_text(&core, snap_narrow.command_markers[0].viewport_line as i32)
+                .starts_with("$ echo z")
+        );
+        assert_eq!(
+            terminal_grid_row_text(&core, snap_narrow.command_markers[1].viewport_line as i32),
+            "$ ok_after"
+        );
+
+        assert!(core.resize(100, 10));
+        let snap_wide = core.snapshot(false, &theme);
+        assert_eq!(snap_wide.command_markers.len(), 2);
+        assert_eq!(snap_wide.command_markers[0].viewport_line, 0);
+        assert_eq!(snap_wide.command_markers[1].viewport_line, 2);
+        assert!(
+            terminal_grid_row_text(&core, snap_wide.command_markers[0].viewport_line as i32)
+                .starts_with("$ echo z")
+        );
+        assert_eq!(
+            terminal_grid_row_text(&core, snap_wide.command_markers[1].viewport_line as i32),
+            "$ ok_after"
+        );
+
+        assert!(core.resize(35, 6));
+        assert!(core.jump_to_previous_command());
+        assert!(core.jump_to_previous_command());
+        let snap_scrolled = core.snapshot(false, &theme);
+        let first_id = snap_scrolled.focused_command_id.unwrap();
+        let m0 = snap_scrolled
+            .command_markers
+            .iter()
+            .find(|m| m.id == first_id)
+            .unwrap();
+        let grid_line = m0.viewport_line as i32 - core.display_offset() as i32;
+        assert!(terminal_grid_row_text(&core, grid_line).starts_with("$ echo z"));
+    }
+
+    #[test]
+    fn osc133_height_shrink_at_full_scrollback_and_height_grow_shift_markers_accurately() {
+        let theme = TerminalTheme::from_settings();
+        let mut core = TerminalCore::new(60, 8);
+        fill_scrollback_to_limit(&mut core);
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
+
+        core.push_bytes(b"\x1b[2J\x1b[H");
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07cmd_a\r\n\x1b]133;C\x07out_a\r\n\x1b]133;D;0\x07",
+        );
+        core.push_bytes(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07cmd_b\r\n\x1b]133;C\x07out_b\r\n\x1b]133;D;0\x07",
+        );
+        // Move cursor to the bottom row so height shrink scrolls the viewport.
+        core.push_bytes(b"\r\n\r\n\r\n");
+        assert_eq!(core.term.grid().cursor.point.line.0, 7);
+        assert_eq!(core.history_size(), SCROLLBACK_LINES);
+
+        // Shrink 8 -> 6: cursor is on row 7, so 2 lines scroll into capped history.
+        assert!(core.resize(60, 6));
+        let snap_after_first_shrink = core.snapshot(false, &theme);
+        assert_eq!(snap_after_first_shrink.command_markers.len(), 1);
+        assert_eq!(snap_after_first_shrink.command_markers[0].viewport_line, 0);
+        assert_eq!(terminal_grid_row_text(&core, 0), "$ cmd_b");
+
+        // Shrink 6 -> 4: cursor is on row 5, scrolling 2 more lines.
+        assert!(core.resize(60, 4));
+        assert!(core.snapshot(false, &theme).command_markers.is_empty());
+
+        // Grow 4 -> 8: pulls 4 rows back from history into viewport.
+        assert!(core.resize(60, 8));
+        let snap_after_grow = core.snapshot(false, &theme);
+        assert_eq!(snap_after_grow.command_markers.len(), 2);
+        assert_eq!(
+            terminal_grid_row_text(
+                &core,
+                snap_after_grow.command_markers[0].viewport_line as i32
+            ),
+            "$ cmd_a"
+        );
+        assert_eq!(
+            terminal_grid_row_text(
+                &core,
+                snap_after_grow.command_markers[1].viewport_line as i32
+            ),
+            "$ cmd_b"
+        );
     }
 }

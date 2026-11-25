@@ -1,5 +1,6 @@
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, TermMode};
 
 const MAX_COMMAND_BLOCKS: usize = 500;
@@ -641,6 +642,62 @@ impl ShellIntegrationState {
         self.sync_referenced_ids();
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    pub(crate) fn capture_reflow_anchors<T>(&self, term: &Term<T>) -> ReflowSnapshot {
+        let cols = term.columns().max(1);
+        let screen_lines = term.screen_lines();
+        let topmost = -(term.grid().history_size() as i32);
+        let bottom = screen_lines as i32 - 1;
+        let spans = collect_logical_lines(term);
+
+        let blocks = self
+            .blocks
+            .iter()
+            .map(|block| BlockReflowAnchors {
+                prompt: anchor_point(block.prompt_line, 0, &spans, cols, topmost, bottom),
+                command_start: block
+                    .command_start
+                    .map(|(line, col)| anchor_point(line, col, &spans, cols, topmost, bottom)),
+                output_start: block
+                    .output_start_line
+                    .map(|line| anchor_point(line, 0, &spans, cols, topmost, bottom)),
+                end: anchor_end(block.end_line, &spans, cols, topmost, bottom),
+            })
+            .collect();
+
+        ReflowSnapshot { blocks }
+    }
+
+    pub(crate) fn apply_reflow_anchors<T>(&mut self, term: &Term<T>, snapshot: ReflowSnapshot) {
+        if snapshot.blocks.len() != self.blocks.len() {
+            return;
+        }
+        let cols = term.columns().max(1);
+        let screen_lines = term.screen_lines();
+        let topmost = -(term.grid().history_size() as i32);
+        let bottom = screen_lines as i32 - 1;
+        let spans = collect_logical_lines(term);
+        if spans.is_empty() {
+            return;
+        }
+
+        for (block, anchors) in self.blocks.iter_mut().zip(snapshot.blocks) {
+            let (prompt_line, _) = resolve_anchor(anchors.prompt, &spans, cols, topmost, bottom);
+            block.prompt_line = prompt_line;
+            block.command_start = anchors
+                .command_start
+                .map(|anchor| resolve_anchor(anchor, &spans, cols, topmost, bottom));
+            block.output_start_line = anchors
+                .output_start
+                .map(|anchor| resolve_anchor(anchor, &spans, cols, topmost, bottom).0);
+            let (end_line, _) = resolve_anchor(anchors.end, &spans, cols, topmost, bottom);
+            block.end_line = end_line.max(block.prompt_line);
+        }
+    }
+
     pub(crate) fn markers_for_viewport<T>(
         &self,
         term: &Term<T>,
@@ -1065,6 +1122,191 @@ fn extract_range<T>(term: &Term<T>, start: Point, end: Point) -> String {
         .to_string()
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LogicalLineSpan {
+    start_line: i32,
+    end_line: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReflowAnchorKind {
+    CharOffset(usize),
+    LogicalEnd,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReflowAnchor {
+    BeforeTop(i32),
+    Inside {
+        logical_idx: usize,
+        kind: ReflowAnchorKind,
+    },
+    AfterBottom(i32),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BlockReflowAnchors {
+    prompt: ReflowAnchor,
+    command_start: Option<ReflowAnchor>,
+    output_start: Option<ReflowAnchor>,
+    end: ReflowAnchor,
+}
+
+pub(crate) struct ReflowSnapshot {
+    blocks: Vec<BlockReflowAnchors>,
+}
+
+fn collect_logical_lines<T>(term: &Term<T>) -> Vec<LogicalLineSpan> {
+    let cols = term.columns();
+    let screen_lines = term.screen_lines();
+    if cols == 0 || screen_lines == 0 {
+        return Vec::new();
+    }
+    let topmost = -(term.grid().history_size() as i32);
+    let bottom = screen_lines as i32 - 1;
+    if topmost > bottom {
+        return Vec::new();
+    }
+
+    let grid = term.grid();
+    let last_col = Column(cols - 1);
+    let mut spans = Vec::new();
+    let mut span_start = topmost;
+
+    for line in topmost..=bottom {
+        let wraps = grid[Line(line)][last_col].flags.contains(Flags::WRAPLINE);
+        if !wraps || line == bottom {
+            spans.push(LogicalLineSpan {
+                start_line: span_start,
+                end_line: line,
+            });
+            span_start = line + 1;
+        }
+    }
+
+    spans
+}
+
+fn find_span_index(spans: &[LogicalLineSpan], line: i32) -> Option<usize> {
+    spans
+        .binary_search_by(|span| {
+            if line < span.start_line {
+                std::cmp::Ordering::Greater
+            } else if line > span.end_line {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .ok()
+}
+
+fn anchor_point(
+    line: i32,
+    col: usize,
+    spans: &[LogicalLineSpan],
+    cols: usize,
+    topmost: i32,
+    bottom: i32,
+) -> ReflowAnchor {
+    if line < topmost {
+        return ReflowAnchor::BeforeTop(line - topmost);
+    }
+    if line > bottom {
+        return ReflowAnchor::AfterBottom(line - bottom);
+    }
+    if let Some(logical_idx) = find_span_index(spans, line) {
+        let row_offset = (line - spans[logical_idx].start_line).max(0) as usize;
+        let char_offset = row_offset
+            .saturating_mul(cols)
+            .saturating_add(col.min(cols.saturating_sub(1)));
+        ReflowAnchor::Inside {
+            logical_idx,
+            kind: ReflowAnchorKind::CharOffset(char_offset),
+        }
+    } else {
+        ReflowAnchor::AfterBottom(0)
+    }
+}
+
+fn anchor_end(
+    line: i32,
+    spans: &[LogicalLineSpan],
+    cols: usize,
+    topmost: i32,
+    bottom: i32,
+) -> ReflowAnchor {
+    if line < topmost {
+        return ReflowAnchor::BeforeTop(line - topmost);
+    }
+    if line > bottom {
+        return ReflowAnchor::AfterBottom(line - bottom);
+    }
+    if let Some(logical_idx) = find_span_index(spans, line) {
+        let span = spans[logical_idx];
+        let kind = if line == span.end_line {
+            ReflowAnchorKind::LogicalEnd
+        } else {
+            let row_offset = (line - span.start_line).max(0) as usize;
+            ReflowAnchorKind::CharOffset(
+                row_offset
+                    .saturating_mul(cols)
+                    .saturating_add(cols.saturating_sub(1)),
+            )
+        };
+        ReflowAnchor::Inside { logical_idx, kind }
+    } else {
+        ReflowAnchor::AfterBottom(0)
+    }
+}
+
+fn resolve_anchor(
+    anchor: ReflowAnchor,
+    spans: &[LogicalLineSpan],
+    cols: usize,
+    topmost: i32,
+    bottom: i32,
+) -> (i32, usize) {
+    match anchor {
+        ReflowAnchor::BeforeTop(delta) => (topmost.saturating_add(delta), 0),
+        ReflowAnchor::AfterBottom(delta) => (bottom.saturating_add(delta), 0),
+        ReflowAnchor::Inside { logical_idx, kind } => {
+            let Some(span) = spans.get(logical_idx).or_else(|| spans.last()) else {
+                return (bottom, 0);
+            };
+            match kind {
+                ReflowAnchorKind::LogicalEnd => (span.end_line, cols.saturating_sub(1)),
+                ReflowAnchorKind::CharOffset(offset) => {
+                    let row_offset = i32::try_from(offset / cols).unwrap_or(i32::MAX);
+                    let line = span
+                        .start_line
+                        .saturating_add(row_offset)
+                        .min(span.end_line);
+                    let col = (offset % cols).min(cols.saturating_sub(1));
+                    (line, col)
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn height_resize_line_shift(
+    old_lines: usize,
+    new_lines: usize,
+    cursor_line: i32,
+    history_size: usize,
+) -> i32 {
+    if new_lines > old_lines {
+        let pulled = history_size.min(new_lines - old_lines);
+        i32::try_from(pulled).unwrap_or(i32::MAX)
+    } else if new_lines < old_lines {
+        let scrolled = (cursor_line.max(0) as usize + 1).saturating_sub(new_lines);
+        -i32::try_from(scrolled).unwrap_or(i32::MAX)
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1176,5 +1418,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn height_resize_line_shift_matches_alacritty_grid_motion() {
+        assert_eq!(height_resize_line_shift(8, 12, 7, 10), 4);
+        assert_eq!(height_resize_line_shift(8, 12, 7, 2), 2);
+        assert_eq!(height_resize_line_shift(8, 5, 7, 10), -3);
+        assert_eq!(height_resize_line_shift(8, 5, 2, 10), 0);
+        assert_eq!(height_resize_line_shift(8, 8, 4, 10), 0);
     }
 }
