@@ -276,6 +276,8 @@ mod tests {
     #[gpui_kit::test]
     fn launch_is_listed_and_failure_stays_visible(cx: &mut gpui_kit::TestAppContext) {
         cx.update(gpui_kit::init);
+        // The test drives a real tokio worker thread that wakes the GPUI watch subscription.
+        cx.executor().allow_parking();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
