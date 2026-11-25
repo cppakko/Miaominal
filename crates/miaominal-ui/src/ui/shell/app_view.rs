@@ -28,6 +28,21 @@ pub struct AppView {
     pub(in crate::ui::shell) _subscriptions: RootSubscriptions,
 }
 
+pub(in crate::ui::shell) struct FloatingTabDragGhost {
+    pub(in crate::ui::shell) window: gpui_kit::AnyWindowHandle,
+    pub(in crate::ui::shell) view: Entity<TabDragGhostView>,
+    pub(in crate::ui::shell) payload: DraggedTab,
+    pub(in crate::ui::shell) native: crate::ui::bridge_security_platform::DragGhostNativeHandle,
+    pub(in crate::ui::shell) cue: TabDragGhostCue,
+}
+
+#[derive(Clone)]
+pub(in crate::ui::shell) struct HoveredExternalTabDrop {
+    pub(in crate::ui::shell) window: gpui_kit::AnyWindowHandle,
+    pub(in crate::ui::shell) view: Entity<AppView>,
+    pub(in crate::ui::shell) target: ExternalTabDropTarget,
+}
+
 pub(in crate::ui::shell) struct ShellUiState {
     pub(super) topbar_tab_focus: HashMap<TabId, FocusHandle>,
     pub(super) search: Entity<crate::ui::features::search::SearchView>,
@@ -38,6 +53,11 @@ pub(in crate::ui::shell) struct ShellUiState {
     pub(in crate::ui::shell) terminal_cursor_blink: Entity<TerminalCursorBlink>,
     pub(in crate::ui::shell) workspace_forms: WorkspaceForms,
     pub(in crate::ui::shell) shell_state: ShellState,
+    pub(in crate::ui::shell) tab_drag_ghost: Option<FloatingTabDragGhost>,
+    pub(in crate::ui::shell) topbar_drop_geometry:
+        std::rc::Rc<std::cell::RefCell<TopbarDropGeometry>>,
+    pub(in crate::ui::shell) external_tab_drop: Option<ExternalTabDropTarget>,
+    pub(in crate::ui::shell) hovered_external_target: Option<HoveredExternalTabDrop>,
     pub(in crate::ui::shell) overlay_state: super::overlays::WindowOverlayState,
     pub(in crate::ui::shell) status_message: String,
     pub(in crate::ui::shell) last_keychain_status: String,

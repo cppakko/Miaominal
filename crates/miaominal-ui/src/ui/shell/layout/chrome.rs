@@ -885,6 +885,16 @@ impl ChromeAppViewExt for AppView {
         cx: &App,
     ) -> impl IntoElement {
         let colors = ShellColors::current();
+        self.shell
+            .topbar_drop_geometry
+            .borrow_mut()
+            .tab_bounds
+            .clear();
+        let drop_geometry = self.shell.topbar_drop_geometry.clone();
+        let external_tab_bar_drop = match self.shell.external_tab_drop {
+            Some(ExternalTabDropTarget::TabBar { indicator_x, .. }) => Some(indicator_x),
+            _ => None,
+        };
         let active = self.workspace.active_topbar_tab;
         let tabs = self.collect_visible_topbar_tabs(active, cx);
         let active_changed = self.workspace.topbar_visible_active_tab_id != active;
@@ -963,6 +973,11 @@ impl ChromeAppViewExt for AppView {
                 let wheel_entity = entity.clone();
                 let wheel_scroll = scroll.clone();
                 let can_detach = self.can_open_tab_in_new_window(tab_id, cx);
+                let is_armed_for_detach = self.shell.shell_state.tab_drag_detach
+                    == Some(TabDragDetachState {
+                        tab_id,
+                        outside_window: true,
+                    });
                 let supports_sftp = snapshot_supports_sftp(snapshot.kind);
                 let payload = DraggedTab {
                     source_tab_id: tab_id,
@@ -971,6 +986,7 @@ impl ChromeAppViewExt for AppView {
                     is_active,
                     title: snapshot.title.clone(),
                     status_color: snapshot.status_color,
+                    ghost_shared: DraggedTab::new_ghost_shared(),
                 };
                 let title = if is_renaming {
                     HintedInput::new(&self.shell.workspace_forms.rename_input)
@@ -1067,7 +1083,11 @@ impl ChromeAppViewExt for AppView {
                     .relative()
                     .w(space(tab_width * visibility))
                     .mr(space(-TOPBAR_TAB_STRIP_GAP * (1.0 - visibility)))
-                    .opacity(visibility)
+                    .opacity(if is_armed_for_detach {
+                        visibility * 0.45
+                    } else {
+                        visibility
+                    })
                     .h(space(ShellMetrics::TAB_HEIGHT))
                     .flex_shrink_0()
                     .rounded_t(space(16.0))
@@ -1144,7 +1164,10 @@ impl ChromeAppViewExt for AppView {
                     })
                     .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .when(!is_renaming, |element| {
-                        element.on_drag(payload, |payload, _, _, cx| cx.new(|_| payload.clone()))
+                        element.on_drag(payload, |payload, offset, _, cx| {
+                            payload.set_grab_offset(offset);
+                            cx.new(|_| payload.clone())
+                        })
                     })
                     .drag_over::<DraggedTab>(move |mut style, payload, _, _| {
                         if payload.source_tab_id != tab_id {
@@ -1192,6 +1215,19 @@ impl ChromeAppViewExt for AppView {
                                         cx.stop_propagation();
                                     }),
                             ),
+                    )
+                    .child(
+                        gpui_kit::canvas(
+                            {
+                                let tab_geometry = drop_geometry.clone();
+                                move |bounds, _, _| {
+                                    tab_geometry.borrow_mut().tab_bounds.push((tab_id, bounds));
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
                     )
             })
             .collect::<Vec<_>>();
@@ -1254,6 +1290,15 @@ impl ChromeAppViewExt for AppView {
         let scroll_wheel = scroll.clone();
         let chrome_scroll = scroll.clone();
         let chrome_entity = entity.clone();
+        let bar_geometry = drop_geometry.clone();
+        let bar_origin_x = drop_geometry
+            .borrow()
+            .bar_bounds
+            .map_or(px(0.0), |bounds| bounds.origin.x);
+        let strip_highlight_color = external_tab_bar_drop.map(|_| {
+            let roles = miaominal_settings::current_theme().material.roles;
+            color_with_alpha(roles.primary, 0x18)
+        });
         topbar_drag_surface()
             .test_support()
             .on_scroll(move |event, _, cx| {
@@ -1262,6 +1307,7 @@ impl ChromeAppViewExt for AppView {
                     cx.stop_propagation();
                 }
             })
+            .relative()
             .h(space(ShellMetrics::TOPBAR_HEIGHT))
             .w_full()
             .flex_shrink_0()
@@ -1284,6 +1330,8 @@ impl ChromeAppViewExt for AppView {
                     .items_end()
                     .gap(space(12.0))
                     .px(space(8.0))
+                    .rounded_t(space(12.0))
+                    .when_some(strip_highlight_color, |element, color| element.bg(color))
                     .overflow_x_scroll()
                     .track_scroll(&scroll)
                     .children(tab_elements)
@@ -1307,6 +1355,29 @@ impl ChromeAppViewExt for AppView {
                     div()
                         .pb(space((ShellMetrics::TOPBAR_HEIGHT - 32.0) / 2.0))
                         .child(window_controls_group(entity, role, window)),
+                )
+            })
+            .child(
+                gpui_kit::canvas(
+                    move |bounds, _, _| {
+                        bar_geometry.borrow_mut().bar_bounds = Some(bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .when_some(external_tab_bar_drop, |element, indicator_x| {
+                let left_x = (indicator_x - bar_origin_x).max(px(0.0));
+                element.child(
+                    div()
+                        .absolute()
+                        .left(left_x)
+                        .bottom(px(4.0))
+                        .w(px(3.0))
+                        .h(space(ShellMetrics::TAB_HEIGHT - 6.0))
+                        .rounded_full()
+                        .bg(colors.primary),
                 )
             })
     }

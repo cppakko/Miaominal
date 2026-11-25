@@ -89,7 +89,10 @@ pub(in crate::ui::shell) use pages::SettingsDestination;
 pub(in crate::ui::shell) use panes::PaneId;
 use panes::{PaneCloseAnimation, PaneSplitAnimation, PaneSplitAnimationKind, ParkedPane};
 
-pub(in crate::ui::shell) use state::{DraggedTab, ShellState};
+pub(in crate::ui::shell) use state::{
+    DraggedTab, ExternalTabDropTarget, ShellState, TAB_DRAG_GHOST_HEIGHT, TAB_DRAG_GHOST_RADIUS,
+    TabDragDetachState, TabDragGhostCue, TabDragGhostView, TopbarDropGeometry, tab_drag_ghost_size,
+};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 

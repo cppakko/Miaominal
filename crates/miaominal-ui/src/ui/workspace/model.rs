@@ -188,6 +188,7 @@ pub(crate) struct WorkspaceModel {
     pub(crate) topbar_active_transition: Option<TopbarActiveTabTransition>,
     pub(crate) topbar_visible_active_tab_id: Option<TabId>,
     pub(crate) next_tab_id: TabId,
+    use_global_tab_ids: bool,
     pub(crate) workspace: TabWorkspaceState,
     pub(crate) parked_workspaces: HashMap<TabId, TabWorkspaceState>,
     pub(crate) recently_closed_tabs: Vec<ClosedTabBundle>,
@@ -410,6 +411,19 @@ pub(crate) fn restored_page_editor_sidebar(
         .and_then(|tab| tab.page_editor_sidebar)
 }
 
+static NEXT_GLOBAL_TAB_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+fn take_global_tab_id() -> TabId {
+    TabId::new(NEXT_GLOBAL_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+fn advance_global_tab_id_past(tab_id: TabId) {
+    NEXT_GLOBAL_TAB_ID.fetch_max(
+        tab_id.raw().saturating_add(1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 impl WorkspaceModel {
     pub(crate) fn new(
         initial_tab: TabState,
@@ -428,6 +442,7 @@ impl WorkspaceModel {
             topbar_active_transition: None,
             topbar_visible_active_tab_id: None,
             next_tab_id,
+            use_global_tab_ids: false,
             workspace,
             parked_workspaces: HashMap::new(),
             recently_closed_tabs: Vec::new(),
@@ -438,13 +453,34 @@ impl WorkspaceModel {
         }
     }
 
+    /// Creates a window workspace model whose `TabId`s are drawn from a
+    /// process-global sequence so cross-window tab transfers cannot collide.
+    pub(crate) fn new_window_model(workspace: TabWorkspaceState) -> Self {
+        let initial_id = take_global_tab_id();
+        let next_id = TabId::new(initial_id.raw().saturating_add(1));
+        let mut model = Self::new(TabState::new_hosts(initial_id), next_id, workspace);
+        model.use_global_tab_ids = true;
+        model
+    }
+
     pub(crate) fn allocate_tab_id(&mut self) -> TabId {
-        take_next_tab_id(&mut self.next_tab_id)
+        if self.use_global_tab_ids {
+            let id = take_global_tab_id();
+            if self.next_tab_id.raw() <= id.raw() {
+                self.next_tab_id = TabId::new(id.raw().saturating_add(1));
+            }
+            id
+        } else {
+            take_next_tab_id(&mut self.next_tab_id)
+        }
     }
 
     pub(crate) fn advance_next_tab_id_past(&mut self, tab_id: TabId) {
         if self.next_tab_id.raw() <= tab_id.raw() {
             self.next_tab_id = TabId::new(tab_id.raw().saturating_add(1));
+        }
+        if self.use_global_tab_ids {
+            advance_global_tab_id_past(tab_id);
         }
     }
 
@@ -2009,5 +2045,29 @@ mod management_search_tests {
         );
         tabs.remove_id(TabId::new(1));
         assert!(tabs.get(TabId::new(1)).is_none());
+    }
+
+    #[test]
+    fn new_window_models_allocate_non_overlapping_global_tab_ids() {
+        let cx = gpui_kit::TestAppContext::single();
+        let focus_a = cx.read(|app| app.focus_handle());
+        let focus_b = cx.read(|app| app.focus_handle());
+
+        let mut window_a = WorkspaceModel::new_window_model(TabWorkspaceState::new(None, focus_a));
+        let mut window_b = WorkspaceModel::new_window_model(TabWorkspaceState::new(None, focus_b));
+
+        let a_init = window_a.tabs.id_at(0).expect("window A initial tab");
+        let b_init = window_b.tabs.id_at(0).expect("window B initial tab");
+        let a_next = window_a.allocate_tab_id();
+        let b_next = window_b.allocate_tab_id();
+
+        let ids = [a_init, b_init, a_next, b_next];
+        let unique: std::collections::HashSet<TabId> = ids.into_iter().collect();
+        assert_eq!(unique.len(), 4);
+
+        window_a.advance_next_tab_id_past(TabId::new(b_next.raw().saturating_add(10)));
+        let after_advance = window_b.allocate_tab_id();
+        assert!(after_advance.raw() > b_next.raw().saturating_add(10));
+        cx.quit();
     }
 }

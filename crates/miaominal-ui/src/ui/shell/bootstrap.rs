@@ -57,6 +57,11 @@ fn build_keystroke_interceptor(cx: &mut Context<AppView>) -> Subscription {
             let Some(view) = weak.upgrade() else { return };
             let mut consumed = false;
             view.update(cx, |this, cx| {
+                if this.clear_tab_drag_detach(cx) {
+                    cx.stop_active_drag(window);
+                    consumed = true;
+                    return;
+                }
                 let dismissed_mention = this
                     .controllers
                     .agent
@@ -330,11 +335,9 @@ impl AppView {
         let keystroke_interceptor = build_keystroke_interceptor(cx);
 
         let workspace_forms = WorkspaceForms { rename_input };
-        let workspace = WorkspaceModel::new(
-            TabState::new_hosts(TabId::new(0)),
-            TabId::new(1),
-            Self::initial_workspace(terminal_focus.clone()),
-        );
+        let workspace =
+            WorkspaceModel::new_window_model(Self::initial_workspace(terminal_focus.clone()));
+        crate::ui::windowing::register_app_window(window.window_handle(), cx.weak_entity(), cx);
         let local_vault_status = match vault.status {
             ApplicationVaultStatus::Disabled => LocalVaultStatus::Disabled,
             ApplicationVaultStatus::Locked => LocalVaultStatus::Locked,
@@ -450,16 +453,18 @@ impl AppView {
             );
         });
         let mut controller_subscriptions = controllers.root_subscriptions(window, cx);
-        if window_role == AppWindowRole::Primary {
-            controller_subscriptions.push(cx.observe_window_activation(
-                window,
-                |_view, window, cx| {
-                    if window.is_window_active() {
+        controller_subscriptions.push(cx.observe_window_activation(
+            window,
+            move |view, window, cx| {
+                if window.is_window_active() {
+                    if window_role == AppWindowRole::Primary {
                         show_pending_app_notifications(window, cx);
                     }
-                },
-            ));
-        }
+                } else if view.clear_tab_drag_detach(cx) {
+                    cx.stop_active_drag(window);
+                }
+            },
+        ));
         controller_subscriptions.push(cx.observe_in(
             &application,
             window,
@@ -496,6 +501,10 @@ impl AppView {
                 terminal_cursor_blink,
                 workspace_forms,
                 shell_state: ShellState::default(),
+                tab_drag_ghost: None,
+                topbar_drop_geometry: Default::default(),
+                external_tab_drop: None,
+                hovered_external_target: None,
                 overlay_state: super::overlays::WindowOverlayState::default(),
                 status_message,
                 last_keychain_status: String::new(),

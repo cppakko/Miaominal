@@ -1,6 +1,6 @@
 use super::*;
 use crate::ui::components::shell_tokens::{ShellColors, ShellMetrics, space};
-use gpui_kit::TestSupportExt as _;
+use gpui_kit::{DragMoveEvent, TestSupportExt as _};
 
 #[derive(Clone, Copy)]
 struct PageEditorSidebarRenderState {
@@ -177,30 +177,45 @@ impl Render for AppView {
             .flex_col()
             .font(miaominal_settings::interface_font())
             .bg(ShellColors::current().chrome)
-            .on_mouse_move(move |event: &MouseMoveEvent, _window, cx| {
-                if event.pressed_button != Some(MouseButton::Left) {
-                    recover_sftp_drag.update(cx, |controller, cx| {
-                        controller.finish_any_active_drag_selection(cx);
-                    });
-                }
-            })
-            .capture_any_mouse_up(move |event: &MouseUpEvent, _window, cx| {
+            .on_drag_move::<DraggedTab>(cx.listener(
+                |this, event: &DragMoveEvent<DraggedTab>, window, cx| {
+                    this.handle_tab_drag_move(event, window, cx);
+                },
+            ))
+            .on_mouse_move(
+                cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        recover_sftp_drag.update(cx, |controller, cx| {
+                            controller.finish_any_active_drag_selection(cx);
+                        });
+                        if !cx.has_active_drag() {
+                            this.clear_tab_drag_detach(cx);
+                        }
+                    }
+                }),
+            )
+            .capture_any_mouse_up(cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                 if event.button == MouseButton::Left {
                     finish_agent_drag.update(cx, |controller, cx| {
                         controller.finish_text_drag(cx);
                     });
+                    if this.finish_external_tab_drop_on_capture_mouse_up(event.position, window, cx)
+                    {
+                        cx.stop_propagation();
+                    }
                 }
-            })
+            }))
             .on_mouse_up_out(
                 MouseButton::Left,
-                move |_event: &MouseUpEvent, _window, cx| {
+                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                     finish_agent_drag_out.update(cx, |controller, cx| {
                         controller.finish_text_drag(cx);
                     });
                     finish_sftp_drag_out.update(cx, |controller, cx| {
                         controller.finish_any_active_drag_selection(cx);
                     });
-                },
+                    this.finish_tab_drag_detach(event.position, window, cx);
+                }),
             )
             .capture_any_mouse_down(
                 cx.listener(|this, _, window, cx| this.remember_overlay_trigger_focus(window, cx)),

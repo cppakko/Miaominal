@@ -59,12 +59,22 @@ fn main_window_titlebar() -> Option<TitlebarOptions> {
     }
 }
 
-fn app_window_options(cx: &App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(1240.0), px(800.0)), cx);
+fn app_window_options_with_placement(
+    placement: Option<miaominal_ui::DetachedWindowPlacement>,
+    cx: &App,
+) -> WindowOptions {
+    let (display_id, bounds) = match placement {
+        Some(placement) => (placement.display_id(), placement.bounds()),
+        None => (
+            None,
+            Bounds::centered(None, size(px(1240.0), px(800.0)), cx),
+        ),
+    };
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(720.0), px(480.0))),
         titlebar: main_window_titlebar(),
+        display_id,
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         window_decorations: Some(WindowDecorations::Client),
         #[cfg(target_os = "macos")]
@@ -75,6 +85,10 @@ fn app_window_options(cx: &App) -> WindowOptions {
         icon: APP_ICON.as_ref().cloned(),
         ..Default::default()
     }
+}
+
+fn app_window_options(cx: &App) -> WindowOptions {
+    app_window_options_with_placement(None, cx)
 }
 
 fn init_logging() {
@@ -119,14 +133,19 @@ fn open_main_window(cx: &mut App, runtime: TokioHandle) -> AnyWindowHandle {
 }
 
 fn open_detached_window(
+    placement: Option<miaominal_ui::DetachedWindowPlacement>,
     cx: &mut App,
     runtime: TokioHandle,
 ) -> anyhow::Result<miaominal_ui::DetachedWindowTarget> {
-    let (handle, view) = gpui_kit::open_window(app_window_options(cx), cx, move |window, cx| {
-        let view = cx.new(|cx| miaominal_ui::AppView::new_detached(runtime, window, cx));
-        miaominal_ui::configure_detached_window_close(&view, window, cx);
-        view
-    })?;
+    let (handle, view) = gpui_kit::open_window(
+        app_window_options_with_placement(placement, cx),
+        cx,
+        move |window, cx| {
+            let view = cx.new(|cx| miaominal_ui::AppView::new_detached(runtime, window, cx));
+            miaominal_ui::configure_detached_window_close(&view, window, cx);
+            view
+        },
+    )?;
     Ok(miaominal_ui::DetachedWindowTarget::new(handle, view))
 }
 
@@ -311,8 +330,8 @@ fn main() {
         app::install_app_menus(cx);
 
         let detached_window_runtime = application_runtime.clone();
-        miaominal_ui::register_detached_window_opener(cx, move |cx| {
-            open_detached_window(cx, detached_window_runtime.clone())
+        miaominal_ui::register_detached_window_opener(cx, move |placement, cx| {
+            open_detached_window(placement, cx, detached_window_runtime.clone())
         });
 
         let activation_runtime = application_runtime.clone();

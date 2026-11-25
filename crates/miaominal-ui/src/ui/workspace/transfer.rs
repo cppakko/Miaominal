@@ -2,14 +2,16 @@ use crate::ui::contracts::snippets::TransferredSnippetsUi;
 use gpui_kit::{App, Context, Window};
 
 use super::model::{TabKindTag, TabPlacement, TabState, TabWorkspaceState, WorkspaceModel};
-use crate::ui::contracts::TabId;
+use super::panes::PaneTabDropZone;
 use crate::ui::contracts::session::{
     SessionPurpose, TransferredSessionTab, TransferredSessionWorkspaceUi,
 };
 use crate::ui::contracts::sftp::{TransferredSftpTab, TransferredSftpWindowUi};
+use crate::ui::contracts::{PaneId, TabId};
 use crate::ui::i18n;
 
 enum DetachedTabPayload {
+    Hosts,
     Session(Box<TransferredSessionTab>),
     Sftp(Box<TransferredSftpTab>),
 }
@@ -59,6 +61,7 @@ fn tab_kind_can_open_in_new_window(
     kind: TabKindTag,
     placement: TabPlacement,
     session_purpose: Option<SessionPurpose>,
+    top_level_tab_count: usize,
 ) -> bool {
     if placement != TabPlacement::TopLevel {
         return false;
@@ -69,7 +72,7 @@ fn tab_kind_can_open_in_new_window(
         TabKindTag::LocalTerminal | TabKindTag::Telnet => {
             session_purpose == Some(SessionPurpose::Terminal)
         }
-        TabKindTag::Hosts => false,
+        TabKindTag::Hosts => top_level_tab_count > 1,
     }
 }
 
@@ -171,11 +174,22 @@ pub(crate) trait WorkspaceTransferHost: Sized {
     fn transfer_remove_tab_payload_and_metadata(&mut self, id: TabId, cx: &mut Context<Self>);
     /// Ends window-owned resources that have no tab, such as launched remote desktops.
     fn transfer_retire_window_resources(&mut self, cx: &mut Context<Self>);
+    fn transfer_unload_active_topbar_workspace(&mut self, cx: &mut Context<Self>);
+    fn transfer_handle_pane_tab_drop(
+        &mut self,
+        source_tab_id: TabId,
+        target_pane_id: PaneId,
+        zone: PaneTabDropZone,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    );
 }
 
 pub(crate) trait WorkspaceTransferExt: WorkspaceTransferHost {
     fn can_open_tab_in_new_window(&self, id: TabId, cx: &App) -> bool;
+    fn can_transfer_tab_to_existing_window(&self, id: TabId, cx: &App) -> bool;
     fn can_install_detached_tab_bundle(&self, bundle: &DetachedTabBundle, cx: &App) -> bool;
+    fn can_merge_transferred_tab_bundle(&self, bundle: &DetachedTabBundle, cx: &App) -> bool;
     fn extract_detached_tab_bundle(
         &mut self,
         id: TabId,
@@ -185,6 +199,21 @@ pub(crate) trait WorkspaceTransferExt: WorkspaceTransferHost {
     fn install_detached_tab_bundle(
         &mut self,
         bundle: DetachedTabBundle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Box<DetachedTabBundle>>;
+    fn merge_transferred_tab_into_topbar(
+        &mut self,
+        bundle: DetachedTabBundle,
+        insertion_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Box<DetachedTabBundle>>;
+    fn merge_transferred_tab_into_pane(
+        &mut self,
+        bundle: DetachedTabBundle,
+        target_pane_id: PaneId,
+        zone: PaneTabDropZone,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), Box<DetachedTabBundle>>;
@@ -208,14 +237,44 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         let Some(tab) = self.transfer_state().tabs.get(tab_id) else {
             return false;
         };
+        let top_level_tab_count = self
+            .transfer_state()
+            .tabs
+            .iter()
+            .filter(|tab| tab.is_top_level())
+            .count();
         let session_purpose = tab
             .is_session()
             .then(|| self.transfer_session_purpose(tab_id, cx))
             .flatten();
-        if !tab_kind_can_open_in_new_window(tab.kind, tab.placement, session_purpose) {
+        if !tab_kind_can_open_in_new_window(
+            tab.kind,
+            tab.placement,
+            session_purpose,
+            top_level_tab_count,
+        ) {
             return false;
         }
         !tab.is_sftp() || self.transfer_has_sftp(tab_id, cx)
+    }
+
+    fn can_transfer_tab_to_existing_window(&self, tab_id: TabId, cx: &App) -> bool {
+        let Some(tab) = self.transfer_state().tabs.get(tab_id) else {
+            return false;
+        };
+        if tab.is_hosts() && tab.placement == TabPlacement::TopLevel {
+            let top_level_tab_count = self
+                .transfer_state()
+                .tabs
+                .iter()
+                .filter(|tab| tab.is_top_level())
+                .count();
+            return hosts_tab_can_transfer_to_existing_window(
+                top_level_tab_count,
+                self.transfer_window_is_detached(),
+            );
+        }
+        self.can_open_tab_in_new_window(tab_id, cx)
     }
 
     fn extract_detached_tab_bundle(
@@ -225,7 +284,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         cx: &mut Context<Self>,
     ) -> Option<DetachedTabBundle> {
         let root_index = self.transfer_state().tabs.index_of(root_id)?;
-        if !self.can_open_tab_in_new_window(root_id, cx) {
+        if !self.can_transfer_tab_to_existing_window(root_id, cx) {
             return None;
         }
         let active_topbar_before = self.transfer_state().active_topbar_tab;
@@ -309,11 +368,14 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
                     self.transfer_take_session(tab.id, cx)
                         .expect("validated session transfer payload remains available"),
                 ))
-            } else {
+            } else if tab.is_sftp() {
                 DetachedTabPayload::Sftp(Box::new(
                     self.transfer_take_sftp(tab.id, cx)
                         .expect("validated SFTP transfer payload remains available"),
                 ))
+            } else {
+                debug_assert!(tab.is_hosts());
+                DetachedTabPayload::Hosts
             };
             self.transfer_state_mut()
                 .tabs
@@ -349,15 +411,20 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
                 .is_some_and(|tab| tab.is_hosts())
                 && !self.transfer_has_session(id, cx)
                 && !self.transfer_has_sftp(id, cx)
-        }) && bundle.entries.iter().all(|entry| {
-            !self.transfer_has_session(entry.tab.id, cx)
+        }) && self.can_merge_transferred_tab_bundle(bundle, cx)
+    }
+
+    fn can_merge_transferred_tab_bundle(&self, bundle: &DetachedTabBundle, cx: &App) -> bool {
+        bundle.entries.iter().all(|entry| {
+            self.transfer_state().tabs.get(entry.tab.id).is_none()
+                && !self.transfer_has_session(entry.tab.id, cx)
                 && !self.transfer_has_sftp(entry.tab.id, cx)
         })
     }
 
     fn install_detached_tab_bundle(
         &mut self,
-        mut bundle: DetachedTabBundle,
+        bundle: DetachedTabBundle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), Box<DetachedTabBundle>> {
@@ -386,64 +453,99 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         self.transfer_state_mut().active_topbar_tab = None;
         self.transfer_reset_loaded_workspace(cx);
 
+        install_transferred_topbar_bundle(self, bundle, None, window, cx);
+        Ok(())
+    }
+
+    fn merge_transferred_tab_into_topbar(
+        &mut self,
+        bundle: DetachedTabBundle,
+        insertion_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Box<DetachedTabBundle>> {
+        if !self.can_merge_transferred_tab_bundle(&bundle, cx) {
+            return Err(Box::new(bundle));
+        }
+        self.transfer_unload_active_topbar_workspace(cx);
+        let raw_insert_index = self
+            .transfer_state()
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.is_top_level())
+            .nth(insertion_index)
+            .map(|(raw_index, _)| raw_index)
+            .unwrap_or_else(|| self.transfer_state().tabs.len());
+        install_transferred_topbar_bundle(self, bundle, Some(raw_insert_index), window, cx);
+        Ok(())
+    }
+
+    fn merge_transferred_tab_into_pane(
+        &mut self,
+        mut bundle: DetachedTabBundle,
+        target_pane_id: PaneId,
+        zone: PaneTabDropZone,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Box<DetachedTabBundle>> {
+        let valid_single_session = self.can_merge_transferred_tab_bundle(&bundle, cx)
+            && bundle.entries.len() == 1
+            && bundle.entries[0].tab.is_session()
+            && bundle.entries[0].tab.is_top_level()
+            && self
+                .transfer_state()
+                .active_topbar_tab
+                .and_then(|id| self.transfer_state().tabs.get(id))
+                .is_some_and(|tab| tab.is_top_level() && tab.is_session())
+            && self
+                .transfer_state()
+                .workspace
+                .pane_layout
+                .contains(target_pane_id);
+        let target_tab_id = if target_pane_id == self.transfer_state().workspace.active_pane_id {
+            self.transfer_state().workspace.active_tab
+        } else {
+            self.transfer_state()
+                .workspace
+                .parked_panes
+                .get(&target_pane_id)
+                .and_then(|parked| parked.active_tab)
+        };
+        let valid_center = zone != PaneTabDropZone::Center
+            || target_tab_id
+                .and_then(|tab_id| self.transfer_state().tabs.get(tab_id))
+                .is_some_and(|tab| tab.is_session());
+        if !valid_single_session || !valid_center {
+            return Err(Box::new(bundle));
+        }
+
         let root_id = bundle.root_id();
         let max_tab_id = bundle.max_tab_id();
         let affected_monitor_profiles = bundle.source.affected_monitor_profiles.clone();
-        bundle.entries.sort_by_key(|entry| entry.original_index);
-        for entry in bundle.entries {
-            let tab_id = entry.tab.id;
-            match entry.payload {
-                DetachedTabPayload::Session(transferred) => {
-                    self.transfer_install_session(tab_id, *transferred, cx);
-                }
-                DetachedTabPayload::Sftp(transferred) => {
-                    self.transfer_install_sftp(tab_id, *transferred, cx);
-                }
+        let entry = bundle
+            .entries
+            .pop()
+            .expect("validated single-entry bundle has one tab");
+        match entry.payload {
+            DetachedTabPayload::Session(transferred) => {
+                self.transfer_install_session(entry.tab.id, *transferred, cx);
             }
-            self.transfer_state_mut().tabs.push(entry.tab);
+            DetachedTabPayload::Hosts | DetachedTabPayload::Sftp(_) => {
+                unreachable!("validated single session entry")
+            }
         }
-
-        self.transfer_state_mut().active_topbar_tab = Some(root_id);
-        self.transfer_restore_active_topbar_sidebar_section(cx);
+        self.transfer_state_mut().tabs.push(entry.tab);
         self.transfer_state_mut()
             .advance_next_tab_id_past(max_tab_id);
-        if let Some(mut workspace) = bundle.workspace {
-            self.transfer_prepare_workspace_for_window(&mut workspace, cx);
-            self.transfer_restore_loaded_workspace(workspace);
-        } else {
-            self.transfer_reset_loaded_workspace(cx);
-        }
 
-        if let Some(ui) = bundle.snippets_ui.take() {
-            self.transfer_restore_snippets_ui(ui, window, cx);
-        }
-        if let Some(session_ui) = bundle.session_ui.take() {
-            let active_tab_id = self.transfer_state().workspace.active_tab;
-            self.transfer_restore_session_ui(session_ui, active_tab_id, window, cx);
-        }
-
-        self.transfer_state_mut()
-            .topbar_previous_visible_tabs
-            .clear();
-        self.transfer_state_mut().topbar_entering_tabs.clear();
-        self.transfer_state_mut().topbar_exiting_tabs.clear();
-        self.transfer_state_mut().topbar_active_transition = None;
-        self.transfer_state_mut().topbar_visible_active_tab_id = Some(root_id);
-        self.transfer_sync_transferred_sftp_browser(root_id, window, cx);
-        if let Some(sftp_ui) = bundle.sftp_ui.take() {
-            self.transfer_restore_sftp_ui(sftp_ui, window, cx);
-        }
+        self.transfer_handle_pane_tab_drop(root_id, target_pane_id, zone, window, cx);
         self.transfer_rebind_terminal_focus_reporting(window, cx);
         self.transfer_sync_terminal_focus_reporting(window, cx);
         self.transfer_sync_session_port_snapshot(cx);
         for profile_id in affected_monitor_profiles {
             self.transfer_refresh_monitoring(&profile_id, cx);
         }
-        self.transfer_state()
-            .workspace
-            .active_pane
-            .terminal_focus
-            .focus(window, cx);
         cx.notify();
         Ok(())
     }
@@ -457,14 +559,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         bundle.entries.sort_by_key(|entry| entry.original_index);
         for entry in bundle.entries {
             let tab_id = entry.tab.id;
-            match entry.payload {
-                DetachedTabPayload::Session(transferred) => {
-                    self.transfer_install_session(tab_id, *transferred, cx);
-                }
-                DetachedTabPayload::Sftp(transferred) => {
-                    self.transfer_install_sftp(tab_id, *transferred, cx);
-                }
-            }
+            install_transferred_tab_payload(self, tab_id, entry.payload, cx);
             self.transfer_state_mut()
                 .tabs
                 .insert(entry.original_index, entry.tab);
@@ -582,10 +677,116 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
     }
 }
 
+fn install_transferred_tab_payload<V: WorkspaceTransferHost + 'static>(
+    host: &mut V,
+    tab_id: TabId,
+    payload: DetachedTabPayload,
+    cx: &mut Context<V>,
+) {
+    match payload {
+        DetachedTabPayload::Hosts => {}
+        DetachedTabPayload::Session(transferred) => {
+            host.transfer_install_session(tab_id, *transferred, cx);
+        }
+        DetachedTabPayload::Sftp(transferred) => {
+            host.transfer_install_sftp(tab_id, *transferred, cx);
+        }
+    }
+}
+
+fn install_transferred_topbar_bundle<V: WorkspaceTransferHost + 'static>(
+    host: &mut V,
+    mut bundle: DetachedTabBundle,
+    raw_insert_index: Option<usize>,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) {
+    let root_id = bundle.root_id();
+    let max_tab_id = bundle.max_tab_id();
+    let affected_monitor_profiles = bundle.source.affected_monitor_profiles.clone();
+    bundle.entries.sort_by_key(|entry| entry.original_index);
+    for entry in bundle.entries {
+        let tab_id = entry.tab.id;
+        install_transferred_tab_payload(host, tab_id, entry.payload, cx);
+        if tab_id == root_id
+            && let Some(insert_at) = raw_insert_index
+        {
+            host.transfer_state_mut().tabs.insert(insert_at, entry.tab);
+        } else {
+            host.transfer_state_mut().tabs.push(entry.tab);
+        }
+    }
+
+    host.transfer_state_mut().active_topbar_tab = Some(root_id);
+    host.transfer_restore_active_topbar_sidebar_section(cx);
+    host.transfer_state_mut()
+        .advance_next_tab_id_past(max_tab_id);
+    if let Some(mut workspace) = bundle.workspace {
+        host.transfer_prepare_workspace_for_window(&mut workspace, cx);
+        host.transfer_restore_loaded_workspace(workspace);
+    } else {
+        host.transfer_reset_loaded_workspace(cx);
+    }
+
+    if let Some(ui) = bundle.snippets_ui.take() {
+        host.transfer_restore_snippets_ui(ui, window, cx);
+    }
+    if let Some(session_ui) = bundle.session_ui.take() {
+        let active_tab_id = host.transfer_state().workspace.active_tab;
+        host.transfer_restore_session_ui(session_ui, active_tab_id, window, cx);
+    }
+
+    host.transfer_state_mut()
+        .topbar_previous_visible_tabs
+        .clear();
+    host.transfer_state_mut().topbar_entering_tabs.clear();
+    host.transfer_state_mut().topbar_exiting_tabs.clear();
+    host.transfer_state_mut().topbar_active_transition = None;
+    host.transfer_state_mut().topbar_visible_active_tab_id = Some(root_id);
+    host.transfer_sync_transferred_sftp_browser(root_id, window, cx);
+    if let Some(sftp_ui) = bundle.sftp_ui.take() {
+        host.transfer_restore_sftp_ui(sftp_ui, window, cx);
+    }
+    host.transfer_rebind_terminal_focus_reporting(window, cx);
+    host.transfer_sync_terminal_focus_reporting(window, cx);
+    host.transfer_sync_session_port_snapshot(cx);
+    for profile_id in affected_monitor_profiles {
+        host.transfer_refresh_monitoring(&profile_id, cx);
+    }
+    if !host
+        .transfer_state()
+        .tabs
+        .get(root_id)
+        .is_some_and(|tab| tab.is_hosts())
+    {
+        host.transfer_state()
+            .workspace
+            .active_pane
+            .terminal_focus
+            .focus(window, cx);
+    }
+    cx.notify();
+}
+
+fn hosts_tab_can_transfer_to_existing_window(
+    top_level_tab_count: usize,
+    window_is_detached: bool,
+) -> bool {
+    top_level_tab_count > 1 || window_is_detached
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::contracts::PaneId;
+
+    #[test]
+    fn existing_window_transfer_allows_sole_detached_hosts_tab_only() {
+        assert!(!hosts_tab_can_transfer_to_existing_window(1, false));
+        assert!(hosts_tab_can_transfer_to_existing_window(2, false));
+        assert!(hosts_tab_can_transfer_to_existing_window(1, true));
+        assert!(hosts_tab_can_transfer_to_existing_window(2, true));
+    }
 
     #[test]
     fn detached_window_menu_only_accepts_terminal_workspaces_and_standalone_sftp() {
@@ -593,26 +794,49 @@ mod tests {
             TabKindTag::Session,
             TabPlacement::TopLevel,
             Some(SessionPurpose::Terminal),
+            1,
+        ));
+        assert!(tab_kind_can_open_in_new_window(
+            TabKindTag::LocalTerminal,
+            TabPlacement::TopLevel,
+            Some(SessionPurpose::Terminal),
+            1,
+        ));
+        assert!(tab_kind_can_open_in_new_window(
+            TabKindTag::Telnet,
+            TabPlacement::TopLevel,
+            Some(SessionPurpose::Terminal),
+            1,
         ));
         assert!(tab_kind_can_open_in_new_window(
             TabKindTag::Sftp,
             TabPlacement::TopLevel,
             None,
+            1,
         ));
         assert!(!tab_kind_can_open_in_new_window(
             TabKindTag::Hosts,
             TabPlacement::TopLevel,
             None,
+            1,
+        ));
+        assert!(tab_kind_can_open_in_new_window(
+            TabKindTag::Hosts,
+            TabPlacement::TopLevel,
+            None,
+            2,
         ));
         assert!(!tab_kind_can_open_in_new_window(
             TabKindTag::Session,
             TabPlacement::TopLevel,
             Some(SessionPurpose::PortForwarding),
+            2,
         ));
         assert!(!tab_kind_can_open_in_new_window(
             TabKindTag::Session,
             TabPlacement::TopLevel,
             Some(SessionPurpose::ConnectionTest),
+            2,
         ));
         assert!(!tab_kind_can_open_in_new_window(
             TabKindTag::Session,
@@ -621,6 +845,7 @@ mod tests {
                 pane: PaneId(2),
             },
             Some(SessionPurpose::Terminal),
+            2,
         ));
         assert!(!tab_kind_can_open_in_new_window(
             TabKindTag::Sftp,
@@ -628,6 +853,7 @@ mod tests {
                 owner: TabId::new(1),
             },
             None,
+            2,
         ));
     }
 }

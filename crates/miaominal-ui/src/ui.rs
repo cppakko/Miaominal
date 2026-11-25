@@ -19,4 +19,6 @@ pub use system_tray::{
     configure_detached_window_close, configure_main_window_close, initialize_system_tray,
     quit_application, request_main_window_close, restore_main_window, sync_system_tray,
 };
-pub use windowing::{DetachedWindowTarget, register_detached_window_opener};
+pub use windowing::{
+    DetachedWindowPlacement, DetachedWindowTarget, register_detached_window_opener,
+};

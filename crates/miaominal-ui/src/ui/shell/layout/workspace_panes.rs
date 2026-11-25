@@ -31,35 +31,81 @@ fn stop_plain_right_click_reaching_context_menu(event: &MouseDownEvent, cx: &mut
     }
 }
 
+fn pane_drop_zone_visuals(
+    zone: super::super::panes::PaneTabDropZone,
+) -> (gpui_kit::Rgba, gpui_kit::Rgba, (f32, f32, f32, f32)) {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let background = color_with_alpha(roles.primary, 0x33);
+    let border_color = rgb(roles.primary);
+    let widths = match zone {
+        super::super::panes::PaneTabDropZone::Center => (2.0, 2.0, 2.0, 2.0),
+        super::super::panes::PaneTabDropZone::Up => (0.0, 0.0, 2.0, 0.0),
+        super::super::panes::PaneTabDropZone::Down => (2.0, 0.0, 0.0, 0.0),
+        super::super::panes::PaneTabDropZone::Left => (0.0, 2.0, 0.0, 0.0),
+        super::super::panes::PaneTabDropZone::Right => (0.0, 0.0, 0.0, 2.0),
+    };
+    (background, border_color, widths)
+}
+
 fn pane_drop_zone_style(
     style: gpui_kit::StyleRefinement,
     zone: super::super::panes::PaneTabDropZone,
 ) -> gpui_kit::StyleRefinement {
-    let roles = miaominal_settings::current_theme().material.roles;
+    let (background, border_color, (top, right, bottom, left)) = pane_drop_zone_visuals(zone);
     let mut refined = style;
-    refined.background = Some(color_with_alpha(roles.primary, 0x33).into());
-    refined.border_color = Some(rgb(roles.primary).into());
-    match zone {
-        super::super::panes::PaneTabDropZone::Center => {
-            refined.border_widths.top = Some(px(2.0).into());
-            refined.border_widths.right = Some(px(2.0).into());
-            refined.border_widths.bottom = Some(px(2.0).into());
-            refined.border_widths.left = Some(px(2.0).into());
-        }
-        super::super::panes::PaneTabDropZone::Up => {
-            refined.border_widths.bottom = Some(px(2.0).into());
-        }
-        super::super::panes::PaneTabDropZone::Down => {
-            refined.border_widths.top = Some(px(2.0).into());
-        }
-        super::super::panes::PaneTabDropZone::Left => {
-            refined.border_widths.right = Some(px(2.0).into());
-        }
-        super::super::panes::PaneTabDropZone::Right => {
-            refined.border_widths.left = Some(px(2.0).into());
-        }
+    refined.background = Some(background.into());
+    refined.border_color = Some(border_color.into());
+    if top > 0.0 {
+        refined.border_widths.top = Some(px(top).into());
+    }
+    if right > 0.0 {
+        refined.border_widths.right = Some(px(right).into());
+    }
+    if bottom > 0.0 {
+        refined.border_widths.bottom = Some(px(bottom).into());
+    }
+    if left > 0.0 {
+        refined.border_widths.left = Some(px(left).into());
     }
     refined
+}
+
+fn render_external_pane_drop_preview(
+    zone: super::super::panes::PaneTabDropZone,
+) -> gpui_kit::AnyElement {
+    use super::super::panes::PaneTabDropZone;
+
+    let edge_inset = gpui_kit::relative(0.24);
+    let (background, border_color, (top, right, bottom, left)) = pane_drop_zone_visuals(zone);
+    let base = match zone {
+        PaneTabDropZone::Up => div().absolute().top_0().left_0().right_0().h(edge_inset),
+        PaneTabDropZone::Down => div().absolute().bottom_0().left_0().right_0().h(edge_inset),
+        PaneTabDropZone::Left => div()
+            .absolute()
+            .top(edge_inset)
+            .bottom(edge_inset)
+            .left_0()
+            .w(edge_inset),
+        PaneTabDropZone::Right => div()
+            .absolute()
+            .top(edge_inset)
+            .bottom(edge_inset)
+            .right_0()
+            .w(edge_inset),
+        PaneTabDropZone::Center => div()
+            .absolute()
+            .top(edge_inset)
+            .right(edge_inset)
+            .bottom(edge_inset)
+            .left(edge_inset),
+    };
+    base.bg(background)
+        .border_color(border_color)
+        .when(top > 0.0, |this| this.border_t(px(top)))
+        .when(right > 0.0, |this| this.border_r(px(right)))
+        .when(bottom > 0.0, |this| this.border_b(px(bottom)))
+        .when(left > 0.0, |this| this.border_l(px(left)))
+        .into_any_element()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -366,18 +412,29 @@ impl WorkspacePanesAppViewExt for AppView {
         valid_source_ids: &[TabId],
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        if valid_source_ids.is_empty() {
+        let external_zone = self
+            .workspace
+            .workspace
+            .pane_tab_drop_target
+            .filter(|target| target.pane_id == pane_id)
+            .map(|target| target.zone);
+        if valid_source_ids.is_empty() && external_zone.is_none() {
             return content;
         }
 
-        div()
+        let mut layer = div()
             .relative()
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
-            .child(content)
-            .child(self.render_pane_drop_targets(pane_id, valid_source_ids, cx))
-            .into_any_element()
+            .child(content);
+        if !valid_source_ids.is_empty() {
+            layer = layer.child(self.render_pane_drop_targets(pane_id, valid_source_ids, cx));
+        }
+        if let Some(zone) = external_zone {
+            layer = layer.child(render_external_pane_drop_preview(zone));
+        }
+        layer.into_any_element()
     }
 
     fn render_pane_drop_targets(

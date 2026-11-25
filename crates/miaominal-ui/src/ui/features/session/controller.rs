@@ -1151,12 +1151,14 @@ impl SessionController {
         if let Some(shared_monitoring) = shared_monitoring {
             self.shared_profile_monitoring
                 .borrow_mut()
-                .insert(profile_id.clone(), shared_monitoring);
+                .entry(profile_id.clone())
+                .or_insert(shared_monitoring);
         }
         if was_monitor_source {
             self.monitor_source_tabs
                 .borrow_mut()
-                .insert(profile_id, tab_id);
+                .entry(profile_id)
+                .or_insert(tab_id);
         }
         if let Some(terminal_lease) = terminal_lease {
             *terminal_lease.owner.borrow_mut() = Rc::downgrade(&self.ports);
