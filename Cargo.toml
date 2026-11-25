@@ -37,7 +37,7 @@ edition = "2024"
 license = "GPL-3.0-only"
 
 [workspace.dependencies]
-aes = { version = "0.9.0", features = ["zeroize"] }
+aes = { version = "0.9.4", features = ["zeroize"] }
 aes-gcm = { version = "0.11.0", features = ["zeroize"] }
 alacritty_terminal = "0.26"
 anyhow = "1.0.103"
