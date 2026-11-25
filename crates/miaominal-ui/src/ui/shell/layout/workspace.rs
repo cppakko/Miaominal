@@ -111,13 +111,38 @@ pub(in crate::ui::shell) fn render_workspace_surface(
         PaneLayout::Leaf(app.workspace.workspace.active_pane_id),
     );
     let valid_source_ids = app.pane_drop_source_ids();
-    let workspace_body = if let Some(zoomed_pane) = app.workspace.workspace.zoomed_pane
+    let is_split = !matches!(layout, PaneLayout::Leaf(_));
+    let zoom_render_state = if let Some(animation) = app.workspace.workspace.pane_zoom_animation {
+        let now = std::time::Instant::now();
+        if !is_split || !layout.contains(animation.pane_id) || animation.is_finished(now) {
+            app.workspace.workspace.pane_zoom_animation = None;
+            None
+        } else {
+            window.request_animation_frame();
+            Some(super::workspace_panes::PaneZoomRenderState {
+                pane_id: animation.pane_id,
+                progress: animation.sample(now),
+            })
+        }
+    } else {
+        None
+    };
+    let workspace_body = if let Some(zoom_state) = zoom_render_state {
+        app.render_pane_layout(
+            &layout,
+            &[],
+            &valid_source_ids,
+            Some(zoom_state),
+            window,
+            cx,
+        )
+    } else if let Some(zoomed_pane) = app.workspace.workspace.zoomed_pane
         && layout.contains(zoomed_pane)
     {
         let zoomed_layout = PaneLayout::Leaf(zoomed_pane);
-        app.render_pane_layout(&zoomed_layout, &[0], &valid_source_ids, window, cx)
+        app.render_pane_layout(&zoomed_layout, &[0], &valid_source_ids, None, window, cx)
     } else {
-        app.render_pane_layout(&layout, &[], &valid_source_ids, window, cx)
+        app.render_pane_layout(&layout, &[], &valid_source_ids, None, window, cx)
     };
     app.workspace.workspace.pane_layout = layout;
 

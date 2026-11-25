@@ -62,12 +62,43 @@ fn pane_drop_zone_style(
     refined
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::ui::shell) struct PaneZoomRenderState {
+    pub pane_id: super::super::panes::PaneId,
+    pub progress: f32,
+}
+
+fn zoom_split_weights(
+    flexes: &[f32],
+    child_count: usize,
+    target_index: usize,
+    zoom_progress: f32,
+) -> Vec<f32> {
+    let t = zoom_progress.clamp(0.0, 1.0);
+    let raw: Vec<f32> = (0..child_count)
+        .map(|i| flexes.get(i).copied().unwrap_or(1.0).max(0.001))
+        .collect();
+    let total: f32 = raw.iter().sum::<f32>().max(0.001);
+    raw.into_iter()
+        .enumerate()
+        .map(|(i, flex)| {
+            let base = flex / total;
+            if i == target_index {
+                base + (1.0 - base) * t
+            } else {
+                base * (1.0 - t)
+            }
+        })
+        .collect()
+}
+
 pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
     fn render_pane_layout(
         &mut self,
         layout: &PaneLayout,
         path: &[usize],
         valid_source_ids: &[TabId],
+        zoom: Option<PaneZoomRenderState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement;
@@ -103,6 +134,7 @@ pub(in crate::ui::shell) trait WorkspacePanesAppViewExt: Sized {
         &self,
         axis: super::super::workspace::SplitAxis,
         path: Vec<usize>,
+        zoom_collapse: f32,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement;
 
@@ -128,6 +160,7 @@ impl WorkspacePanesAppViewExt for AppView {
         layout: &PaneLayout,
         path: &[usize],
         valid_source_ids: &[TabId],
+        zoom: Option<PaneZoomRenderState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
@@ -186,25 +219,84 @@ impl WorkspacePanesAppViewExt for AppView {
                     super::super::workspace::SplitAxis::Vertical => div().flex().flex_col(),
                 };
                 container = container.size_full().min_w(px(0.0)).min_h(px(0.0));
-                for (i, child) in children.iter().enumerate() {
-                    let mut child_path = path.to_vec();
-                    child_path.push(i);
-                    let flex = flexes.get(i).copied().unwrap_or(1.0).max(0.001);
-                    let child_element =
-                        self.render_pane_layout(child, &child_path, valid_source_ids, window, cx);
-                    let wrapped = div()
-                        .flex_grow(1.0)
-                        .flex_shrink(1.0)
-                        .flex_basis(gpui_kit::relative(flex))
-                        .h_full()
-                        .min_w(px(0.0))
-                        .min_h(px(0.0))
-                        .child(child_element);
-                    container = container.child(wrapped);
-                    if i + 1 < children.len() {
-                        let mut bar_path = path.to_vec();
-                        bar_path.push(i);
-                        container = container.child(self.render_split_bar(*axis, bar_path, cx));
+                let target_zoom = zoom.and_then(|z| {
+                    children
+                        .iter()
+                        .position(|c| c.contains(z.pane_id))
+                        .map(|idx| (idx, z))
+                });
+                if let Some((target_idx, zoom_state)) = target_zoom {
+                    let zoom_t = zoom_state.progress.clamp(0.0, 1.0);
+                    let weights = zoom_split_weights(flexes, children.len(), target_idx, zoom_t);
+                    let sibling_opacity = (1.0 - zoom_t).clamp(0.0, 1.0);
+                    for (i, child) in children.iter().enumerate() {
+                        let mut child_path = path.to_vec();
+                        child_path.push(i);
+                        let is_target_branch = i == target_idx;
+                        let child_zoom = if is_target_branch {
+                            Some(zoom_state)
+                        } else {
+                            None
+                        };
+                        let child_element = self.render_pane_layout(
+                            child,
+                            &child_path,
+                            valid_source_ids,
+                            child_zoom,
+                            window,
+                            cx,
+                        );
+                        let weight = weights[i];
+                        let mut wrapped = div()
+                            .flex_grow(weight)
+                            .flex_shrink(1.0)
+                            .flex_basis(gpui_kit::relative(weight))
+                            .min_w(px(0.0))
+                            .min_h(px(0.0));
+                        wrapped = match axis {
+                            super::super::workspace::SplitAxis::Horizontal => wrapped.h_full(),
+                            super::super::workspace::SplitAxis::Vertical => wrapped.w_full(),
+                        };
+                        if !is_target_branch {
+                            wrapped = wrapped.overflow_hidden().opacity(sibling_opacity);
+                        }
+                        wrapped = wrapped.child(child_element);
+                        container = container.child(wrapped);
+                        if i + 1 < children.len() {
+                            let mut bar_path = path.to_vec();
+                            bar_path.push(i);
+                            container =
+                                container.child(self.render_split_bar(*axis, bar_path, zoom_t, cx));
+                        }
+                    }
+                } else {
+                    for (i, child) in children.iter().enumerate() {
+                        let mut child_path = path.to_vec();
+                        child_path.push(i);
+                        let flex = flexes.get(i).copied().unwrap_or(1.0).max(0.001);
+                        let child_element = self.render_pane_layout(
+                            child,
+                            &child_path,
+                            valid_source_ids,
+                            None,
+                            window,
+                            cx,
+                        );
+                        let wrapped = div()
+                            .flex_grow(1.0)
+                            .flex_shrink(1.0)
+                            .flex_basis(gpui_kit::relative(flex))
+                            .h_full()
+                            .min_w(px(0.0))
+                            .min_h(px(0.0))
+                            .child(child_element);
+                        container = container.child(wrapped);
+                        if i + 1 < children.len() {
+                            let mut bar_path = path.to_vec();
+                            bar_path.push(i);
+                            container =
+                                container.child(self.render_split_bar(*axis, bar_path, 0.0, cx));
+                        }
                     }
                 }
                 container.into_any_element()
@@ -495,6 +587,7 @@ impl WorkspacePanesAppViewExt for AppView {
         &self,
         axis: super::super::workspace::SplitAxis,
         path: Vec<usize>,
+        zoom_collapse: f32,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         use super::super::panes::{PaneSplitDragMarker, PaneSplitDragState};
@@ -522,25 +615,35 @@ impl WorkspacePanesAppViewExt for AppView {
         ));
 
         const PANE_GAP: f32 = 8.0;
-        let is_dragging = self
-            .workspace
-            .workspace
-            .pane_split_drag
-            .as_ref()
-            .is_some_and(|drag| {
-                drag.axis == axis && drag.child_index == child_index && drag.path == parent_path
-            });
+        let collapse = zoom_collapse.clamp(0.0, 1.0);
+        let gap = PANE_GAP * (1.0 - collapse);
+        let is_dragging = collapse <= 0.0
+            && self
+                .workspace
+                .workspace
+                .pane_split_drag
+                .as_ref()
+                .is_some_and(|drag| {
+                    drag.axis == axis && drag.child_index == child_index && drag.path == parent_path
+                });
 
         let mut bar = div().id(bar_id).flex_shrink_0().occlude();
         bar = match axis {
-            SplitAxis::Horizontal => bar.w(px(PANE_GAP)).h_full().cursor_col_resize(),
-            SplitAxis::Vertical => bar.h(px(PANE_GAP)).w_full().cursor_row_resize(),
+            SplitAxis::Horizontal => bar.w(px(gap)).h_full().cursor_col_resize(),
+            SplitAxis::Vertical => bar.h(px(gap)).w_full().cursor_row_resize(),
         };
+        if collapse > 0.0 {
+            bar = bar.opacity((1.0 - collapse).clamp(0.0, 1.0));
+        }
 
         let path_for_start = parent_path.clone();
         bar.on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                if collapse > 0.0 {
+                    return;
+                }
+                this.workspace.workspace.pane_zoom_animation = None;
                 let path = path_for_start.clone();
                 let (flex_a, flex_b) = {
                     let mut node = &this.workspace.workspace.pane_layout;
@@ -1095,5 +1198,53 @@ fn terminal_context_menu_state(
         cwd_sync_path,
         has_command_blocks,
         command,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zoom_split_weights;
+
+    #[test]
+    fn zoom_split_weights_interpolates_two_panes() {
+        let flexes = [0.3, 0.7];
+        let w0 = zoom_split_weights(&flexes, 2, 0, 0.0);
+        assert!((w0[0] - 0.3).abs() < 1e-6);
+        assert!((w0[1] - 0.7).abs() < 1e-6);
+        assert!((w0.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+
+        let w_mid = zoom_split_weights(&flexes, 2, 0, 0.5);
+        assert!((w_mid[0] - 0.65).abs() < 1e-6);
+        assert!((w_mid[1] - 0.35).abs() < 1e-6);
+        assert!((w_mid.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(w_mid[0] > w0[0] && w_mid[1] < w0[1]);
+
+        let w1 = zoom_split_weights(&flexes, 2, 0, 1.0);
+        assert!((w1[0] - 1.0).abs() < 1e-6);
+        assert!(w1[1].abs() < 1e-6);
+        assert!((w1.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zoom_split_weights_interpolates_three_panes_and_normalizes() {
+        let flexes = [1.0, 2.0, 1.0];
+        let w0 = zoom_split_weights(&flexes, 3, 1, 0.0);
+        assert!((w0[0] - 0.25).abs() < 1e-6);
+        assert!((w0[1] - 0.50).abs() < 1e-6);
+        assert!((w0[2] - 0.25).abs() < 1e-6);
+        assert!((w0.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+
+        let w_mid = zoom_split_weights(&flexes, 3, 1, 0.5);
+        assert!((w_mid[0] - 0.125).abs() < 1e-6);
+        assert!((w_mid[1] - 0.75).abs() < 1e-6);
+        assert!((w_mid[2] - 0.125).abs() < 1e-6);
+        assert!((w_mid.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(w_mid[1] > w0[1] && w_mid[0] < w0[0] && w_mid[2] < w0[2]);
+
+        let w1 = zoom_split_weights(&flexes, 3, 1, 1.0);
+        assert!(w1[0].abs() < 1e-6);
+        assert!((w1[1] - 1.0).abs() < 1e-6);
+        assert!(w1[2].abs() < 1e-6);
+        assert!((w1.iter().sum::<f32>() - 1.0).abs() < 1e-6);
     }
 }

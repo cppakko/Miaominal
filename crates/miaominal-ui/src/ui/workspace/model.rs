@@ -1,4 +1,6 @@
-use super::panes::{PaneSplitAnimation, PaneSplitDragState, PaneTabDropTarget, ParkedPane};
+use super::panes::{
+    PaneSplitAnimation, PaneSplitDragState, PaneTabDropTarget, PaneZoomAnimation, ParkedPane,
+};
 use super::presentation::{
     PrimaryViewKind, PrimaryViewTransition, TopbarActiveTabTransition, TopbarTabEnterTransition,
     TopbarTabExitTransition, TopbarTabSnapshot,
@@ -920,6 +922,7 @@ pub(crate) struct TabWorkspaceState {
     pub next_pane_id: usize,
     pub pane_split_drag: Option<PaneSplitDragState>,
     pub pane_split_animation: Option<PaneSplitAnimation>,
+    pub pane_zoom_animation: Option<PaneZoomAnimation>,
     pub pane_tab_drop_target: Option<PaneTabDropTarget>,
     pub zoomed_pane: Option<PaneId>,
     pub sync_panes: bool,
@@ -936,6 +939,7 @@ impl TabWorkspaceState {
             next_pane_id: 2,
             pane_split_drag: None,
             pane_split_animation: None,
+            pane_zoom_animation: None,
             pane_tab_drop_target: None,
             zoomed_pane: None,
             sync_panes: false,
@@ -961,6 +965,7 @@ impl TabWorkspaceState {
             pane.terminal_scrollbar_last_interaction_at = None;
         }
         self.pane_split_drag = None;
+        self.pane_zoom_animation = None;
         self.pane_tab_drop_target = None;
     }
 }
@@ -1090,6 +1095,13 @@ mod tests {
                     pane_id: PaneId(3),
                     zone: PaneTabDropZone::Center,
                 });
+                workspace.pane_zoom_animation = Some(PaneZoomAnimation::new(
+                    PaneId(2),
+                    0.0,
+                    1.0,
+                    started_at,
+                    duration,
+                ));
                 workspace.pane_split_animation = Some(PaneSplitAnimation {
                     kind: if closing {
                         PaneSplitAnimationKind::Closing
@@ -1156,6 +1168,7 @@ mod tests {
                     assert!(pane.terminal_scrollbar_last_interaction_at.is_none());
                 }
                 assert!(workspace.pane_split_drag.is_none());
+                assert!(workspace.pane_zoom_animation.is_none());
                 assert!(workspace.pane_tab_drop_target.is_none());
                 let mut pane_ids = Vec::new();
                 workspace.pane_layout.collect_pane_ids(&mut pane_ids);

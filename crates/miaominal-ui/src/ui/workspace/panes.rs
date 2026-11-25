@@ -65,6 +65,61 @@ pub(crate) struct PaneSplitAnimation {
     pub pending_close: Option<PaneCloseAnimation>,
 }
 
+/// Transient interpolation state for zooming a pane in or out within a split layout.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PaneZoomAnimation {
+    pub pane_id: PaneId,
+    pub from: f32,
+    pub to: f32,
+    pub started_at: Instant,
+    pub duration: Duration,
+}
+
+impl PaneZoomAnimation {
+    pub fn new(
+        pane_id: PaneId,
+        from: f32,
+        to: f32,
+        started_at: Instant,
+        base_duration: Duration,
+    ) -> Self {
+        let from = from.clamp(0.0, 1.0);
+        let to = to.clamp(0.0, 1.0);
+        let distance = (to - from).abs();
+        let duration = if distance <= f32::EPSILON {
+            Duration::ZERO
+        } else {
+            base_duration.mul_f32(distance.clamp(0.25, 1.0))
+        };
+        Self {
+            pane_id,
+            from,
+            to,
+            started_at,
+            duration,
+        }
+    }
+
+    pub fn raw_progress(&self, now: Instant) -> f32 {
+        let duration_seconds = self.duration.as_secs_f32();
+        if duration_seconds <= f32::EPSILON {
+            return 1.0;
+        }
+        (now.saturating_duration_since(self.started_at).as_secs_f32() / duration_seconds)
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn sample(&self, now: Instant) -> f32 {
+        let p = self.raw_progress(now);
+        let eased = p * p * (3.0 - 2.0 * p);
+        (self.from + (self.to - self.from) * eased).clamp(0.0, 1.0)
+    }
+
+    pub fn is_finished(&self, now: Instant) -> bool {
+        self.raw_progress(now) >= 1.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PaneTabDropZone {
     Center,
@@ -118,5 +173,63 @@ impl ParkedPane {
             terminal_scrollbar_drag: None,
             terminal_scrollbar_last_interaction_at: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pane_zoom_animation_samples_smoothstep_and_completes() {
+        let start = Instant::now();
+        let base = Duration::from_millis(180);
+        let anim = PaneZoomAnimation::new(PaneId(1), 0.0, 1.0, start, base);
+        assert_eq!(anim.duration, base);
+        assert_eq!(anim.sample(start), 0.0);
+        assert!(!anim.is_finished(start));
+
+        let mid = start + Duration::from_millis(90);
+        assert!((anim.sample(mid) - 0.5).abs() < 1e-5);
+        assert!(!anim.is_finished(mid));
+
+        let end = start + base;
+        assert_eq!(anim.sample(end), 1.0);
+        assert!(anim.is_finished(end));
+    }
+
+    #[test]
+    fn pane_zoom_animation_zero_distance_completes_immediately() {
+        let start = Instant::now();
+        let anim = PaneZoomAnimation::new(PaneId(2), 1.0, 1.0, start, Duration::from_millis(180));
+        assert_eq!(anim.duration, Duration::ZERO);
+        assert_eq!(anim.sample(start), 1.0);
+        assert!(anim.is_finished(start));
+    }
+
+    #[test]
+    fn pane_zoom_animation_reverses_from_sampled_value_with_scaled_duration() {
+        let start = Instant::now();
+        let base = Duration::from_millis(200);
+        let forward = PaneZoomAnimation::new(PaneId(1), 0.0, 1.0, start, base);
+        let interrupt_at = start + Duration::from_millis(100);
+        let sampled = forward.sample(interrupt_at);
+        assert!((sampled - 0.5).abs() < 1e-5);
+
+        let reverse = PaneZoomAnimation::new(PaneId(1), sampled, 0.0, interrupt_at, base);
+        assert!((reverse.from - 0.5).abs() < 1e-5);
+        assert_eq!(reverse.to, 0.0);
+        assert_eq!(reverse.duration, Duration::from_millis(100));
+        assert!((reverse.sample(interrupt_at) - 0.5).abs() < 1e-5);
+        assert!(!reverse.is_finished(interrupt_at + Duration::from_millis(50)));
+        assert_eq!(
+            reverse.sample(interrupt_at + Duration::from_millis(100)),
+            0.0
+        );
+        assert!(reverse.is_finished(interrupt_at + Duration::from_millis(100)));
+
+        // Small distance clamps duration floor to 25% of base_duration.
+        let tiny_reverse = PaneZoomAnimation::new(PaneId(1), 0.1, 0.0, interrupt_at, base);
+        assert_eq!(tiny_reverse.duration, Duration::from_millis(50));
     }
 }

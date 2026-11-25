@@ -61,44 +61,63 @@ fn prepare_terminal_canvas_prepaint(
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<AppView>,
 ) -> Option<TerminalCanvasPrepaint> {
-    let (active_tab_id, focus, local_drop_target, metrics_changed) = if pane_id
-        == this.workspace.workspace.active_pane_id
-    {
-        let metrics_changed = this.workspace.workspace.active_pane.terminal_bounds != Some(bounds)
-            || this.workspace.workspace.active_pane.terminal_cell_width != cell_width
-            || this.workspace.workspace.active_pane.terminal_line_height != line_height;
-        this.workspace.workspace.active_pane.terminal_bounds = Some(bounds);
-        this.workspace.workspace.active_pane.terminal_cell_width = cell_width;
-        this.workspace.workspace.active_pane.terminal_line_height = line_height;
+    let suppress_resize = this
+        .workspace
+        .workspace
+        .pane_zoom_animation
+        .as_ref()
+        .is_some_and(|animation| animation.pane_id != pane_id);
+    if suppress_resize && (bounds.size.width <= px(0.0) || bounds.size.height <= px(0.0)) {
+        return None;
+    }
 
-        (
-            this.workspace.workspace.active_tab,
-            this.workspace.workspace.active_pane.terminal_focus.clone(),
-            this.workspace
-                .workspace
-                .active_pane
-                .terminal_mouse_gesture
-                .and_then(|gesture| gesture.drop_target()),
-            metrics_changed,
-        )
-    } else {
-        let parked = this.workspace.workspace.parked_panes.get_mut(&pane_id)?;
-        let metrics_changed = parked.terminal_bounds != Some(bounds)
-            || parked.terminal_cell_width != cell_width
-            || parked.terminal_line_height != line_height;
-        parked.terminal_bounds = Some(bounds);
-        parked.terminal_cell_width = cell_width;
-        parked.terminal_line_height = line_height;
+    let (active_tab_id, focus, local_drop_target, metrics_changed) =
+        if pane_id == this.workspace.workspace.active_pane_id {
+            let metrics_changed = if suppress_resize {
+                false
+            } else {
+                let changed = this.workspace.workspace.active_pane.terminal_bounds != Some(bounds)
+                    || this.workspace.workspace.active_pane.terminal_cell_width != cell_width
+                    || this.workspace.workspace.active_pane.terminal_line_height != line_height;
+                this.workspace.workspace.active_pane.terminal_bounds = Some(bounds);
+                this.workspace.workspace.active_pane.terminal_cell_width = cell_width;
+                this.workspace.workspace.active_pane.terminal_line_height = line_height;
+                changed
+            };
 
-        (
-            parked.active_tab,
-            parked.terminal_focus.clone(),
-            parked
-                .terminal_mouse_gesture
-                .and_then(|gesture| gesture.drop_target()),
-            metrics_changed,
-        )
-    };
+            (
+                this.workspace.workspace.active_tab,
+                this.workspace.workspace.active_pane.terminal_focus.clone(),
+                this.workspace
+                    .workspace
+                    .active_pane
+                    .terminal_mouse_gesture
+                    .and_then(|gesture| gesture.drop_target()),
+                metrics_changed,
+            )
+        } else {
+            let parked = this.workspace.workspace.parked_panes.get_mut(&pane_id)?;
+            let metrics_changed = if suppress_resize {
+                false
+            } else {
+                let changed = parked.terminal_bounds != Some(bounds)
+                    || parked.terminal_cell_width != cell_width
+                    || parked.terminal_line_height != line_height;
+                parked.terminal_bounds = Some(bounds);
+                parked.terminal_cell_width = cell_width;
+                parked.terminal_line_height = line_height;
+                changed
+            };
+
+            (
+                parked.active_tab,
+                parked.terminal_focus.clone(),
+                parked
+                    .terminal_mouse_gesture
+                    .and_then(|gesture| gesture.drop_target()),
+                metrics_changed,
+            )
+        };
 
     let drop_target = this
         .workspace
@@ -108,18 +127,22 @@ fn prepare_terminal_canvas_prepaint(
         .map(|drop| drop.target)
         .or(local_drop_target);
 
-    let resized = active_tab_id
-        .and_then(|tab_id| this.workspace.tabs.index_of(tab_id))
-        .is_some_and(|index| {
-            this.sync_session_terminal_size_from_metrics(
-                index,
-                bounds,
-                cell_width,
-                line_height,
-                !metrics_changed,
-                cx,
-            )
-        });
+    let resized = if suppress_resize {
+        false
+    } else {
+        active_tab_id
+            .and_then(|tab_id| this.workspace.tabs.index_of(tab_id))
+            .is_some_and(|index| {
+                this.sync_session_terminal_size_from_metrics(
+                    index,
+                    bounds,
+                    cell_width,
+                    line_height,
+                    !metrics_changed,
+                    cx,
+                )
+            })
+    };
 
     if metrics_changed || resized {
         cx.notify();

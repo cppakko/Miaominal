@@ -119,6 +119,10 @@ impl AppView {
             next_pane_id: std::mem::replace(&mut self.workspace.workspace.next_pane_id, 2),
             pane_split_drag: self.workspace.workspace.pane_split_drag.take(),
             pane_split_animation: self.workspace.workspace.pane_split_animation.take(),
+            pane_zoom_animation: {
+                self.workspace.workspace.pane_zoom_animation = None;
+                None
+            },
             pane_tab_drop_target: self.workspace.workspace.pane_tab_drop_target.take(),
             zoomed_pane: self.workspace.workspace.zoomed_pane.take(),
             sync_panes: std::mem::take(&mut self.workspace.workspace.sync_panes),
@@ -182,6 +186,7 @@ impl AppView {
         self.workspace.workspace.next_pane_id = workspace.next_pane_id;
         self.workspace.workspace.pane_split_drag = workspace.pane_split_drag;
         self.workspace.workspace.pane_split_animation = workspace.pane_split_animation;
+        self.workspace.workspace.pane_zoom_animation = workspace.pane_zoom_animation;
         self.workspace.workspace.pane_tab_drop_target = workspace.pane_tab_drop_target;
         self.workspace.workspace.zoomed_pane = workspace.zoomed_pane;
         self.workspace.workspace.sync_panes = workspace.sync_panes;
@@ -209,11 +214,20 @@ impl AppView {
     pub(in crate::ui::shell) fn refresh_pane_workspace_controls(&mut self, cx: &mut Context<Self>) {
         if !self.workspace_is_split() {
             self.workspace.workspace.zoomed_pane = None;
+            self.workspace.workspace.pane_zoom_animation = None;
             self.workspace.workspace.sync_panes = false;
-        } else if let Some(zoomed) = self.workspace.workspace.zoomed_pane
-            && !self.workspace.workspace.pane_layout.contains(zoomed)
-        {
-            self.workspace.workspace.zoomed_pane = None;
+        } else {
+            if let Some(zoomed) = self.workspace.workspace.zoomed_pane
+                && !self.workspace.workspace.pane_layout.contains(zoomed)
+            {
+                self.workspace.workspace.zoomed_pane = None;
+                self.workspace.workspace.pane_zoom_animation = None;
+            }
+            if let Some(anim) = self.workspace.workspace.pane_zoom_animation
+                && !self.workspace.workspace.pane_layout.contains(anim.pane_id)
+            {
+                self.workspace.workspace.pane_zoom_animation = None;
+            }
         }
         let targets = if self.workspace.workspace.sync_panes && self.workspace_is_split() {
             self.active_workspace_session_tab_ids()
@@ -234,14 +248,39 @@ impl AppView {
     ) {
         if !self.workspace_is_split() || !self.workspace.workspace.pane_layout.contains(pane_id) {
             self.workspace.workspace.zoomed_pane = None;
+            self.workspace.workspace.pane_zoom_animation = None;
             cx.notify();
             return;
         }
+        self.workspace.workspace.pane_split_drag = None;
+        let now = Instant::now();
+        let current_zoom = self
+            .workspace
+            .workspace
+            .pane_zoom_animation
+            .filter(|anim| anim.pane_id == pane_id)
+            .map(|anim| anim.sample(now));
         if self.workspace.workspace.zoomed_pane == Some(pane_id) {
+            let from = current_zoom.unwrap_or(1.0);
             self.workspace.workspace.zoomed_pane = None;
+            self.workspace.workspace.pane_zoom_animation = Some(PaneZoomAnimation::new(
+                pane_id,
+                from,
+                0.0,
+                now,
+                super::support::CONTAINER_TRANSITION_DURATION,
+            ));
         } else {
+            let from = current_zoom.unwrap_or(0.0);
             self.set_active_pane(pane_id, window, cx);
             self.workspace.workspace.zoomed_pane = Some(pane_id);
+            self.workspace.workspace.pane_zoom_animation = Some(PaneZoomAnimation::new(
+                pane_id,
+                from,
+                1.0,
+                now,
+                super::support::CONTAINER_TRANSITION_DURATION,
+            ));
         }
         cx.notify();
     }
@@ -600,6 +639,7 @@ impl AppView {
             return;
         }
         if let Some(animation) = split_animation {
+            self.workspace.workspace.pane_zoom_animation = None;
             let _ = self.set_split_flex_pair(
                 &animation.path,
                 animation.child_index,

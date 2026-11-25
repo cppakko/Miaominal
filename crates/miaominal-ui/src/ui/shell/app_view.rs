@@ -588,6 +588,7 @@ impl AppView {
         self.workspace.workspace.active_pane.terminal_line_height = terminal_line_height_default();
         self.workspace.workspace.active_pane.terminal_ime_anchor = None;
         self.workspace.workspace.pane_split_drag = None;
+        self.workspace.workspace.pane_zoom_animation = None;
 
         let split_animation =
             self.workspace
@@ -680,6 +681,7 @@ impl AppView {
             .close_animation_target(removed_id)
         {
             self.workspace.workspace.pane_split_drag = None;
+            self.workspace.workspace.pane_zoom_animation = None;
             let _ = self.set_split_flex_pair(
                 &animation.path,
                 animation.child_index,
@@ -719,6 +721,7 @@ impl AppView {
         }
 
         let removed_id = self.workspace.workspace.active_pane_id;
+        self.workspace.workspace.pane_zoom_animation = None;
         self.workspace.workspace.pane_layout.remove(removed_id);
 
         let next_id = self.workspace.workspace.pane_layout.first_leaf();
