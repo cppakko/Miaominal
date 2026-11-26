@@ -1,10 +1,10 @@
 //! Physical detached-window operations and feature-port wiring. Workspace owns
 //! resource extraction, installation, rollback and source completion.
-use super::app_view::{FloatingTabDragGhost, HoveredExternalTabDrop};
+use super::app_view::{FloatingTabDragGhost, FloatingTabDragGhostBackend, HoveredExternalTabDrop};
 use super::panes::{PaneTabDropTarget, PaneTabDropZone};
 use super::*;
 use crate::ui::bridge_security_platform::{
-    cursor_client_position, topmost_window_under_cursor, window_hwnd,
+    DragGhostVisualSpec, cursor_client_position, topmost_window_under_cursor, window_hwnd,
 };
 use crate::ui::contracts::snippets::TransferredSnippetsUi;
 use crate::ui::windowing::{
@@ -223,6 +223,28 @@ fn should_use_drop_window_placement() -> bool {
     }
 }
 
+fn drag_ghost_visual_spec(payload: &DraggedTab, cue: TabDragGhostCue) -> DragGhostVisualSpec {
+    let roles = miaominal_settings::current_theme().material.roles;
+    let highlighted = cue != TabDragGhostCue::None;
+    let (background_rgb, text_rgb) = if payload.is_active {
+        (roles.secondary_container, roles.on_secondary_container)
+    } else {
+        (roles.surface_container_high, roles.on_surface_variant)
+    };
+    DragGhostVisualSpec {
+        title: payload.title.clone(),
+        logical_width: TOPBAR_TAB_WIDTH,
+        logical_height: TAB_DRAG_GHOST_HEIGHT,
+        corner_radius: TAB_DRAG_GHOST_RADIUS,
+        background_rgb,
+        background_alpha: if highlighted { 0.96 } else { 0.92 },
+        text_rgb,
+        border_rgb: highlighted.then_some(roles.primary),
+        status_rgb: payload.status_color,
+        detach_plus_rgb: (cue == TabDragGhostCue::DetachToNewWindow).then_some(roles.primary),
+    }
+}
+
 impl AppView {
     pub(in crate::ui::shell) fn open_tab_in_new_window(
         &mut self,
@@ -320,9 +342,9 @@ impl AppView {
         };
         ghost.native.invalidate();
         ghost.payload.set_in_window_ghost_hidden(false);
-        let _ = ghost
-            .window
-            .update(cx, |_, window, _| window.remove_window());
+        if let FloatingTabDragGhostBackend::Popup { window, .. } = ghost.backend {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        }
         true
     }
 
@@ -336,6 +358,34 @@ impl AppView {
     ) {
         let ghost_size = tab_drag_ghost_size();
         let grab_offset = payload.grab_offset();
+        let local_origin = point(
+            cursor_position.x - grab_offset.x,
+            cursor_position.y - grab_offset.y,
+        );
+        if crate::ui::bridge_security_platform::uses_native_surface_drag_ghost(source_window) {
+            payload.set_in_window_ghost_hidden(true);
+            let visual = drag_ghost_visual_spec(payload, cue);
+            let native = match crate::ui::bridge_security_platform::open_native_surface_drag_ghost(
+                source_window,
+                local_origin,
+                &visual,
+            ) {
+                Ok(native) => native,
+                Err(error) => {
+                    payload.set_in_window_ghost_hidden(false);
+                    log::debug!("failed to open native surface tab drag ghost: {error:?}");
+                    return;
+                }
+            };
+            source_window.refresh();
+            self.shell.tab_drag_ghost = Some(FloatingTabDragGhost {
+                backend: FloatingTabDragGhostBackend::NativeSurface,
+                payload: payload.clone(),
+                native,
+                cue,
+            });
+            return;
+        }
         let source_origin = source_window.bounds().origin;
         let cursor_screen = point(
             source_origin.x + cursor_position.x,
@@ -423,6 +473,7 @@ impl AppView {
         crate::ui::bridge_security_platform::schedule_drag_ghost_move(
             &native,
             raw_origin,
+            local_origin,
             source_window.scale_factor(),
             grab_offset,
             TAB_DRAG_GHOST_HEIGHT,
@@ -431,8 +482,10 @@ impl AppView {
         );
         source_window.refresh();
         self.shell.tab_drag_ghost = Some(FloatingTabDragGhost {
-            window: handle.into(),
-            view,
+            backend: FloatingTabDragGhostBackend::Popup {
+                window: handle.into(),
+                view,
+            },
             payload: payload.clone(),
             native,
             cue,
@@ -472,6 +525,7 @@ impl AppView {
         if let Some(ghost) = self.shell.tab_drag_ghost.as_mut() {
             let grab_offset = ghost.payload.grab_offset();
             let source_origin = window.bounds().origin;
+            let local_origin = point(position.x - grab_offset.x, position.y - grab_offset.y);
             let target_origin = point(
                 source_origin.x + position.x - grab_offset.x,
                 source_origin.y + position.y - grab_offset.y,
@@ -479,6 +533,7 @@ impl AppView {
             crate::ui::bridge_security_platform::schedule_drag_ghost_move(
                 &ghost.native,
                 target_origin,
+                local_origin,
                 window.scale_factor(),
                 grab_offset,
                 TAB_DRAG_GHOST_HEIGHT,
@@ -487,11 +542,22 @@ impl AppView {
             );
             if ghost.cue != cue {
                 ghost.cue = cue;
-                let view = ghost.view.clone();
-                view.update(cx, |view, cx| {
-                    view.set_cue(cue);
-                    cx.notify();
-                });
+                match &ghost.backend {
+                    FloatingTabDragGhostBackend::Popup { view, .. } => {
+                        let view = view.clone();
+                        view.update(cx, |view, cx| {
+                            view.set_cue(cue);
+                            cx.notify();
+                        });
+                    }
+                    FloatingTabDragGhostBackend::NativeSurface => {
+                        let visual = drag_ghost_visual_spec(payload, cue);
+                        crate::ui::bridge_security_platform::update_native_drag_ghost_visual(
+                            &ghost.native,
+                            &visual,
+                        );
+                    }
+                }
             }
         }
     }
@@ -671,7 +737,7 @@ impl AppView {
             .shell
             .tab_drag_ghost
             .as_ref()
-            .map(|ghost| ghost.window.window_id());
+            .and_then(FloatingTabDragGhost::window_id);
         let candidates: Vec<AppWindowRegistration> = live_app_windows(cx)
             .into_iter()
             .filter(|entry| {

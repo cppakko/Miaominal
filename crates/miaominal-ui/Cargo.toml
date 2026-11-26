@@ -65,8 +65,12 @@ mime_guess = "2.0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+libc = "0.2"
 raw-window-handle = "0.6.2"
 tray-icon = { workspace = true, features = ["gtk"] }
+wayland-backend = { version = "0.3.15", default-features = false, features = ["client_system", "dlopen"] }
+wayland-client = "0.31.14"
+wayland-sys = "0.31.11"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6.2"

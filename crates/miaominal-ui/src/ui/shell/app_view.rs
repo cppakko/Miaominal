@@ -28,12 +28,28 @@ pub struct AppView {
     pub(in crate::ui::shell) _subscriptions: RootSubscriptions,
 }
 
+pub(in crate::ui::shell) enum FloatingTabDragGhostBackend {
+    Popup {
+        window: gpui_kit::AnyWindowHandle,
+        view: Entity<TabDragGhostView>,
+    },
+    NativeSurface,
+}
+
 pub(in crate::ui::shell) struct FloatingTabDragGhost {
-    pub(in crate::ui::shell) window: gpui_kit::AnyWindowHandle,
-    pub(in crate::ui::shell) view: Entity<TabDragGhostView>,
+    pub(in crate::ui::shell) backend: FloatingTabDragGhostBackend,
     pub(in crate::ui::shell) payload: DraggedTab,
     pub(in crate::ui::shell) native: crate::ui::bridge_security_platform::DragGhostNativeHandle,
     pub(in crate::ui::shell) cue: TabDragGhostCue,
+}
+
+impl FloatingTabDragGhost {
+    pub(in crate::ui::shell) fn window_id(&self) -> Option<gpui_kit::WindowId> {
+        match &self.backend {
+            FloatingTabDragGhostBackend::Popup { window, .. } => Some(window.window_id()),
+            FloatingTabDragGhostBackend::NativeSurface => None,
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -1,3 +1,17 @@
+#[derive(Clone, Debug, PartialEq)]
+pub struct DragGhostVisualSpec {
+    pub title: String,
+    pub logical_width: f32,
+    pub logical_height: f32,
+    pub corner_radius: f32,
+    pub background_rgb: u32,
+    pub background_alpha: f32,
+    pub text_rgb: u32,
+    pub border_rgb: Option<u32>,
+    pub status_rgb: Option<u32>,
+    pub detach_plus_rgb: Option<u32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemAuthVerification {
     Verified,
@@ -354,8 +368,39 @@ impl DragGhostNativeHandle {
 }
 
 #[cfg(target_os = "linux")]
+mod linux_dl {
+    use core::ffi::{CStr, c_char, c_int, c_void};
+
+    #[link(name = "dl")]
+    unsafe extern "C" {
+        fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+
+    const RTLD_LAZY: c_int = 1;
+
+    pub(super) unsafe fn open_any(names: &[&CStr]) -> *mut c_void {
+        for name in names {
+            let handle = unsafe { dlopen(name.as_ptr(), RTLD_LAZY) };
+            if !handle.is_null() {
+                return handle;
+            }
+        }
+        core::ptr::null_mut()
+    }
+
+    pub(super) unsafe fn sym(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        if handle.is_null() {
+            return core::ptr::null_mut();
+        }
+        unsafe { dlsym(handle, name.as_ptr()) }
+    }
+}
+
+#[cfg(target_os = "linux")]
 mod linux_xcb {
-    use core::ffi::{c_char, c_int, c_void};
+    use super::linux_dl;
+    use core::ffi::{c_int, c_void};
     use std::sync::OnceLock;
 
     #[repr(C)]
@@ -390,42 +435,17 @@ mod linux_xcb {
         pub(super) shape_rectangles: Option<ShapeRectanglesFn>,
     }
 
-    #[link(name = "dl")]
-    unsafe extern "C" {
-        fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    }
-
-    const RTLD_LAZY: c_int = 1;
-
-    unsafe fn open_any(names: &[&core::ffi::CStr]) -> *mut c_void {
-        for name in names {
-            let handle = unsafe { dlopen(name.as_ptr(), RTLD_LAZY) };
-            if !handle.is_null() {
-                return handle;
-            }
-        }
-        core::ptr::null_mut()
-    }
-
     pub(super) fn api() -> Option<&'static LinuxXcbApi> {
         static API: OnceLock<Option<LinuxXcbApi>> = OnceLock::new();
         API.get_or_init(|| unsafe {
-            let xcb = open_any(&[c"libxcb.so.1", c"libxcb.so"]);
-            if xcb.is_null() {
-                return None;
-            }
-            let configure_ptr = dlsym(xcb, c"xcb_configure_window".as_ptr());
-            let flush_ptr = dlsym(xcb, c"xcb_flush".as_ptr());
+            let xcb = linux_dl::open_any(&[c"libxcb.so.1", c"libxcb.so"]);
+            let configure_ptr = linux_dl::sym(xcb, c"xcb_configure_window");
+            let flush_ptr = linux_dl::sym(xcb, c"xcb_flush");
             if configure_ptr.is_null() || flush_ptr.is_null() {
                 return None;
             }
-            let xcb_shape = open_any(&[c"libxcb-shape.so.0", c"libxcb-shape.so"]);
-            let shape_ptr = if xcb_shape.is_null() {
-                core::ptr::null_mut()
-            } else {
-                dlsym(xcb_shape, c"xcb_shape_rectangles".as_ptr())
-            };
+            let xcb_shape = linux_dl::open_any(&[c"libxcb-shape.so.0", c"libxcb-shape.so"]);
+            let shape_ptr = linux_dl::sym(xcb_shape, c"xcb_shape_rectangles");
             Some(LinuxXcbApi {
                 configure_window: core::mem::transmute(configure_ptr),
                 flush: core::mem::transmute(flush_ptr),
@@ -437,6 +457,653 @@ mod linux_xcb {
             })
         })
         .as_ref()
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_cairo {
+    use super::DragGhostVisualSpec;
+    use super::linux_dl;
+    use core::ffi::{c_char, c_double, c_int, c_void};
+    use std::ffi::CString;
+    use std::sync::OnceLock;
+
+    const CAIRO_FORMAT_ARGB32: c_int = 0;
+    const CAIRO_LINE_CAP_ROUND: c_int = 1;
+    const PANGO_SCALE: c_double = 1024.0;
+    const PANGO_ELLIPSIZE_END: c_int = 3;
+
+    type ImageSurfaceCreateForDataFn =
+        unsafe extern "C" fn(*mut u8, c_int, c_int, c_int, c_int) -> *mut c_void;
+    type SurfaceSetDeviceScaleFn = unsafe extern "C" fn(*mut c_void, c_double, c_double);
+    type SurfaceFlushFn = unsafe extern "C" fn(*mut c_void);
+    type SurfaceDestroyFn = unsafe extern "C" fn(*mut c_void);
+    type CairoCreateFn = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    type CairoDestroyFn = unsafe extern "C" fn(*mut c_void);
+    type CairoSetSourceRgbaFn =
+        unsafe extern "C" fn(*mut c_void, c_double, c_double, c_double, c_double);
+    type CairoNewSubPathFn = unsafe extern "C" fn(*mut c_void);
+    type CairoArcFn =
+        unsafe extern "C" fn(*mut c_void, c_double, c_double, c_double, c_double, c_double);
+    type CairoClosePathFn = unsafe extern "C" fn(*mut c_void);
+    type CairoFillFn = unsafe extern "C" fn(*mut c_void);
+    type CairoStrokeFn = unsafe extern "C" fn(*mut c_void);
+    type CairoSetLineWidthFn = unsafe extern "C" fn(*mut c_void, c_double);
+    type CairoSetLineCapFn = unsafe extern "C" fn(*mut c_void, c_int);
+    type CairoMoveToFn = unsafe extern "C" fn(*mut c_void, c_double, c_double);
+    type CairoLineToFn = unsafe extern "C" fn(*mut c_void, c_double, c_double);
+    type PangoCairoCreateLayoutFn = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    type PangoCairoShowLayoutFn = unsafe extern "C" fn(*mut c_void, *mut c_void);
+    type PangoFontDescNewFn = unsafe extern "C" fn() -> *mut c_void;
+    type PangoFontDescSetFamilyFn = unsafe extern "C" fn(*mut c_void, *const c_char);
+    type PangoFontDescSetAbsoluteSizeFn = unsafe extern "C" fn(*mut c_void, c_double);
+    type PangoFontDescFreeFn = unsafe extern "C" fn(*mut c_void);
+    type PangoLayoutSetFontDescFn = unsafe extern "C" fn(*mut c_void, *const c_void);
+    type PangoLayoutSetTextFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int);
+    type PangoLayoutSetWidthFn = unsafe extern "C" fn(*mut c_void, c_int);
+    type PangoLayoutSetEllipsizeFn = unsafe extern "C" fn(*mut c_void, c_int);
+    type PangoLayoutGetPixelSizeFn = unsafe extern "C" fn(*mut c_void, *mut c_int, *mut c_int);
+    type GObjectUnrefFn = unsafe extern "C" fn(*mut c_void);
+
+    struct CairoPangoApi {
+        image_surface_create_for_data: ImageSurfaceCreateForDataFn,
+        surface_set_device_scale: SurfaceSetDeviceScaleFn,
+        surface_flush: SurfaceFlushFn,
+        surface_destroy: SurfaceDestroyFn,
+        create: CairoCreateFn,
+        destroy: CairoDestroyFn,
+        set_source_rgba: CairoSetSourceRgbaFn,
+        new_sub_path: CairoNewSubPathFn,
+        arc: CairoArcFn,
+        close_path: CairoClosePathFn,
+        fill: CairoFillFn,
+        stroke: CairoStrokeFn,
+        set_line_width: CairoSetLineWidthFn,
+        set_line_cap: CairoSetLineCapFn,
+        move_to: CairoMoveToFn,
+        line_to: CairoLineToFn,
+        pango_cairo_create_layout: PangoCairoCreateLayoutFn,
+        pango_cairo_show_layout: PangoCairoShowLayoutFn,
+        pango_font_desc_new: PangoFontDescNewFn,
+        pango_font_desc_set_family: PangoFontDescSetFamilyFn,
+        pango_font_desc_set_absolute_size: PangoFontDescSetAbsoluteSizeFn,
+        pango_font_desc_free: PangoFontDescFreeFn,
+        pango_layout_set_font_desc: PangoLayoutSetFontDescFn,
+        pango_layout_set_text: PangoLayoutSetTextFn,
+        pango_layout_set_width: PangoLayoutSetWidthFn,
+        pango_layout_set_ellipsize: PangoLayoutSetEllipsizeFn,
+        pango_layout_get_pixel_size: PangoLayoutGetPixelSizeFn,
+        g_object_unref: GObjectUnrefFn,
+    }
+
+    fn api() -> Option<&'static CairoPangoApi> {
+        static API: OnceLock<Option<CairoPangoApi>> = OnceLock::new();
+        API.get_or_init(|| unsafe {
+            let cairo = linux_dl::open_any(&[c"libcairo.so.2", c"libcairo.so"]);
+            let pangocairo =
+                linux_dl::open_any(&[c"libpangocairo-1.0.so.0", c"libpangocairo-1.0.so"]);
+            let pango = linux_dl::open_any(&[c"libpango-1.0.so.0", c"libpango-1.0.so"]);
+            let gobject = linux_dl::open_any(&[c"libgobject-2.0.so.0", c"libgobject-2.0.so"]);
+            if cairo.is_null() || pangocairo.is_null() || pango.is_null() || gobject.is_null() {
+                return None;
+            }
+            macro_rules! load {
+                ($lib:expr, $name:expr) => {{
+                    let ptr = linux_dl::sym($lib, $name);
+                    if ptr.is_null() {
+                        return None;
+                    }
+                    core::mem::transmute(ptr)
+                }};
+            }
+            Some(CairoPangoApi {
+                image_surface_create_for_data: load!(cairo, c"cairo_image_surface_create_for_data"),
+                surface_set_device_scale: load!(cairo, c"cairo_surface_set_device_scale"),
+                surface_flush: load!(cairo, c"cairo_surface_flush"),
+                surface_destroy: load!(cairo, c"cairo_surface_destroy"),
+                create: load!(cairo, c"cairo_create"),
+                destroy: load!(cairo, c"cairo_destroy"),
+                set_source_rgba: load!(cairo, c"cairo_set_source_rgba"),
+                new_sub_path: load!(cairo, c"cairo_new_sub_path"),
+                arc: load!(cairo, c"cairo_arc"),
+                close_path: load!(cairo, c"cairo_close_path"),
+                fill: load!(cairo, c"cairo_fill"),
+                stroke: load!(cairo, c"cairo_stroke"),
+                set_line_width: load!(cairo, c"cairo_set_line_width"),
+                set_line_cap: load!(cairo, c"cairo_set_line_cap"),
+                move_to: load!(cairo, c"cairo_move_to"),
+                line_to: load!(cairo, c"cairo_line_to"),
+                pango_cairo_create_layout: load!(pangocairo, c"pango_cairo_create_layout"),
+                pango_cairo_show_layout: load!(pangocairo, c"pango_cairo_show_layout"),
+                pango_font_desc_new: load!(pango, c"pango_font_description_new"),
+                pango_font_desc_set_family: load!(pango, c"pango_font_description_set_family"),
+                pango_font_desc_set_absolute_size: load!(
+                    pango,
+                    c"pango_font_description_set_absolute_size"
+                ),
+                pango_font_desc_free: load!(pango, c"pango_font_description_free"),
+                pango_layout_set_font_desc: load!(pango, c"pango_layout_set_font_description"),
+                pango_layout_set_text: load!(pango, c"pango_layout_set_text"),
+                pango_layout_set_width: load!(pango, c"pango_layout_set_width"),
+                pango_layout_set_ellipsize: load!(pango, c"pango_layout_set_ellipsize"),
+                pango_layout_get_pixel_size: load!(pango, c"pango_layout_get_pixel_size"),
+                g_object_unref: load!(gobject, c"g_object_unref"),
+            })
+        })
+        .as_ref()
+    }
+
+    fn rgb_f64(rgb: u32) -> (c_double, c_double, c_double) {
+        (
+            ((rgb >> 16) & 0xff) as c_double / 255.0,
+            ((rgb >> 8) & 0xff) as c_double / 255.0,
+            (rgb & 0xff) as c_double / 255.0,
+        )
+    }
+
+    unsafe fn rounded_rect_path(
+        api: &CairoPangoApi,
+        cr: *mut c_void,
+        x: c_double,
+        y: c_double,
+        w: c_double,
+        h: c_double,
+        r: c_double,
+    ) {
+        let radius = r.min(w * 0.5).min(h * 0.5).max(0.0);
+        let right = x + w;
+        let bottom = y + h;
+        let half_pi = core::f64::consts::FRAC_PI_2;
+        unsafe {
+            (api.new_sub_path)(cr);
+            (api.arc)(cr, right - radius, y + radius, radius, -half_pi, 0.0);
+            (api.arc)(cr, right - radius, bottom - radius, radius, 0.0, half_pi);
+            (api.arc)(
+                cr,
+                x + radius,
+                bottom - radius,
+                radius,
+                half_pi,
+                core::f64::consts::PI,
+            );
+            (api.arc)(
+                cr,
+                x + radius,
+                y + radius,
+                radius,
+                core::f64::consts::PI,
+                core::f64::consts::PI + half_pi,
+            );
+            (api.close_path)(cr);
+        }
+    }
+
+    fn render_fallback_pill(
+        visual: &DragGhostVisualSpec,
+        px_w: i32,
+        px_h: i32,
+        scale: i32,
+        pixels: &mut [u8],
+    ) {
+        pixels.fill(0);
+        let w = visual.logical_width.max(1.0);
+        let h = visual.logical_height.max(1.0);
+        let r = visual.corner_radius.min(w * 0.5).min(h * 0.5);
+        let scale_f = scale.max(1) as f32;
+        let alpha = visual.background_alpha.clamp(0.0, 1.0);
+        let half_w = w * 0.5;
+        let half_h = h * 0.5;
+        let inner_x = (half_w - r).max(0.0);
+        let inner_y = (half_h - r).max(0.0);
+        let stride = px_w as usize * 4;
+
+        let blend_premul = |dst: &mut [u8], rgb: u32, cov: f32| {
+            let src_a = cov.clamp(0.0, 1.0);
+            if src_a <= 0.0 {
+                return;
+            }
+            let sr = ((rgb >> 16) & 0xff) as f32 / 255.0;
+            let sg = ((rgb >> 8) & 0xff) as f32 / 255.0;
+            let sb = (rgb & 0xff) as f32 / 255.0;
+            let inv = 1.0 - src_a;
+            let dr = dst[2] as f32 / 255.0;
+            let dg = dst[1] as f32 / 255.0;
+            let db = dst[0] as f32 / 255.0;
+            let da = dst[3] as f32 / 255.0;
+            dst[2] = ((sr * src_a + dr * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
+            dst[1] = ((sg * src_a + dg * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
+            dst[0] = ((sb * src_a + db * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
+            dst[3] = ((src_a + da * inv) * 255.0).round().clamp(0.0, 255.0) as u8;
+        };
+
+        for py in 0..px_h.max(0) as usize {
+            let ly = (py as f32 + 0.5) / scale_f;
+            let dy = (ly - half_h).abs() - inner_y;
+            for px_i in 0..px_w.max(0) as usize {
+                let lx = (px_i as f32 + 0.5) / scale_f;
+                let dx = (lx - half_w).abs() - inner_x;
+                let dist = dx.max(0.0).hypot(dy.max(0.0)) + dx.max(dy).min(0.0) - r;
+                let aa_cov = (0.5 - dist * scale_f).clamp(0.0, 1.0);
+                if aa_cov <= 0.0 {
+                    continue;
+                }
+                let cell = &mut pixels[py * stride + px_i * 4..py * stride + px_i * 4 + 4];
+                blend_premul(cell, visual.background_rgb, alpha * aa_cov);
+                if let Some(border_rgb) = visual.border_rgb {
+                    let edge_dist = (dist + 0.5).abs();
+                    let border_cov = (1.0 - edge_dist * scale_f).clamp(0.0, 1.0);
+                    blend_premul(cell, border_rgb, alpha * border_cov);
+                }
+                if let Some(status_rgb) = visual.status_rgb {
+                    let dot_dist = (lx - 15.5).hypot(ly - half_h) - 3.5;
+                    let dot_cov = (0.5 - dot_dist * scale_f).clamp(0.0, 1.0);
+                    blend_premul(cell, status_rgb, alpha * dot_cov);
+                }
+                if let Some(plus_rgb) = visual.detach_plus_rgb {
+                    let cx = w - 19.0;
+                    let cy = half_h;
+                    let h_bar = ((lx - cx).abs() - 4.0).max((ly - cy).abs() - 0.8);
+                    let v_bar = ((lx - cx).abs() - 0.8).max((ly - cy).abs() - 4.0);
+                    let plus_cov = (0.5 - h_bar.min(v_bar) * scale_f).clamp(0.0, 1.0);
+                    blend_premul(cell, plus_rgb, alpha * plus_cov);
+                }
+            }
+        }
+    }
+
+    pub(super) fn render_pill_argb8888(
+        visual: &DragGhostVisualSpec,
+        px_w: i32,
+        px_h: i32,
+        stride: i32,
+        scale: i32,
+        pixels: &mut [u8],
+    ) {
+        let Some(api) = api() else {
+            render_fallback_pill(visual, px_w, px_h, scale, pixels);
+            return;
+        };
+        pixels.fill(0);
+        let w = visual.logical_width.max(1.0) as c_double;
+        let h = visual.logical_height.max(1.0) as c_double;
+        let r = visual.corner_radius as c_double;
+        let alpha = visual.background_alpha.clamp(0.0, 1.0) as c_double;
+        unsafe {
+            let surface = (api.image_surface_create_for_data)(
+                pixels.as_mut_ptr(),
+                CAIRO_FORMAT_ARGB32,
+                px_w,
+                px_h,
+                stride,
+            );
+            if surface.is_null() {
+                render_fallback_pill(visual, px_w, px_h, scale, pixels);
+                return;
+            }
+            if scale > 1 {
+                (api.surface_set_device_scale)(surface, scale as c_double, scale as c_double);
+            }
+            let cr = (api.create)(surface);
+            if cr.is_null() {
+                (api.surface_destroy)(surface);
+                render_fallback_pill(visual, px_w, px_h, scale, pixels);
+                return;
+            }
+
+            let (bg_r, bg_g, bg_b) = rgb_f64(visual.background_rgb);
+            (api.set_source_rgba)(cr, bg_r, bg_g, bg_b, alpha);
+            rounded_rect_path(api, cr, 0.0, 0.0, w, h, r);
+            (api.fill)(cr);
+
+            if let Some(border_rgb) = visual.border_rgb {
+                let (br, bg, bb) = rgb_f64(border_rgb);
+                (api.set_source_rgba)(cr, br, bg, bb, alpha);
+                (api.set_line_width)(cr, 1.0);
+                rounded_rect_path(
+                    api,
+                    cr,
+                    0.5,
+                    0.5,
+                    (w - 1.0).max(1.0),
+                    (h - 1.0).max(1.0),
+                    (r - 0.5).max(0.0),
+                );
+                (api.stroke)(cr);
+            }
+
+            let mut text_left = 12.0;
+            if let Some(status_rgb) = visual.status_rgb {
+                let (sr, sg, sb) = rgb_f64(status_rgb);
+                (api.set_source_rgba)(cr, sr, sg, sb, alpha);
+                (api.new_sub_path)(cr);
+                (api.arc)(
+                    cr,
+                    text_left + 3.5,
+                    h * 0.5,
+                    3.5,
+                    0.0,
+                    core::f64::consts::TAU,
+                );
+                (api.fill)(cr);
+                text_left += 15.0;
+            }
+
+            let mut text_right_reserved = 12.0;
+            if let Some(plus_rgb) = visual.detach_plus_rgb {
+                let (pr, pg, pb) = rgb_f64(plus_rgb);
+                let cx = w - 12.0 - 7.0;
+                let cy = h * 0.5;
+                let arm = 4.2;
+                (api.set_source_rgba)(cr, pr, pg, pb, alpha);
+                (api.set_line_width)(cr, 1.6);
+                (api.set_line_cap)(cr, CAIRO_LINE_CAP_ROUND);
+                (api.move_to)(cr, cx - arm, cy);
+                (api.line_to)(cr, cx + arm, cy);
+                (api.move_to)(cr, cx, cy - arm);
+                (api.line_to)(cr, cx, cy + arm);
+                (api.stroke)(cr);
+                text_right_reserved += 22.0;
+            }
+
+            let max_text_w = (w - text_left - text_right_reserved).max(8.0);
+            let title_clean = visual.title.replace('\0', "");
+            if let Ok(title_cstr) = CString::new(title_clean) {
+                let layout = (api.pango_cairo_create_layout)(cr);
+                if !layout.is_null() {
+                    let desc = (api.pango_font_desc_new)();
+                    if !desc.is_null() {
+                        (api.pango_font_desc_set_family)(desc, c"sans-serif".as_ptr());
+                        (api.pango_font_desc_set_absolute_size)(desc, 13.5 * PANGO_SCALE);
+                        (api.pango_layout_set_font_desc)(layout, desc);
+                        (api.pango_font_desc_free)(desc);
+                    }
+                    (api.pango_layout_set_width)(
+                        layout,
+                        (max_text_w * PANGO_SCALE).round() as c_int,
+                    );
+                    (api.pango_layout_set_ellipsize)(layout, PANGO_ELLIPSIZE_END);
+                    (api.pango_layout_set_text)(
+                        layout,
+                        title_cstr.as_ptr(),
+                        title_cstr.as_bytes().len() as c_int,
+                    );
+                    let mut text_w: c_int = 0;
+                    let mut text_h: c_int = 0;
+                    (api.pango_layout_get_pixel_size)(layout, &mut text_w, &mut text_h);
+                    let (tr, tg, tb) = rgb_f64(visual.text_rgb);
+                    (api.set_source_rgba)(cr, tr, tg, tb, alpha);
+                    (api.move_to)(cr, text_left, (h - text_h as c_double) * 0.5);
+                    (api.pango_cairo_show_layout)(cr, layout);
+                    (api.g_object_unref)(layout);
+                }
+            }
+
+            (api.destroy)(cr);
+            (api.surface_flush)(surface);
+            (api.surface_destroy)(surface);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_wayland {
+    use super::DragGhostVisualSpec;
+    use super::linux_cairo;
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+    use wayland_client::backend::{Backend, ObjectId};
+    use wayland_client::globals::{GlobalListContents, registry_queue_init};
+    use wayland_client::protocol::{
+        wl_buffer, wl_compositor, wl_region, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor,
+        wl_subsurface, wl_surface,
+    };
+    use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
+
+    struct WaylandGhostState;
+
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandGhostState {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    delegate_noop!(WaylandGhostState: ignore wl_compositor::WlCompositor);
+    delegate_noop!(WaylandGhostState: ignore wl_subcompositor::WlSubcompositor);
+    delegate_noop!(WaylandGhostState: ignore wl_shm::WlShm);
+    delegate_noop!(WaylandGhostState: ignore wl_shm_pool::WlShmPool);
+    delegate_noop!(WaylandGhostState: ignore wl_buffer::WlBuffer);
+    delegate_noop!(WaylandGhostState: ignore wl_surface::WlSurface);
+    delegate_noop!(WaylandGhostState: ignore wl_subsurface::WlSubsurface);
+    delegate_noop!(WaylandGhostState: ignore wl_region::WlRegion);
+
+    struct ShmBuffer {
+        buffer: wl_buffer::WlBuffer,
+        pool: wl_shm_pool::WlShmPool,
+        ptr: *mut libc::c_void,
+        len: usize,
+    }
+
+    impl ShmBuffer {
+        fn allocate(
+            shm: &wl_shm::WlShm,
+            qh: &QueueHandle<WaylandGhostState>,
+            visual: &DragGhostVisualSpec,
+            scale: i32,
+        ) -> anyhow::Result<Self> {
+            let log_w = visual.logical_width.round().max(1.0) as i32;
+            let log_h = visual.logical_height.round().max(1.0) as i32;
+            let scale = scale.max(1);
+            let px_w = log_w.saturating_mul(scale);
+            let px_h = log_h.saturating_mul(scale);
+            let stride = px_w.saturating_mul(4);
+            let len = (stride as usize).saturating_mul(px_h as usize);
+
+            let fd = unsafe {
+                let raw_fd =
+                    libc::memfd_create(c"miaominal-drag-ghost".as_ptr(), libc::MFD_CLOEXEC);
+                if raw_fd < 0 {
+                    anyhow::bail!("memfd_create failed for Wayland drag ghost");
+                }
+                let owned = OwnedFd::from_raw_fd(raw_fd);
+                if libc::ftruncate(owned.as_raw_fd(), len as libc::off_t) != 0 {
+                    anyhow::bail!("ftruncate failed for Wayland drag ghost");
+                }
+                owned
+            };
+            let ptr = unsafe {
+                libc::mmap(
+                    core::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    fd.as_raw_fd(),
+                    0,
+                )
+            };
+            if ptr == libc::MAP_FAILED {
+                anyhow::bail!("mmap failed for Wayland drag ghost");
+            }
+
+            {
+                let pixels = unsafe { core::slice::from_raw_parts_mut(ptr.cast::<u8>(), len) };
+                linux_cairo::render_pill_argb8888(visual, px_w, px_h, stride, scale, pixels);
+            }
+
+            let pool = shm.create_pool(fd.as_fd(), len as i32, qh, ());
+            let buffer =
+                pool.create_buffer(0, px_w, px_h, stride, wl_shm::Format::Argb8888, qh, ());
+            Ok(Self {
+                buffer,
+                pool,
+                ptr,
+                len,
+            })
+        }
+
+        fn destroy(&mut self) {
+            self.buffer.destroy();
+            self.pool.destroy();
+            if !self.ptr.is_null() && self.len > 0 {
+                unsafe {
+                    let _ = libc::munmap(self.ptr, self.len);
+                }
+                self.ptr = core::ptr::null_mut();
+                self.len = 0;
+            }
+        }
+    }
+
+    pub(super) struct WaylandGhostSession {
+        conn: Connection,
+        _queue: EventQueue<WaylandGhostState>,
+        qh: QueueHandle<WaylandGhostState>,
+        shm: wl_shm::WlShm,
+        parent_surface: wl_surface::WlSurface,
+        child_surface: wl_surface::WlSurface,
+        subsurface: wl_subsurface::WlSubsurface,
+        buffer_scale: i32,
+        buffers: Vec<ShmBuffer>,
+        closed: bool,
+    }
+
+    // `WaylandGhostSession` only accesses libwayland on the foreground UI executor
+    // thread alongside GPUI's Wayland display connection.
+    unsafe impl Send for WaylandGhostSession {}
+
+    impl WaylandGhostSession {
+        pub(super) fn open(
+            surface_ptr: usize,
+            display_ptr: usize,
+            local_x: i32,
+            local_y: i32,
+            scale_factor: f32,
+            visual: &DragGhostVisualSpec,
+        ) -> anyhow::Result<Self> {
+            let backend = unsafe {
+                Backend::from_foreign_display(display_ptr as *mut wayland_sys::client::wl_display)
+            };
+            let conn = Connection::from_backend(backend);
+            let (globals, queue) = registry_queue_init::<WaylandGhostState>(&conn)
+                .map_err(|error| anyhow::anyhow!("Wayland registry init failed: {error:?}"))?;
+            let qh = queue.handle();
+
+            let compositor: wl_compositor::WlCompositor = globals
+                .bind(&qh, 1..=6, ())
+                .map_err(|error| anyhow::anyhow!("wl_compositor unavailable: {error:?}"))?;
+            let subcompositor: wl_subcompositor::WlSubcompositor = globals
+                .bind(&qh, 1..=1, ())
+                .map_err(|error| anyhow::anyhow!("wl_subcompositor unavailable: {error:?}"))?;
+            let shm: wl_shm::WlShm = globals
+                .bind(&qh, 1..=2, ())
+                .map_err(|error| anyhow::anyhow!("wl_shm unavailable: {error:?}"))?;
+
+            let parent_id = unsafe {
+                ObjectId::from_ptr(
+                    wl_surface::WlSurface::interface(),
+                    surface_ptr as *mut wayland_sys::client::wl_proxy,
+                )
+            }
+            .map_err(|error| anyhow::anyhow!("invalid parent wl_surface handle: {error:?}"))?;
+            let parent_surface = wl_surface::WlSurface::from_id(&conn, parent_id)
+                .map_err(|error| anyhow::anyhow!("failed to wrap parent wl_surface: {error:?}"))?;
+
+            let child_surface = compositor.create_surface(&qh, ());
+            let empty_region = compositor.create_region(&qh, ());
+            child_surface.set_input_region(Some(&empty_region));
+            empty_region.destroy();
+
+            let subsurface = subcompositor.get_subsurface(&child_surface, &parent_surface, &qh, ());
+            subsurface.place_above(&parent_surface);
+            subsurface.set_desync();
+
+            let buffer_scale = scale_factor.ceil().max(1.0) as i32;
+            let mut session = Self {
+                conn,
+                _queue: queue,
+                qh,
+                shm,
+                parent_surface,
+                child_surface,
+                subsurface,
+                buffer_scale,
+                buffers: Vec::new(),
+                closed: false,
+            };
+            session.attach_new_buffer(visual)?;
+            session.subsurface.set_position(local_x, local_y);
+            session.parent_surface.commit();
+            let _ = session.conn.flush();
+            Ok(session)
+        }
+
+        fn attach_new_buffer(&mut self, visual: &DragGhostVisualSpec) -> anyhow::Result<()> {
+            if self.closed {
+                return Ok(());
+            }
+            let buf = ShmBuffer::allocate(&self.shm, &self.qh, visual, self.buffer_scale)?;
+            let log_w = visual.logical_width.round().max(1.0) as i32;
+            let log_h = visual.logical_height.round().max(1.0) as i32;
+            let px_w = log_w.saturating_mul(self.buffer_scale);
+            let px_h = log_h.saturating_mul(self.buffer_scale);
+
+            self.child_surface.attach(Some(&buf.buffer), 0, 0);
+            if self.child_surface.version() >= 3 {
+                self.child_surface.set_buffer_scale(self.buffer_scale);
+            }
+            if self.child_surface.version() >= 4 {
+                self.child_surface.damage_buffer(0, 0, px_w, px_h);
+            } else {
+                self.child_surface.damage(0, 0, log_w, log_h);
+            }
+            self.child_surface.commit();
+            self.buffers.push(buf);
+            Ok(())
+        }
+
+        pub(super) fn update_visual(&mut self, visual: &DragGhostVisualSpec) {
+            if self.closed {
+                return;
+            }
+            if let Err(error) = self.attach_new_buffer(visual) {
+                log::debug!("failed to update Wayland drag ghost visual: {error:?}");
+                return;
+            }
+            let _ = self.conn.flush();
+        }
+
+        pub(super) fn set_position(&self, local_x: i32, local_y: i32) {
+            if self.closed {
+                return;
+            }
+            self.subsurface.set_position(local_x, local_y);
+            self.parent_surface.commit();
+            let _ = self.conn.flush();
+        }
+
+        pub(super) fn close(&mut self) {
+            if self.closed {
+                return;
+            }
+            self.closed = true;
+            self.subsurface.destroy();
+            self.child_surface.destroy();
+            for mut buf in self.buffers.drain(..) {
+                buf.destroy();
+            }
+            self.parent_surface.commit();
+            let _ = self.conn.flush();
+        }
+    }
+
+    impl Drop for WaylandGhostSession {
+        fn drop(&mut self) {
+            self.close();
+        }
     }
 }
 
@@ -460,14 +1127,65 @@ fn x11_window_and_connection(window: &gpui_kit::Window) -> Option<(usize, u32)> 
 }
 
 #[cfg(target_os = "linux")]
+fn wayland_surface_and_display(window: &gpui_kit::Window) -> Option<(usize, usize)> {
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+
+    let raw_window = HasWindowHandle::window_handle(window).ok()?.as_raw();
+    let RawWindowHandle::Wayland(win) = raw_window else {
+        return None;
+    };
+    let raw_display = HasDisplayHandle::display_handle(window).ok()?.as_raw();
+    let RawDisplayHandle::Wayland(disp) = raw_display else {
+        return None;
+    };
+    let surface = win.surface.as_ptr() as usize;
+    let display = disp.display.as_ptr() as usize;
+    if surface == 0 || display == 0 {
+        return None;
+    }
+    Some((surface, display))
+}
+
+#[cfg(target_os = "linux")]
+enum LinuxDragGhostKind {
+    X11 { conn: usize, window: u32 },
+    Wayland(std::sync::Mutex<Option<linux_wayland::WaylandGhostSession>>),
+}
+
+#[cfg(target_os = "linux")]
+impl core::fmt::Debug for LinuxDragGhostKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::X11 { conn, window } => f
+                .debug_struct("X11")
+                .field("conn", conn)
+                .field("window", window)
+                .finish(),
+            Self::Wayland(_) => f.debug_tuple("Wayland").finish(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct DragGhostNativeInner {
-    conn: usize,
-    window: u32,
+    kind: LinuxDragGhostKind,
     alive: std::sync::atomic::AtomicBool,
     move_scheduled: std::sync::atomic::AtomicBool,
     target_x: std::sync::atomic::AtomicI32,
     target_y: std::sync::atomic::AtomicI32,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for DragGhostNativeInner {
+    fn drop(&mut self) {
+        if let LinuxDragGhostKind::Wayland(session) = &self.kind
+            && let Ok(mut guard) = session.lock()
+            && let Some(mut session) = guard.take()
+        {
+            session.close();
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -482,6 +1200,12 @@ impl DragGhostNativeHandle {
         self.inner
             .alive
             .store(false, std::sync::atomic::Ordering::Release);
+        if let LinuxDragGhostKind::Wayland(session) = &self.inner.kind
+            && let Ok(mut guard) = session.lock()
+            && let Some(mut session) = guard.take()
+        {
+            session.close();
+        }
     }
 
     pub fn raw_hwnd(&self) -> Option<isize> {
@@ -497,8 +1221,7 @@ impl DragGhostNativeHandle {
     fn dummy_for_test() -> Self {
         Self {
             inner: std::sync::Arc::new(DragGhostNativeInner {
-                conn: 0,
-                window: 0,
+                kind: LinuxDragGhostKind::X11 { conn: 0, window: 0 },
                 alive: std::sync::atomic::AtomicBool::new(true),
                 move_scheduled: std::sync::atomic::AtomicBool::new(false),
                 target_x: std::sync::atomic::AtomicI32::new(0),
@@ -620,6 +1343,18 @@ pub fn cursor_client_position(
     None
 }
 
+pub fn uses_native_surface_drag_ghost(source_window: &gpui_kit::Window) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        wayland_surface_and_display(source_window).is_some()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = source_window;
+        false
+    }
+}
+
 pub fn supports_floating_drag_ghost(source_window: &gpui_kit::Window) -> bool {
     #[cfg(windows)]
     {
@@ -627,13 +1362,84 @@ pub fn supports_floating_drag_ghost(source_window: &gpui_kit::Window) -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        x11_window_and_connection(source_window).is_some() && linux_xcb::api().is_some()
+        (x11_window_and_connection(source_window).is_some() && linux_xcb::api().is_some())
+            || wayland_surface_and_display(source_window).is_some()
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = source_window;
         false
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn open_native_surface_drag_ghost(
+    source_window: &gpui_kit::Window,
+    local_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    visual: &DragGhostVisualSpec,
+) -> anyhow::Result<DragGhostNativeHandle> {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicI32},
+    };
+
+    let (surface_ptr, display_ptr) = wayland_surface_and_display(source_window)
+        .ok_or_else(|| anyhow::anyhow!("GPUI did not expose a Wayland surface handle"))?;
+    let local_x = f32::from(local_origin.x).round() as i32;
+    let local_y = f32::from(local_origin.y).round() as i32;
+    let session = linux_wayland::WaylandGhostSession::open(
+        surface_ptr,
+        display_ptr,
+        local_x,
+        local_y,
+        source_window.scale_factor(),
+        visual,
+    )?;
+    Ok(DragGhostNativeHandle {
+        inner: Arc::new(DragGhostNativeInner {
+            kind: LinuxDragGhostKind::Wayland(Mutex::new(Some(session))),
+            alive: AtomicBool::new(true),
+            move_scheduled: AtomicBool::new(false),
+            target_x: AtomicI32::new(local_x),
+            target_y: AtomicI32::new(local_y),
+        }),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn open_native_surface_drag_ghost(
+    _source_window: &gpui_kit::Window,
+    _local_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    _visual: &DragGhostVisualSpec,
+) -> anyhow::Result<DragGhostNativeHandle> {
+    anyhow::bail!("native surface drag ghost unsupported on this platform")
+}
+
+#[cfg(target_os = "linux")]
+pub fn update_native_drag_ghost_visual(
+    handle: &DragGhostNativeHandle,
+    visual: &DragGhostVisualSpec,
+) {
+    if !handle
+        .inner
+        .alive
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return;
+    }
+    if let LinuxDragGhostKind::Wayland(session) = &handle.inner.kind
+        && let Ok(mut guard) = session.lock()
+        && let Some(session) = guard.as_mut()
+    {
+        session.update_visual(visual);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn update_native_drag_ghost_visual(
+    _handle: &DragGhostNativeHandle,
+    _visual: &DragGhostVisualSpec,
+) {
 }
 
 #[cfg(windows)]
@@ -738,8 +1544,10 @@ pub fn configure_drag_ghost_window(
 
     Ok(DragGhostNativeHandle {
         inner: Arc::new(DragGhostNativeInner {
-            conn,
-            window: window_id,
+            kind: LinuxDragGhostKind::X11 {
+                conn,
+                window: window_id,
+            },
             alive: AtomicBool::new(true),
             move_scheduled: AtomicBool::new(false),
             target_x: AtomicI32::new(0),
@@ -762,6 +1570,7 @@ pub fn configure_drag_ghost_window(
 pub fn schedule_drag_ghost_move(
     handle: &DragGhostNativeHandle,
     _target_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    _local_origin: gpui_kit::Point<gpui_kit::Pixels>,
     _scale_factor: f32,
     grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
     logical_height: f32,
@@ -883,6 +1692,7 @@ pub fn schedule_drag_ghost_move(
 pub fn schedule_drag_ghost_move(
     handle: &DragGhostNativeHandle,
     target_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    local_origin: gpui_kit::Point<gpui_kit::Pixels>,
     scale_factor: f32,
     _grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
     _logical_height: f32,
@@ -894,9 +1704,19 @@ pub fn schedule_drag_ghost_move(
     if !handle.inner.alive.load(Ordering::Acquire) {
         return;
     }
-    let scale = scale_factor.max(0.5);
-    let x = (f32::from(target_origin.x) * scale).round() as i32;
-    let y = (f32::from(target_origin.y) * scale).round() as i32;
+    let (x, y) = match &handle.inner.kind {
+        LinuxDragGhostKind::X11 { .. } => {
+            let scale = scale_factor.max(0.5);
+            (
+                (f32::from(target_origin.x) * scale).round() as i32,
+                (f32::from(target_origin.y) * scale).round() as i32,
+            )
+        }
+        LinuxDragGhostKind::Wayland(_) => (
+            f32::from(local_origin.x).round() as i32,
+            f32::from(local_origin.y).round() as i32,
+        ),
+    };
     handle.inner.target_x.store(x, Ordering::Relaxed);
     handle.inner.target_y.store(y, Ordering::Relaxed);
     if handle.inner.move_scheduled.swap(true, Ordering::AcqRel) {
@@ -910,25 +1730,38 @@ pub fn schedule_drag_ghost_move(
             if !inner.alive.load(Ordering::Acquire) {
                 return;
             }
-            let Some(api) = linux_xcb::api() else {
-                return;
-            };
-            const XCB_CONFIG_WINDOW_X: u16 = 1;
-            const XCB_CONFIG_WINDOW_Y: u16 = 2;
-            const XCB_CONFIG_WINDOW_STACK_MODE: u16 = 64;
-            const XCB_STACK_MODE_ABOVE: u32 = 0;
-
             let x = inner.target_x.load(Ordering::Relaxed);
             let y = inner.target_y.load(Ordering::Relaxed);
-            let values: [u32; 3] = [x as u32, y as u32, XCB_STACK_MODE_ABOVE];
-            unsafe {
-                let _ = (api.configure_window)(
-                    inner.conn as *mut core::ffi::c_void,
-                    inner.window,
-                    XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_STACK_MODE,
-                    values.as_ptr().cast(),
-                );
-                let _ = (api.flush)(inner.conn as *mut core::ffi::c_void);
+            match &inner.kind {
+                LinuxDragGhostKind::X11 { conn, window } => {
+                    let Some(api) = linux_xcb::api() else {
+                        return;
+                    };
+                    const XCB_CONFIG_WINDOW_X: u16 = 1;
+                    const XCB_CONFIG_WINDOW_Y: u16 = 2;
+                    const XCB_CONFIG_WINDOW_STACK_MODE: u16 = 64;
+                    const XCB_STACK_MODE_ABOVE: u32 = 0;
+
+                    let values: [u32; 3] = [x as u32, y as u32, XCB_STACK_MODE_ABOVE];
+                    unsafe {
+                        let _ = (api.configure_window)(
+                            *conn as *mut core::ffi::c_void,
+                            *window,
+                            XCB_CONFIG_WINDOW_X
+                                | XCB_CONFIG_WINDOW_Y
+                                | XCB_CONFIG_WINDOW_STACK_MODE,
+                            values.as_ptr().cast(),
+                        );
+                        let _ = (api.flush)(*conn as *mut core::ffi::c_void);
+                    }
+                }
+                LinuxDragGhostKind::Wayland(session) => {
+                    if let Ok(guard) = session.lock()
+                        && let Some(session) = guard.as_ref()
+                    {
+                        session.set_position(x, y);
+                    }
+                }
             }
         })
         .detach();
@@ -938,6 +1771,7 @@ pub fn schedule_drag_ghost_move(
 pub fn schedule_drag_ghost_move(
     _handle: &DragGhostNativeHandle,
     _target_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    _local_origin: gpui_kit::Point<gpui_kit::Pixels>,
     _scale_factor: f32,
     _grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
     _logical_height: f32,
