@@ -422,6 +422,8 @@ impl AppView {
         };
         crate::ui::bridge_security_platform::schedule_drag_ghost_move(
             &native,
+            raw_origin,
+            source_window.scale_factor(),
             grab_offset,
             TAB_DRAG_GHOST_HEIGHT,
             TAB_DRAG_GHOST_RADIUS,
@@ -468,9 +470,17 @@ impl AppView {
             return;
         }
         if let Some(ghost) = self.shell.tab_drag_ghost.as_mut() {
+            let grab_offset = ghost.payload.grab_offset();
+            let source_origin = window.bounds().origin;
+            let target_origin = point(
+                source_origin.x + position.x - grab_offset.x,
+                source_origin.y + position.y - grab_offset.y,
+            );
             crate::ui::bridge_security_platform::schedule_drag_ghost_move(
                 &ghost.native,
-                ghost.payload.grab_offset(),
+                target_origin,
+                window.scale_factor(),
+                grab_offset,
                 TAB_DRAG_GHOST_HEIGHT,
                 TAB_DRAG_GHOST_RADIUS,
                 cx,

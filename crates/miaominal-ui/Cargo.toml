@@ -65,6 +65,7 @@ mime_guess = "2.0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+raw-window-handle = "0.6.2"
 tray-icon = { workspace = true, features = ["gtk"] }
 
 [target.'cfg(windows)'.dependencies]
