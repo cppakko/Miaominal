@@ -457,7 +457,7 @@ impl AppView {
             window,
             move |view, window, cx| {
                 if window.is_window_active() {
-                    if window_role == AppWindowRole::Primary {
+                    if view.window_role == AppWindowRole::Primary {
                         show_pending_app_notifications(window, cx);
                     }
                 } else if view.clear_tab_drag_detach(cx) {

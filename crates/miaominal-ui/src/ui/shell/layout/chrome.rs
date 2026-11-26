@@ -572,12 +572,8 @@ fn maximize_window_control_button(window: &Window) -> impl IntoElement {
     )
 }
 
-fn request_window_close(
-    entity: &Entity<AppView>,
-    role: AppWindowRole,
-    window: &mut Window,
-    cx: &mut App,
-) {
+fn request_window_close(entity: &Entity<AppView>, window: &mut Window, cx: &mut App) {
+    let role = entity.read(cx).window_role;
     if role == AppWindowRole::Primary {
         crate::ui::request_main_window_close(window, cx);
         return;
@@ -590,14 +586,11 @@ fn request_window_close(
     entity.update(cx, |view, cx| {
         view.prepare_detached_window_close(window, cx);
     });
+    crate::ui::windowing::unregister_app_window(window.window_handle().window_id(), cx);
     window.remove_window();
 }
 
-fn window_controls_group(
-    entity: Entity<AppView>,
-    role: AppWindowRole,
-    window: &Window,
-) -> impl IntoElement {
+fn window_controls_group(entity: Entity<AppView>, window: &Window) -> impl IntoElement {
     if cfg!(target_os = "macos") {
         return div()
             .w(px(topbar_window_controls_width(window)))
@@ -616,7 +609,7 @@ fn window_controls_group(
                 AppIcon::Close,
                 WindowControlArea::Close,
                 move |window, cx| {
-                    request_window_close(&close_entity, role, window, cx);
+                    request_window_close(&close_entity, window, cx);
                 },
             ))
             .child(window_control_button(
@@ -648,7 +641,7 @@ fn window_controls_group(
                 AppIcon::Close,
                 WindowControlArea::Close,
                 move |window, cx| {
-                    request_window_close(&close_entity, role, window, cx);
+                    request_window_close(&close_entity, window, cx);
                 },
             ))
             .into_any_element()
@@ -988,7 +981,6 @@ impl ChromeAppViewExt for AppView {
         let tabs_fit = content_width <= available_strip_width;
         let strip_width = content_width.min(available_strip_width);
         let rename_height = miaominal_settings::scaled_line_height(24.0);
-        let role = self.window_role;
         let tab_elements = tabs
             .iter()
             .map(|visible| {
@@ -1386,7 +1378,7 @@ impl ChromeAppViewExt for AppView {
             .gap(space(4.0))
             .bg(colors.chrome)
             .when(show_macos_traffic_light_space(window), |element| {
-                element.child(window_controls_group(entity.clone(), role, window))
+                element.child(window_controls_group(entity.clone(), window))
             })
             .child(
                 h_flex()
@@ -1421,7 +1413,7 @@ impl ChromeAppViewExt for AppView {
                     // the tab row, which sits below the 8px top padding.
                     div()
                         .pb(space((ShellMetrics::TOPBAR_HEIGHT - 32.0) / 2.0))
-                        .child(window_controls_group(entity, role, window)),
+                        .child(window_controls_group(entity, window)),
                 )
             })
             .child(

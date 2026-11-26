@@ -28,6 +28,25 @@ enum CloseAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrimaryClosePlan {
+    TransferPrimaryAndCloseWindow,
+    ApplyCloseAction(CloseAction),
+}
+
+fn primary_close_plan(
+    has_other_app_windows: bool,
+    behavior: WindowCloseBehavior,
+    platform: DesktopPlatform,
+    tray_available: bool,
+) -> PrimaryClosePlan {
+    if has_other_app_windows {
+        PrimaryClosePlan::TransferPrimaryAndCloseWindow
+    } else {
+        PrimaryClosePlan::ApplyCloseAction(close_action(behavior, platform, tray_available))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PrimaryExitRoute {
     NativeWindowClose,
     QuitApplication,
@@ -147,8 +166,33 @@ pub fn configure_detached_window_close(view: &Entity<AppView>, window: &Window, 
                 view.prepare_detached_window_close(window, cx);
             });
         }
+        crate::ui::windowing::unregister_app_window(window.window_handle().window_id(), cx);
         true
     });
+}
+
+pub(crate) fn promote_next_primary_window(
+    closing_window_id: gpui_kit::WindowId,
+    cx: &mut App,
+) -> bool {
+    crate::ui::windowing::unregister_app_window(closing_window_id, cx);
+    let Some(next) = crate::ui::windowing::next_other_live_app_window(closing_window_id, cx) else {
+        return false;
+    };
+    let Some(next_view) = next.view.upgrade() else {
+        return false;
+    };
+    next_view.update(cx, |view, cx| view.promote_to_primary_window(cx));
+    crate::ui::windowing::remove_detached_window_registration(next.window.window_id(), cx);
+    if cx.has_global::<SystemTrayState>() {
+        let state = cx.global_mut::<SystemTrayState>();
+        state.main_window = next.window;
+        state.main_view = Some(next_view.downgrade());
+    }
+    let _ = next
+        .window
+        .update(cx, |_, win, cx| configure_main_window_close(win, cx));
+    true
 }
 
 pub fn request_main_window_close(window: &mut Window, cx: &mut App) {
@@ -158,27 +202,62 @@ pub fn request_main_window_close(window: &mut Window, cx: &mut App) {
 }
 
 fn main_window_should_close(window: &mut Window, cx: &mut App) -> bool {
+    let closing_id = window.window_handle().window_id();
+    let has_other_app_windows =
+        crate::ui::windowing::next_other_live_app_window(closing_id, cx).is_some();
     let behavior = miaominal_settings::current_settings().window_close_behavior;
     let tray_available = cx
         .try_global::<SystemTrayState>()
         .is_some_and(|state| state.platform.available());
-    match close_action(behavior, current_platform(), tray_available) {
-        CloseAction::Exit => match primary_exit_route(cx.windows().len()) {
-            // Preserve GPUI's original single-window close path so its native window teardown and
-            // application shutdown behavior remain unchanged when no detached window exists.
-            PrimaryExitRoute::NativeWindowClose => true,
-            PrimaryExitRoute::QuitApplication => {
-                // GPUI's App::quit clears all windows without invoking each window's
-                // on_window_should_close callback, so retire detached tab resources first.
-                quit_application(cx);
+    match primary_close_plan(
+        has_other_app_windows,
+        behavior,
+        current_platform(),
+        tray_available,
+    ) {
+        PrimaryClosePlan::TransferPrimaryAndCloseWindow => {
+            let closing_view = if is_main_window(window, cx) {
+                main_window_view(cx)
+            } else {
+                None
+            }
+            .or_else(|| {
+                crate::ui::windowing::live_app_windows(cx)
+                    .into_iter()
+                    .find(|entry| entry.window.window_id() == closing_id)
+                    .and_then(|entry| entry.view.upgrade())
+            });
+            if let Some(view) = closing_view {
+                if view.update(cx, |view, cx| {
+                    view.detached_window_close_needs_rdp_confirmation(cx)
+                }) {
+                    return false;
+                }
+                view.update(cx, |view, cx| {
+                    view.prepare_window_close_for_removal(window, cx);
+                });
+            }
+            promote_next_primary_window(closing_id, cx);
+            true
+        }
+        PrimaryClosePlan::ApplyCloseAction(action) => match action {
+            CloseAction::Exit => match primary_exit_route(cx.windows().len()) {
+                // Preserve GPUI's original single-window close path so its native window teardown and
+                // application shutdown behavior remain unchanged when no detached window exists.
+                PrimaryExitRoute::NativeWindowClose => true,
+                PrimaryExitRoute::QuitApplication => {
+                    // GPUI's App::quit clears all windows without invoking each window's
+                    // on_window_should_close callback, so retire detached tab resources first.
+                    quit_application(cx);
+                    false
+                }
+            },
+            CloseAction::HideToTray => !platform::hide_window(window),
+            CloseAction::Minimize => {
+                window.minimize_window();
                 false
             }
         },
-        CloseAction::HideToTray => !platform::hide_window(window),
-        CloseAction::Minimize => {
-            window.minimize_window();
-            false
-        }
     }
 }
 
@@ -640,6 +719,55 @@ mod tests {
     fn primary_exit_preserves_native_close_without_detached_windows() {
         assert_eq!(primary_exit_route(1), PrimaryExitRoute::NativeWindowClose);
         assert_eq!(primary_exit_route(2), PrimaryExitRoute::QuitApplication);
+    }
+
+    #[test]
+    fn primary_close_plan_transfers_ownership_when_other_windows_remain() {
+        for platform in [
+            DesktopPlatform::Windows,
+            DesktopPlatform::Linux,
+            DesktopPlatform::MacOs,
+            DesktopPlatform::Other,
+        ] {
+            for behavior in [
+                WindowCloseBehavior::ExitApplication,
+                WindowCloseBehavior::MinimizeToTray,
+            ] {
+                for tray_available in [false, true] {
+                    assert_eq!(
+                        primary_close_plan(true, behavior, platform, tray_available),
+                        PrimaryClosePlan::TransferPrimaryAndCloseWindow
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            primary_close_plan(
+                false,
+                WindowCloseBehavior::ExitApplication,
+                DesktopPlatform::Linux,
+                false
+            ),
+            PrimaryClosePlan::ApplyCloseAction(CloseAction::Exit)
+        );
+        assert_eq!(
+            primary_close_plan(
+                false,
+                WindowCloseBehavior::MinimizeToTray,
+                DesktopPlatform::Windows,
+                true
+            ),
+            PrimaryClosePlan::ApplyCloseAction(CloseAction::HideToTray)
+        );
+        assert_eq!(
+            primary_close_plan(
+                false,
+                WindowCloseBehavior::MinimizeToTray,
+                DesktopPlatform::Linux,
+                false
+            ),
+            PrimaryClosePlan::ApplyCloseAction(CloseAction::Minimize)
+        );
     }
 
     #[test]

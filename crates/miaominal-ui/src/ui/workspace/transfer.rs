@@ -142,7 +142,7 @@ pub(crate) trait WorkspaceTransferHost: Sized {
         cx: &mut Context<Self>,
     );
     fn transfer_window_is_detached(&self) -> bool;
-    fn transfer_remove_window(&mut self, window: &mut Window);
+    fn transfer_remove_window(&mut self, window: &mut Window, cx: &mut Context<Self>);
     fn transfer_set_status(&mut self, status: String);
     fn transfer_refresh_monitoring(&mut self, profile: &str, cx: &mut Context<Self>);
     fn transfer_owned_tab_indices_for_topbar(&self, root: usize) -> Vec<usize>;
@@ -229,6 +229,7 @@ pub(crate) trait WorkspaceTransferExt: WorkspaceTransferHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
+    fn prepare_window_close_for_removal(&mut self, window: &mut Window, cx: &mut Context<Self>);
     fn prepare_detached_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>);
 }
 
@@ -635,7 +636,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
             .any(|tab| tab.is_top_level());
         if !has_top_level_tab {
             if self.transfer_window_is_detached() {
-                self.transfer_remove_window(window);
+                self.transfer_remove_window(window, cx);
                 return;
             }
             self.transfer_open_hosts_tab(cx);
@@ -657,10 +658,7 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         cx.notify();
     }
 
-    fn prepare_detached_window_close(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.transfer_window_is_detached() {
-            return;
-        }
+    fn prepare_window_close_for_removal(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let tab_ids = self.transfer_state().tabs.ids().collect::<Vec<_>>();
         for tab_id in &tab_ids {
             if let Some(kind) = self.transfer_state().tabs.get(*tab_id).map(|tab| tab.kind) {
@@ -674,6 +672,13 @@ impl<V: WorkspaceTransferHost + 'static> WorkspaceTransferExt for V {
         self.transfer_state_mut().active_topbar_tab = None;
         self.transfer_reset_loaded_workspace(cx);
         self.transfer_sync_session_port_snapshot(cx);
+    }
+
+    fn prepare_detached_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.transfer_window_is_detached() {
+            return;
+        }
+        self.prepare_window_close_for_removal(window, cx);
     }
 }
 

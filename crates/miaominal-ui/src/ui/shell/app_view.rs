@@ -86,6 +86,13 @@ pub(in crate::ui::shell) struct ShellUiState {
 }
 
 impl AppView {
+    pub(in crate::ui) fn promote_to_primary_window(&mut self, cx: &mut Context<Self>) {
+        if self.window_role != AppWindowRole::Primary {
+            self.window_role = AppWindowRole::Primary;
+            cx.notify();
+        }
+    }
+
     pub(in crate::ui::shell) fn session_tab(
         &self,
         tab_id: TabId,

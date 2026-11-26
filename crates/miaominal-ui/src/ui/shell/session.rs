@@ -844,6 +844,7 @@ impl AppView {
             && !self.workspace.tabs.iter().any(|tab| tab.is_top_level())
         {
             self.prepare_detached_window_close(window, cx);
+            crate::ui::windowing::unregister_app_window(window.window_handle().window_id(), cx);
             window.remove_window();
             return;
         }
@@ -859,7 +860,14 @@ impl AppView {
                     .last_tab_close_behavior,
             ) {
                 LastTabCloseAction::Quit => {
-                    cx.quit();
+                    let closing_id = window.window_handle().window_id();
+                    if crate::ui::windowing::next_other_live_app_window(closing_id, cx).is_some() {
+                        self.prepare_window_close_for_removal(window, cx);
+                        crate::ui::system_tray::promote_next_primary_window(closing_id, cx);
+                        window.remove_window();
+                    } else {
+                        cx.quit();
+                    }
                 }
                 LastTabCloseAction::OpenHome => {
                     self.open_hosts_tab(cx);

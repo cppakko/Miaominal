@@ -1574,7 +1574,8 @@ impl WorkspaceTransferHost for AppView {
     fn transfer_window_is_detached(&self) -> bool {
         self.window_role == AppWindowRole::Detached
     }
-    fn transfer_remove_window(&mut self, window: &mut Window) {
+    fn transfer_remove_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::ui::windowing::unregister_app_window(window.window_handle().window_id(), cx);
         window.remove_window();
     }
     fn transfer_set_status(&mut self, status: String) {

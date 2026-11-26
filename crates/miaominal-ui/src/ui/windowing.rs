@@ -3,7 +3,7 @@ use std::rc::Rc;
 use anyhow::{Result, anyhow};
 use gpui_kit::{
     AnyWindowHandle, App, Bounds, DisplayId, Entity, Global, Pixels, Point, Size, WeakEntity,
-    point, px, size,
+    WindowId, point, px, size,
 };
 
 use super::AppView;
@@ -116,6 +116,36 @@ pub(crate) fn live_app_windows(cx: &App) -> Vec<AppWindowRegistration> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub(crate) fn remove_detached_window_registration(window_id: WindowId, cx: &mut App) {
+    if cx.has_global::<DetachedWindowRegistry>() {
+        cx.global_mut::<DetachedWindowRegistry>()
+            .windows
+            .retain(|entry| {
+                entry.view.upgrade().is_some() && entry.window.window_id() != window_id
+            });
+    }
+}
+
+pub(crate) fn unregister_app_window(window_id: WindowId, cx: &mut App) {
+    if cx.has_global::<AppWindowRegistry>() {
+        cx.global_mut::<AppWindowRegistry>()
+            .windows
+            .retain(|entry| {
+                entry.view.upgrade().is_some() && entry.window.window_id() != window_id
+            });
+    }
+    remove_detached_window_registration(window_id, cx);
+}
+
+pub(crate) fn next_other_live_app_window(
+    excluding: WindowId,
+    cx: &App,
+) -> Option<AppWindowRegistration> {
+    live_app_windows(cx)
+        .into_iter()
+        .find(|entry| entry.window.window_id() != excluding && entry.view.upgrade().is_some())
 }
 
 pub fn register_detached_window_opener(
