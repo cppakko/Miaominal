@@ -268,6 +268,22 @@ fn should_use_drop_window_placement() -> bool {
     }
 }
 
+fn should_activate_transferred_target_window(is_wayland: bool) -> bool {
+    !is_wayland
+}
+
+fn activate_transferred_target_window(target_window: &mut Window) {
+    // Wayland/Mutter rejects `xdg_activation_v1::activate` after a DnD drop
+    // (because `wl_data_device::drop` carries no serial and the drag-start
+    // `MousePress` serial is already consumed) and turns the request into a
+    // "Miaominal is ready" demanding-attention notification.
+    if should_activate_transferred_target_window(
+        crate::ui::bridge_security_platform::is_wayland_window(target_window),
+    ) {
+        target_window.activate_window();
+    }
+}
+
 fn drag_ghost_visual_spec(payload: &DraggedTab, cue: TabDragGhostCue) -> DragGhostVisualSpec {
     let roles = miaominal_settings::current_theme().material.roles;
     let highlighted = cue != TabDragGhostCue::None;
@@ -342,7 +358,7 @@ impl AppView {
                         })
                 })
             })?;
-            target_window.activate_window();
+            activate_transferred_target_window(target_window);
             Ok::<(), String>(())
         });
         let error = match result {
@@ -1042,7 +1058,7 @@ impl AppView {
                 }
                 install_result
             })?;
-            target_window.activate_window();
+            activate_transferred_target_window(target_window);
             Ok::<(), String>(())
         });
         let error = match result {
@@ -2513,5 +2529,11 @@ mod tests {
             assert!(cx.global::<ActiveWaylandCrossWindowTabDrag>().0.is_none());
         })
         .unwrap();
+    }
+
+    #[test]
+    fn transferred_target_window_activation_skips_wayland() {
+        assert!(!should_activate_transferred_target_window(true));
+        assert!(should_activate_transferred_target_window(false));
     }
 }
