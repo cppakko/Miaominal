@@ -14,13 +14,53 @@ use crate::ui::windowing::{
 use crate::ui::workspace::transaction::{TransferPhase, TransferTransaction};
 use crate::ui::workspace::transfer::{WorkspaceTransferExt, WorkspaceTransferHost};
 use gpui_kit::{
-    CursorStyle, DisplayId, DragMoveEvent, Size, WindowBackgroundAppearance, WindowBounds,
-    WindowId, WindowKind, WindowOptions, point,
+    AnyWindowHandle, CursorStyle, DisplayId, DragMoveEvent, ExternalDragPayload, ExternalPaths,
+    FileDragPaths, Global, Size, WeakEntity, WindowBackgroundAppearance, WindowBounds, WindowId,
+    WindowKind, WindowOptions, point,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    path::PathBuf,
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 pub(in crate::ui::shell) const TAB_DRAG_DETACH_MARGIN: f32 = 24.0;
 const RIGHT_WINDOW_CONTROLS_BASE_WIDTH: f32 = 128.0;
+
+static WAYLAND_TAB_DRAG_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_wayland_tab_drag_token_path() -> PathBuf {
+    let seq = WAYLAND_TAB_DRAG_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(".miaominal-tab-drag-{}-{seq}", std::process::id()))
+}
+
+#[derive(Clone)]
+struct WaylandCrossWindowTabDrag {
+    token_path: PathBuf,
+    source_window: AnyWindowHandle,
+    source_view: WeakEntity<AppView>,
+    tab_id: TabId,
+    payload: DraggedTab,
+    can_detach: bool,
+    allow_pane_drop: bool,
+    handled: bool,
+}
+
+#[derive(Default)]
+struct ActiveWaylandCrossWindowTabDrag(Option<WaylandCrossWindowTabDrag>);
+
+impl Global for ActiveWaylandCrossWindowTabDrag {}
+
+pub(crate) fn is_internal_tab_drag_paths(paths: &ExternalPaths, cx: &App) -> bool {
+    let Some(drag) = cx
+        .try_global::<ActiveWaylandCrossWindowTabDrag>()
+        .and_then(|active| active.0.as_ref())
+    else {
+        return false;
+    };
+    paths.paths().len() == 1 && paths.paths()[0] == drag.token_path
+}
 
 pub(in crate::ui::shell) fn drag_ghost_crosses_window_edge(
     position: Point<Pixels>,
@@ -162,6 +202,7 @@ fn pick_fallback_target_window(
     source_window_id: WindowId,
     ghost_window_id: Option<WindowId>,
     cursor_screen: Point<Pixels>,
+    source_contains_cursor: bool,
     cx: &mut App,
 ) -> Option<AppWindowRegistration> {
     if let Some(stack) = cx.window_stack() {
@@ -184,6 +225,10 @@ fn pick_fallback_target_window(
                 .position(|candidate| candidate.window.window_id() == id)
                 .map(|index| candidates.remove(index));
         }
+        return None;
+    }
+
+    if source_contains_cursor {
         return None;
     }
 
@@ -799,15 +844,22 @@ impl AppView {
             });
         }
 
+        if !crate::ui::bridge_security_platform::window_has_global_screen_bounds(source_window) {
+            return None;
+        }
+
         let cursor_screen = point(
             source_window.bounds().origin.x + source_position.x,
             source_window.bounds().origin.y + source_position.y,
         );
+        let source_contains_cursor =
+            Bounds::new(Point::default(), source_window.viewport_size()).contains(&source_position);
         let reg = pick_fallback_target_window(
             candidates,
             source_window_id,
             ghost_window_id,
             cursor_screen,
+            source_contains_cursor,
             cx,
         )?;
         let target_view = reg.view.upgrade()?;
@@ -1027,6 +1079,17 @@ impl AppView {
         else {
             if Bounds::new(Point::default(), window.viewport_size()).contains(&position) {
                 self.clear_tab_drag_detach(cx);
+                if cx.has_global::<ActiveWaylandCrossWindowTabDrag>() {
+                    let window_handle = window.window_handle();
+                    if let Some(drag) = cx
+                        .global_mut::<ActiveWaylandCrossWindowTabDrag>()
+                        .0
+                        .as_mut()
+                        && drag.source_window == window_handle
+                    {
+                        drag.handled = true;
+                    }
+                }
             }
             return false;
         };
@@ -1037,6 +1100,267 @@ impl AppView {
         self.close_tab_drag_ghost(cx);
         self.move_tab_to_existing_window(tab_id, target, window, cx);
         true
+    }
+
+    pub(in crate::ui::shell) fn promote_wayland_tab_drag_to_platform(
+        &mut self,
+        payload: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<ExternalDragPayload> {
+        if !crate::ui::bridge_security_platform::is_wayland_window(window) {
+            return None;
+        }
+        let tab_id = payload.source_tab_id;
+        if !self.can_transfer_tab_to_existing_window(tab_id, cx) {
+            return None;
+        }
+        let source_window = window.window_handle();
+        let source_window_id = source_window.window_id();
+        let source_entity_id = cx.entity_id();
+        let ghost_window_id = self
+            .shell
+            .tab_drag_ghost
+            .as_ref()
+            .and_then(FloatingTabDragGhost::window_id);
+        let has_other_window = live_app_windows(cx).into_iter().any(|entry| {
+            entry.window.window_id() != source_window_id
+                && Some(entry.window.window_id()) != ghost_window_id
+                && entry.view.entity_id() != source_entity_id
+        });
+        if !has_other_window {
+            return None;
+        }
+
+        // Tear down the source window's edge subsurface before Wayland starts
+        // the native data_device drag session.
+        self.close_tab_drag_ghost(cx);
+
+        let token_path = next_wayland_tab_drag_token_path();
+        let can_detach = self.can_drag_detach_tab(tab_id, cx);
+        let allow_pane_drop = self.can_drag_merge_tab_into_pane(tab_id, cx);
+        cx.set_global(ActiveWaylandCrossWindowTabDrag(Some(
+            WaylandCrossWindowTabDrag {
+                token_path: token_path.clone(),
+                source_window,
+                source_view: cx.entity().downgrade(),
+                tab_id,
+                payload: payload.clone(),
+                can_detach,
+                allow_pane_drop,
+                handled: false,
+            },
+        )));
+        Some(ExternalDragPayload::Files(FileDragPaths::new([(
+            token_path, false,
+        )])))
+    }
+
+    fn sync_wayland_incoming_drag_ghost(
+        &mut self,
+        payload: &DraggedTab,
+        position: Point<Pixels>,
+        cue: TabDragGhostCue,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !crate::ui::bridge_security_platform::uses_native_surface_drag_ghost(window) {
+            return;
+        }
+        if self
+            .shell
+            .tab_drag_ghost
+            .as_ref()
+            .is_some_and(|ghost| ghost.payload.source_tab_id != payload.source_tab_id)
+        {
+            self.close_tab_drag_ghost(cx);
+        }
+        if self.shell.tab_drag_ghost.is_none() {
+            self.open_tab_drag_ghost(payload, position, cue, window, cx);
+            return;
+        }
+        if let Some(ghost) = self.shell.tab_drag_ghost.as_mut() {
+            let grab_offset = ghost.payload.grab_offset();
+            let local_origin = point(position.x - grab_offset.x, position.y - grab_offset.y);
+            let target_origin = point(
+                window.bounds().origin.x + local_origin.x,
+                window.bounds().origin.y + local_origin.y,
+            );
+            crate::ui::bridge_security_platform::schedule_drag_ghost_move(
+                &ghost.native,
+                target_origin,
+                local_origin,
+                window.scale_factor(),
+                grab_offset,
+                TAB_DRAG_GHOST_HEIGHT,
+                TAB_DRAG_GHOST_RADIUS,
+                cx,
+            );
+            if ghost.cue != cue {
+                ghost.cue = cue;
+                match &ghost.backend {
+                    FloatingTabDragGhostBackend::Popup { .. } => {}
+                    FloatingTabDragGhostBackend::NativeSurface => {
+                        let visual = drag_ghost_visual_spec(payload, cue);
+                        crate::ui::bridge_security_platform::update_native_drag_ghost_visual(
+                            &ghost.native,
+                            &visual,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub(in crate::ui::shell) fn handle_wayland_incoming_tab_drag_move(
+        &mut self,
+        event: &DragMoveEvent<ExternalPaths>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_internal_tab_drag_paths(event.drag(cx), cx) {
+            return;
+        }
+        let Some(drag) = cx
+            .try_global::<ActiveWaylandCrossWindowTabDrag>()
+            .and_then(|active| active.0.clone())
+        else {
+            return;
+        };
+        if drag.handled || drag.source_window == window.window_handle() {
+            return;
+        }
+        self.shell.wayland_incoming_tab_drag = true;
+        let target =
+            self.hit_test_external_tab_drop(event.event.position, drag.allow_pane_drop, window, cx);
+        self.set_external_tab_drop_preview(target, cx);
+        let cue = if target.is_some() {
+            TabDragGhostCue::DockIntoWindow
+        } else {
+            TabDragGhostCue::None
+        };
+        cx.set_active_drag_cursor_style(CursorStyle::ClosedHand, window);
+        self.sync_wayland_incoming_drag_ghost(&drag.payload, event.event.position, cue, window, cx);
+    }
+
+    pub(in crate::ui::shell) fn finish_wayland_incoming_tab_drop_on_capture_mouse_up(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.shell.wayland_incoming_tab_drag {
+            return false;
+        }
+        self.shell.wayland_incoming_tab_drag = false;
+        self.close_tab_drag_ghost(cx);
+
+        let window_handle = window.window_handle();
+        let pending = if cx.has_global::<ActiveWaylandCrossWindowTabDrag>() {
+            let active = cx.global_mut::<ActiveWaylandCrossWindowTabDrag>();
+            match active.0.as_mut() {
+                Some(drag) if !drag.handled && drag.source_window != window_handle => {
+                    drag.handled = true;
+                    Some((
+                        drag.source_window,
+                        drag.source_view.clone(),
+                        drag.tab_id,
+                        drag.allow_pane_drop,
+                    ))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let Some((source_window, source_view, tab_id, allow_pane_drop)) = pending else {
+            self.set_external_tab_drop_preview(None, cx);
+            return false;
+        };
+
+        cx.stop_active_drag(window);
+        let target = self
+            .hit_test_external_tab_drop(position, allow_pane_drop, window, cx)
+            .or(self.shell.external_tab_drop);
+        if let Some(target) = target {
+            let target_view = cx.entity();
+            let hovered = HoveredExternalTabDrop {
+                window: window_handle,
+                view: target_view.clone(),
+                target,
+            };
+            cx.defer(move |cx| {
+                let result = source_window.update(cx, |_, source_win, cx| {
+                    source_view.update(cx, |source, cx| {
+                        source.clear_tab_drag_detach(cx);
+                        source.move_tab_to_existing_window(tab_id, hovered, source_win, cx);
+                    })
+                });
+                if !matches!(result, Ok(Ok(()))) {
+                    let _ = target_view.update(cx, |view, cx| {
+                        view.set_external_tab_drop_preview(None, cx);
+                    });
+                }
+            });
+        } else {
+            self.set_external_tab_drop_preview(None, cx);
+        }
+        true
+    }
+
+    pub(in crate::ui::shell) fn handle_wayland_tab_drag_file_drop_exit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.shell.wayland_incoming_tab_drag {
+            self.shell.wayland_incoming_tab_drag = false;
+            self.set_external_tab_drop_preview(None, cx);
+            self.close_tab_drag_ghost(cx);
+        } else if cx
+            .try_global::<ActiveWaylandCrossWindowTabDrag>()
+            .and_then(|active| active.0.as_ref())
+            .is_some_and(|drag| drag.source_window == window.window_handle())
+        {
+            self.close_tab_drag_ghost(cx);
+        }
+    }
+
+    pub(in crate::ui::shell) fn handle_wayland_tab_drag_file_drop_end(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let window_handle = window.window_handle();
+        let is_source = cx
+            .try_global::<ActiveWaylandCrossWindowTabDrag>()
+            .and_then(|active| active.0.as_ref())
+            .is_some_and(|drag| drag.source_window == window_handle);
+        if !is_source {
+            return;
+        }
+        let Some(drag) = cx.global_mut::<ActiveWaylandCrossWindowTabDrag>().0.take() else {
+            return;
+        };
+
+        let source_window_id = window_handle.window_id();
+        for reg in live_app_windows(cx) {
+            if reg.window.window_id() == source_window_id {
+                continue;
+            }
+            let _ = reg.view.update(cx, |view, cx| {
+                if view.shell.wayland_incoming_tab_drag {
+                    view.shell.wayland_incoming_tab_drag = false;
+                    view.set_external_tab_drop_preview(None, cx);
+                    view.close_tab_drag_ghost(cx);
+                }
+            });
+        }
+
+        self.clear_tab_drag_detach(cx);
+        if !drag.handled && drag.can_detach {
+            self.open_tab_in_new_window_with_placement(drag.tab_id, None, window, cx);
+        }
     }
 
     pub(in crate::ui::shell) fn finish_tab_drag_detach(
@@ -1315,6 +1639,13 @@ impl WorkspaceTransferHost for AppView {
         self.remove_tab_payload_and_metadata(id, cx);
     }
     fn transfer_retire_window_resources(&mut self, cx: &mut Context<Self>) {
+        if cx
+            .try_global::<ActiveWaylandCrossWindowTabDrag>()
+            .and_then(|active| active.0.as_ref())
+            .is_some_and(|drag| drag.source_view.entity_id() == cx.entity_id())
+        {
+            cx.global_mut::<ActiveWaylandCrossWindowTabDrag>().0 = None;
+        }
         self.close_tab_drag_ghost(cx);
         self.controllers.session.read(cx).retire_rdp_sessions();
     }
@@ -1854,5 +2185,333 @@ mod tests {
             assert!(!cx.has_active_drag());
             assert_eq!(host.read(cx).drag_detach, None);
         });
+    }
+
+    #[gpui_kit::test]
+    fn internal_tab_drag_paths_matches_only_exact_active_sentinel(cx: &mut TestAppContext) {
+        use gpui_kit::{ExternalPaths, WeakEntity};
+
+        cx.update(gpui_kit::init);
+        let token_a = next_wayland_tab_drag_token_path();
+        let token_b = next_wayland_tab_drag_token_path();
+        assert!(token_a.is_absolute());
+        assert_ne!(token_a, token_b);
+
+        let matching = ExternalPaths([token_a.clone()].into_iter().collect());
+        let other = ExternalPaths([token_b.clone()].into_iter().collect());
+        let empty = ExternalPaths::default();
+        let multiple = ExternalPaths([token_a.clone(), token_b].into_iter().collect());
+
+        let source_window: AnyWindowHandle = cx.add_window(|_, _| Empty).into();
+
+        cx.update(|cx| {
+            assert!(!is_internal_tab_drag_paths(&matching, cx));
+
+            let shared = DraggedTab::new_ghost_shared();
+            cx.set_global(ActiveWaylandCrossWindowTabDrag(Some(
+                WaylandCrossWindowTabDrag {
+                    token_path: token_a,
+                    source_window,
+                    source_view: WeakEntity::<AppView>::new_invalid(),
+                    tab_id: TabId::new(1),
+                    payload: DraggedTab {
+                        source_tab_id: TabId::new(1),
+                        source_index: 0,
+                        source_pane_id: PaneId(1),
+                        is_active: true,
+                        title: "ssh".to_string(),
+                        status_color: None,
+                        ghost_shared: shared,
+                    },
+                    can_detach: true,
+                    allow_pane_drop: true,
+                    handled: false,
+                },
+            )));
+
+            assert!(is_internal_tab_drag_paths(&matching, cx));
+            assert!(!is_internal_tab_drag_paths(&other, cx));
+            assert!(!is_internal_tab_drag_paths(&empty, cx));
+            assert!(!is_internal_tab_drag_paths(&multiple, cx));
+
+            cx.global_mut::<ActiveWaylandCrossWindowTabDrag>().0 = None;
+            assert!(!is_internal_tab_drag_paths(&matching, cx));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn fallback_target_window_ignores_candidates_when_source_contains_cursor(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui_kit::WeakEntity;
+
+        cx.update(gpui_kit::init);
+        let source_win: AnyWindowHandle = cx.add_window(|_, _| Empty).into();
+        let other_win: AnyWindowHandle = cx.add_window(|_, _| Empty).into();
+
+        cx.update(|cx| {
+            let candidate = AppWindowRegistration {
+                window: other_win,
+                view: WeakEntity::<AppView>::new_invalid(),
+            };
+            let cursor = point(px(10.0), px(10.0));
+            assert!(
+                pick_fallback_target_window(
+                    vec![candidate.clone()],
+                    source_win.window_id(),
+                    None,
+                    cursor,
+                    true,
+                    cx,
+                )
+                .is_none()
+            );
+
+            let picked = pick_fallback_target_window(
+                vec![candidate],
+                source_win.window_id(),
+                None,
+                cursor,
+                false,
+                cx,
+            );
+            assert_eq!(
+                picked.map(|reg| reg.window.window_id()),
+                Some(other_win.window_id())
+            );
+        });
+    }
+
+    struct WaylandFileDropTestHost {
+        incoming_hover: bool,
+        sentinel_moves: usize,
+        unrelated_moves: usize,
+        detached_on_end: usize,
+        handled_drops: usize,
+    }
+
+    impl Render for WaylandFileDropTestHost {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let entity = cx.entity();
+            div()
+                .size_full()
+                .on_drag_move::<ExternalPaths>(cx.listener(
+                    |this, event: &DragMoveEvent<ExternalPaths>, _window, cx| {
+                        if is_internal_tab_drag_paths(event.drag(cx), cx) {
+                            this.incoming_hover = true;
+                            this.sentinel_moves += 1;
+                        } else {
+                            this.unrelated_moves += 1;
+                        }
+                    },
+                ))
+                .capture_any_mouse_up(cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                    if event.button != MouseButton::Left || !this.incoming_hover {
+                        return;
+                    }
+                    this.incoming_hover = false;
+                    let window_handle = window.window_handle();
+                    if cx.has_global::<ActiveWaylandCrossWindowTabDrag>()
+                        && let Some(drag) =
+                            cx.global_mut::<ActiveWaylandCrossWindowTabDrag>().0.as_mut()
+                        && drag.source_window != window_handle
+                        && !drag.handled
+                    {
+                        drag.handled = true;
+                        this.handled_drops += 1;
+                    }
+                    cx.stop_active_drag(window);
+                    cx.stop_propagation();
+                }))
+                .child(
+                    gpui_kit::canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| {
+                            let exit_entity = entity.clone();
+                            let end_entity = entity;
+                            window.on_mouse_event(
+                                move |event: &gpui_kit::FileDropEvent, phase, window, cx| {
+                                    if phase != gpui_kit::DispatchPhase::Bubble {
+                                        return;
+                                    }
+                                    match event {
+                                        gpui_kit::FileDropEvent::Exited => {
+                                            exit_entity.update(cx, |this, _cx| {
+                                                this.incoming_hover = false;
+                                            });
+                                        }
+                                        gpui_kit::FileDropEvent::Ended => {
+                                            end_entity.update(cx, |this, cx| {
+                                                let window_handle = window.window_handle();
+                                                let is_source = cx
+                                                    .try_global::<ActiveWaylandCrossWindowTabDrag>()
+                                                    .and_then(|active| active.0.as_ref())
+                                                    .is_some_and(|drag| {
+                                                        drag.source_window == window_handle
+                                                    });
+                                                if is_source
+                                                    && let Some(drag) = cx
+                                                        .global_mut::<ActiveWaylandCrossWindowTabDrag>()
+                                                        .0
+                                                        .take()
+                                                    && !drag.handled
+                                                    && drag.can_detach
+                                                {
+                                                    this.detached_on_end += 1;
+                                                }
+                                            });
+                                        }
+                                        _ => {}
+                                    }
+                                },
+                            );
+                        },
+                    )
+                    .absolute()
+                    .size_0(),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn wayland_file_drop_flow_tracks_sentinel_exit_and_handled_flag(cx: &mut TestAppContext) {
+        use gpui_kit::{ExternalPaths, FileDropEvent, PlatformInput, WeakEntity};
+
+        cx.update(gpui_kit::init);
+        let (window_a_handle, view_a) = {
+            let mut view_slot = None;
+            let handle: AnyWindowHandle = cx
+                .add_window(|window, cx| {
+                    let view = cx.new(|_| WaylandFileDropTestHost {
+                        incoming_hover: false,
+                        sentinel_moves: 0,
+                        unrelated_moves: 0,
+                        detached_on_end: 0,
+                        handled_drops: 0,
+                    });
+                    view_slot = Some(view.clone());
+                    Root::new(view, window, cx)
+                })
+                .into();
+            (handle, view_slot.unwrap())
+        };
+        let (window_b_handle, view_b) = {
+            let mut view_slot = None;
+            let handle: AnyWindowHandle = cx
+                .add_window(|window, cx| {
+                    let view = cx.new(|_| WaylandFileDropTestHost {
+                        incoming_hover: false,
+                        sentinel_moves: 0,
+                        unrelated_moves: 0,
+                        detached_on_end: 0,
+                        handled_drops: 0,
+                    });
+                    view_slot = Some(view.clone());
+                    Root::new(view, window, cx)
+                })
+                .into();
+            (handle, view_slot.unwrap())
+        };
+
+        let sentinel = next_wayland_tab_drag_token_path();
+        let sentinel_paths = ExternalPaths([sentinel.clone()].into_iter().collect());
+        let unrelated_paths = ExternalPaths(
+            [std::env::temp_dir().join("other.txt")]
+                .into_iter()
+                .collect(),
+        );
+
+        let seed_drag = |cx: &mut App, token: &PathBuf| {
+            cx.set_global(ActiveWaylandCrossWindowTabDrag(Some(
+                WaylandCrossWindowTabDrag {
+                    token_path: token.clone(),
+                    source_window: window_a_handle,
+                    source_view: WeakEntity::<AppView>::new_invalid(),
+                    tab_id: TabId::new(11),
+                    payload: DraggedTab {
+                        source_tab_id: TabId::new(11),
+                        source_index: 0,
+                        source_pane_id: PaneId(1),
+                        is_active: true,
+                        title: "ssh".to_string(),
+                        status_color: None,
+                        ghost_shared: DraggedTab::new_ghost_shared(),
+                    },
+                    can_detach: true,
+                    allow_pane_drop: true,
+                    handled: false,
+                },
+            )));
+        };
+
+        cx.update_window(window_a_handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.update_window(window_b_handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            seed_drag(cx, &sentinel);
+            window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: point(px(20.0), px(20.0)),
+                    paths: unrelated_paths,
+                }),
+                cx,
+            );
+            assert!(!view_b.read(cx).incoming_hover);
+            assert_eq!(view_b.read(cx).unrelated_moves, 1);
+            assert_eq!(view_b.read(cx).sentinel_moves, 0);
+            window.dispatch_event(PlatformInput::FileDrop(FileDropEvent::Exited), cx);
+
+            window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: point(px(24.0), px(24.0)),
+                    paths: sentinel_paths.clone(),
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Pending {
+                    position: point(px(30.0), px(24.0)),
+                }),
+                cx,
+            );
+            assert!(view_b.read(cx).incoming_hover);
+            assert_eq!(view_b.read(cx).sentinel_moves, 2);
+
+            window.dispatch_event(PlatformInput::FileDrop(FileDropEvent::Exited), cx);
+            assert!(!view_b.read(cx).incoming_hover);
+
+            // Re-enter and drop onto window B -> handled flag suppresses detach on Ended.
+            window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: point(px(24.0), px(24.0)),
+                    paths: sentinel_paths.clone(),
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::FileDrop(FileDropEvent::Submit {
+                    position: point(px(24.0), px(24.0)),
+                }),
+                cx,
+            );
+            assert!(!view_b.read(cx).incoming_hover);
+            assert_eq!(view_b.read(cx).handled_drops, 1);
+        })
+        .unwrap();
+
+        cx.update_window(window_a_handle, |_, window, cx| {
+            window.dispatch_event(PlatformInput::FileDrop(FileDropEvent::Ended), cx);
+            assert_eq!(view_a.read(cx).detached_on_end, 0);
+            assert!(cx.global::<ActiveWaylandCrossWindowTabDrag>().0.is_none());
+
+            // When not handled by any target window, Ended triggers detach.
+            seed_drag(cx, &sentinel);
+            window.dispatch_event(PlatformInput::FileDrop(FileDropEvent::Ended), cx);
+            assert_eq!(view_a.read(cx).detached_on_end, 1);
+            assert!(cx.global::<ActiveWaylandCrossWindowTabDrag>().0.is_none());
+        })
+        .unwrap();
     }
 }

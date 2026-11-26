@@ -506,6 +506,7 @@ impl AppView {
                 topbar_drop_slots: Vec::new(),
                 external_tab_drop: None,
                 hovered_external_target: None,
+                wayland_incoming_tab_drag: false,
                 overlay_state: super::overlays::WindowOverlayState::default(),
                 status_message,
                 last_keychain_status: String::new(),

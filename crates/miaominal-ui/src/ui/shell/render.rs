@@ -169,6 +169,7 @@ impl Render for AppView {
         let finish_agent_drag_out = finish_agent_drag.clone();
         let recover_sftp_drag = self.controllers.sftp.clone();
         let finish_sftp_drag_out = recover_sftp_drag.clone();
+        let file_drop_entity = entity.clone();
 
         div()
             .size_full()
@@ -180,6 +181,11 @@ impl Render for AppView {
             .on_drag_move::<DraggedTab>(cx.listener(
                 |this, event: &DragMoveEvent<DraggedTab>, window, cx| {
                     this.handle_tab_drag_move(event, window, cx);
+                },
+            ))
+            .on_drag_move::<gpui_kit::ExternalPaths>(cx.listener(
+                |this, event: &DragMoveEvent<gpui_kit::ExternalPaths>, window, cx| {
+                    this.handle_wayland_incoming_tab_drag_move(event, window, cx);
                 },
             ))
             .on_mouse_move(
@@ -199,8 +205,15 @@ impl Render for AppView {
                     finish_agent_drag.update(cx, |controller, cx| {
                         controller.finish_text_drag(cx);
                     });
-                    if this.finish_external_tab_drop_on_capture_mouse_up(event.position, window, cx)
-                    {
+                    if this.finish_wayland_incoming_tab_drop_on_capture_mouse_up(
+                        event.position,
+                        window,
+                        cx,
+                    ) || this.finish_external_tab_drop_on_capture_mouse_up(
+                        event.position,
+                        window,
+                        cx,
+                    ) {
                         cx.stop_propagation();
                     }
                 }
@@ -237,6 +250,37 @@ impl Render for AppView {
                     .child(shell_body),
             )
             .child(self.render_status_footer(entity.clone(), window, cx))
+            .child(
+                gpui_kit::canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let exit_entity = file_drop_entity.clone();
+                        let end_entity = file_drop_entity;
+                        window.on_mouse_event(
+                            move |event: &gpui_kit::FileDropEvent, phase, window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Bubble {
+                                    return;
+                                }
+                                match event {
+                                    gpui_kit::FileDropEvent::Exited => {
+                                        exit_entity.update(cx, |this, cx| {
+                                            this.handle_wayland_tab_drag_file_drop_exit(window, cx);
+                                        });
+                                    }
+                                    gpui_kit::FileDropEvent::Ended => {
+                                        end_entity.update(cx, |this, cx| {
+                                            this.handle_wayland_tab_drag_file_drop_end(window, cx);
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_0(),
+            )
             .when(search_open, |root| {
                 let search = self.shell.search.clone();
                 root.child(

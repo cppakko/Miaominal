@@ -1206,10 +1206,17 @@ impl ChromeAppViewExt for AppView {
                     })
                     .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .when(!is_renaming, |element| {
-                        element.on_drag(payload, |payload, offset, _, cx| {
-                            payload.set_grab_offset(offset);
-                            cx.new(|_| payload.clone())
-                        })
+                        let promote = entity.clone();
+                        element
+                            .on_drag(payload, |payload, offset, _, cx| {
+                                payload.set_grab_offset(offset);
+                                cx.new(|_| payload.clone())
+                            })
+                            .external_drag_payload(move |payload: &DraggedTab, window, cx| {
+                                promote.update(cx, |this, cx| {
+                                    this.promote_wayland_tab_drag_to_platform(payload, window, cx)
+                                })
+                            })
                     })
                     .drag_over::<DraggedTab>(move |mut style, payload, _, _| {
                         if payload.source_tab_id != tab_id {

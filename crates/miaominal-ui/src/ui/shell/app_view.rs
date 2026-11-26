@@ -75,6 +75,7 @@ pub(in crate::ui::shell) struct ShellUiState {
     pub(in crate::ui::shell) topbar_drop_slots: Vec<TopbarDropSlotTransition>,
     pub(in crate::ui::shell) external_tab_drop: Option<ExternalTabDropTarget>,
     pub(in crate::ui::shell) hovered_external_target: Option<HoveredExternalTabDrop>,
+    pub(in crate::ui::shell) wayland_incoming_tab_drag: bool,
     pub(in crate::ui::shell) overlay_state: super::overlays::WindowOverlayState,
     pub(in crate::ui::shell) status_message: String,
     pub(in crate::ui::shell) last_keychain_status: String,

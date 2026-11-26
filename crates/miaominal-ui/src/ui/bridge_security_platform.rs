@@ -1343,16 +1343,24 @@ pub fn cursor_client_position(
     None
 }
 
-pub fn uses_native_surface_drag_ghost(source_window: &gpui_kit::Window) -> bool {
+pub fn is_wayland_window(window: &gpui_kit::Window) -> bool {
     #[cfg(target_os = "linux")]
     {
-        wayland_surface_and_display(source_window).is_some()
+        wayland_surface_and_display(window).is_some()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = source_window;
+        let _ = window;
         false
     }
+}
+
+pub fn uses_native_surface_drag_ghost(source_window: &gpui_kit::Window) -> bool {
+    is_wayland_window(source_window)
+}
+
+pub fn window_has_global_screen_bounds(window: &gpui_kit::Window) -> bool {
+    !is_wayland_window(window)
 }
 
 pub fn supports_floating_drag_ghost(source_window: &gpui_kit::Window) -> bool {
@@ -1363,7 +1371,7 @@ pub fn supports_floating_drag_ghost(source_window: &gpui_kit::Window) -> bool {
     #[cfg(target_os = "linux")]
     {
         (x11_window_and_connection(source_window).is_some() && linux_xcb::api().is_some())
-            || wayland_surface_and_display(source_window).is_some()
+            || is_wayland_window(source_window)
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {

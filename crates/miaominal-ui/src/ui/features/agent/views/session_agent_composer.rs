@@ -344,6 +344,9 @@ pub(in crate::ui::features::agent) fn render_session_agent_composer(
         .on_drop::<ExternalPaths>({
             let drop_controller = agent.clone();
             move |paths: &ExternalPaths, _window, cx| {
+                if crate::ui::shell::is_internal_tab_drag_paths(paths, cx) {
+                    return;
+                }
                 let local_paths: Vec<std::path::PathBuf> = paths.paths().to_vec();
                 drop_controller.update(cx, |controller, cx| {
                     controller.ingest_attachment_paths_and_report(local_paths, cx);

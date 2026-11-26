@@ -2799,6 +2799,9 @@ impl SftpController {
             .on_drop::<ExternalPaths>({
                 let controller = controller.clone();
                 move |paths: &ExternalPaths, _window, cx| {
+                    if crate::ui::shell::is_internal_tab_drag_paths(paths, cx) {
+                        return;
+                    }
                     let local_paths: Vec<PathBuf> = paths.paths().to_vec();
                     controller.update(cx, |controller, cx| {
                         controller.queue_upload_paths(tab_id, local_paths, cx);
@@ -2810,6 +2813,11 @@ impl SftpController {
                     .absolute()
                     .inset_0()
                     .invisible()
+                    .can_drop(|value, _, cx| {
+                        value.downcast_ref::<ExternalPaths>().is_none_or(|paths| {
+                            !crate::ui::shell::is_internal_tab_drag_paths(paths, cx)
+                        })
+                    })
                     .group_drag_over::<ExternalPaths>("sftp-remote-drop", |style| style.visible())
                     .flex()
                     .items_center()
@@ -3408,6 +3416,9 @@ impl SftpController {
             .on_drop::<ExternalPaths>({
                 let controller = entity.clone();
                 move |paths: &ExternalPaths, _window, cx| {
+                    if crate::ui::shell::is_internal_tab_drag_paths(paths, cx) {
+                        return;
+                    }
                     let local_paths: Vec<PathBuf> = paths.paths().to_vec();
                     controller.update(cx, |controller, cx| {
                         controller.queue_upload_paths(tab_id, local_paths, cx);
@@ -3419,6 +3430,11 @@ impl SftpController {
                     .absolute()
                     .inset_0()
                     .invisible()
+                    .can_drop(|value, _, cx| {
+                        value.downcast_ref::<ExternalPaths>().is_none_or(|paths| {
+                            !crate::ui::shell::is_internal_tab_drag_paths(paths, cx)
+                        })
+                    })
                     .group_drag_over::<ExternalPaths>("sftp-remote-drop", |style| style.visible())
                     .flex()
                     .items_center()

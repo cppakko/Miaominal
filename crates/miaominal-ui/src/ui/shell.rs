@@ -54,6 +54,7 @@ pub(in crate::ui) mod state;
 mod support;
 
 mod tab_transfer;
+pub(crate) use tab_transfer::is_internal_tab_drag_paths;
 mod terminal;
 use crate::ui::workspace::model as workspace;
 
