@@ -1,3 +1,171 @@
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacosScreenRect {
+    display_id: u32,
+    frame_x: f64,
+    frame_y: f64,
+    frame_w: f64,
+    frame_h: f64,
+    visible_x: f64,
+    visible_y: f64,
+    visible_w: f64,
+    visible_h: f64,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_ghost_top_left(
+    mouse_x: f64,
+    mouse_y: f64,
+    grab_offset_x: f32,
+    grab_offset_y: f32,
+) -> (f64, f64) {
+    // AppKit global screen coordinates have +Y upward, so the pill's top edge
+    // sits `grab_offset_y` points above the cursor.
+    (
+        mouse_x - f64::from(grab_offset_x),
+        mouse_y + f64::from(grab_offset_y),
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_view_point_to_gpui(
+    view_x: f64,
+    view_y: f64,
+    view_height: f64,
+    is_flipped: bool,
+) -> gpui_kit::Point<gpui_kit::Pixels> {
+    let top_left_y = if is_flipped {
+        view_y
+    } else {
+        view_height - view_y
+    };
+    gpui_kit::point(gpui_kit::px(view_x as f32), gpui_kit::px(top_left_y as f32))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn compute_macos_detached_window_placement(
+    mouse_x: f64,
+    mouse_y: f64,
+    preferred_size: gpui_kit::Size<gpui_kit::Pixels>,
+    screens: &[MacosScreenRect],
+) -> Option<crate::ui::windowing::DetachedWindowPlacement> {
+    if screens.is_empty() {
+        return None;
+    }
+
+    let screen = screens
+        .iter()
+        .copied()
+        .find(|screen| {
+            screen.frame_w > 0.0
+                && screen.frame_h > 0.0
+                && mouse_x >= screen.frame_x
+                && mouse_x < screen.frame_x + screen.frame_w
+                && mouse_y >= screen.frame_y
+                && mouse_y < screen.frame_y + screen.frame_h
+        })
+        .unwrap_or_else(|| {
+            screens
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    let dist_sq = |screen: MacosScreenRect| {
+                        let max_x = screen.frame_x + screen.frame_w.max(0.0);
+                        let max_y = screen.frame_y + screen.frame_h.max(0.0);
+                        let dx = mouse_x - mouse_x.clamp(screen.frame_x, max_x);
+                        let dy = mouse_y - mouse_y.clamp(screen.frame_y, max_y);
+                        dx * dx + dy * dy
+                    };
+                    dist_sq(*a).total_cmp(&dist_sq(*b))
+                })
+                .expect("screens is non-empty")
+        });
+
+    let frame_w = screen.frame_w.max(1.0);
+    let frame_h = screen.frame_h.max(1.0);
+    let visible_w = if screen.visible_w > 0.0 {
+        screen.visible_w
+    } else {
+        frame_w
+    };
+    let visible_h = if screen.visible_h > 0.0 {
+        screen.visible_h
+    } else {
+        frame_h
+    };
+    let visible_x = if screen.visible_w > 0.0 {
+        screen.visible_x
+    } else {
+        screen.frame_x
+    };
+    let visible_y = if screen.visible_h > 0.0 {
+        screen.visible_y
+    } else {
+        screen.frame_y
+    };
+
+    // Convert AppKit global coordinates (+Y upward) into display-local top-left
+    // coordinates (+Y downward), which `gpui-pre-macos` expects in `WindowOptions`.
+    let screen_top = screen.frame_y + frame_h;
+    let drop_local = gpui_kit::point(
+        gpui_kit::px((mouse_x - screen.frame_x) as f32),
+        gpui_kit::px((screen_top - mouse_y) as f32),
+    );
+    let visible_local_bounds = gpui_kit::Bounds::new(
+        gpui_kit::point(
+            gpui_kit::px((visible_x - screen.frame_x) as f32),
+            gpui_kit::px((screen_top - (visible_y + visible_h)) as f32),
+        ),
+        gpui_kit::size(
+            gpui_kit::px(visible_w as f32),
+            gpui_kit::px(visible_h as f32),
+        ),
+    );
+    let display_id = gpui_kit::DisplayId::new(u64::from(screen.display_id));
+    crate::ui::windowing::compute_detached_window_placement(
+        gpui_kit::Bounds::new(
+            gpui_kit::Point::default(),
+            gpui_kit::size(gpui_kit::px(frame_w as f32), gpui_kit::px(frame_h as f32)),
+        ),
+        preferred_size,
+        drop_local,
+        &[(display_id, visible_local_bounds)],
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ns_view(window: &gpui_kit::Window) -> Option<*mut objc2::runtime::AnyObject> {
+    use raw_window_handle::RawWindowHandle;
+
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .ok()?
+        .as_raw();
+    match handle {
+        RawWindowHandle::AppKit(handle) => Some(handle.ns_view.as_ptr().cast()),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ns_window(window: &gpui_kit::Window) -> Option<*mut objc2::runtime::AnyObject> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let ns_view = macos_ns_view(window)?;
+    let ns_window: *mut AnyObject = unsafe { msg_send![ns_view, window] };
+    (!ns_window.is_null()).then_some(ns_window)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_window_number(window: &gpui_kit::Window) -> Option<isize> {
+    use objc2::ffi::NSInteger;
+    use objc2::msg_send;
+
+    let ns_window = macos_ns_window(window)?;
+    let number: NSInteger = unsafe { msg_send![ns_window, windowNumber] };
+    (number > 0).then_some(number as isize)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DragGhostVisualSpec {
     pub title: String,
@@ -342,6 +510,10 @@ impl DragGhostNativeHandle {
             .alive
             .load(std::sync::atomic::Ordering::Acquire)
             .then_some(self.inner.hwnd)
+    }
+
+    pub fn native_hit_id(&self) -> Option<isize> {
+        self.raw_hwnd()
     }
 
     #[cfg(test)]
@@ -1212,6 +1384,10 @@ impl DragGhostNativeHandle {
         None
     }
 
+    pub fn native_hit_id(&self) -> Option<isize> {
+        None
+    }
+
     #[cfg(test)]
     pub fn is_alive(&self) -> bool {
         self.inner.alive.load(std::sync::atomic::Ordering::Acquire)
@@ -1231,15 +1407,77 @@ impl DragGhostNativeHandle {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct DragGhostNativeInner {
+    ns_window: usize,
+    window_number: isize,
+    alive: std::sync::atomic::AtomicBool,
+    needs_order_front: std::sync::atomic::AtomicBool,
+    move_scheduled: std::sync::atomic::AtomicBool,
+    grab_offset_x: std::sync::atomic::AtomicU32,
+    grab_offset_y: std::sync::atomic::AtomicU32,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug)]
+pub struct DragGhostNativeHandle {
+    inner: std::sync::Arc<DragGhostNativeInner>,
+}
+
+#[cfg(target_os = "macos")]
+impl DragGhostNativeHandle {
+    pub fn invalidate(&self) {
+        self.inner
+            .alive
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub fn raw_hwnd(&self) -> Option<isize> {
+        None
+    }
+
+    pub fn native_hit_id(&self) -> Option<isize> {
+        self.inner
+            .alive
+            .load(std::sync::atomic::Ordering::Acquire)
+            .then_some(self.inner.window_number)
+    }
+
+    #[cfg(test)]
+    pub fn is_alive(&self) -> bool {
+        self.inner.alive.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    fn dummy_for_test() -> Self {
+        Self {
+            inner: std::sync::Arc::new(DragGhostNativeInner {
+                ns_window: 0,
+                window_number: 0,
+                alive: std::sync::atomic::AtomicBool::new(true),
+                needs_order_front: std::sync::atomic::AtomicBool::new(false),
+                move_scheduled: std::sync::atomic::AtomicBool::new(false),
+                grab_offset_x: std::sync::atomic::AtomicU32::new(0),
+                grab_offset_y: std::sync::atomic::AtomicU32::new(0),
+            }),
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DragGhostNativeHandle;
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl DragGhostNativeHandle {
     pub fn invalidate(&self) {}
 
     pub fn raw_hwnd(&self) -> Option<isize> {
+        None
+    }
+
+    pub fn native_hit_id(&self) -> Option<isize> {
         None
     }
 }
@@ -1307,7 +1545,46 @@ pub fn topmost_window_under_cursor(
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn topmost_window_under_cursor(
+    candidate_ids: &[isize],
+    ignored_ids: &[isize],
+) -> Option<isize> {
+    use objc2::ffi::NSInteger;
+    use objc2::rc::autoreleasepool;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSPoint;
+
+    if candidate_ids.is_empty() {
+        return None;
+    }
+    autoreleasepool(|_| unsafe {
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let mut below: NSInteger = 0;
+        for _ in 0..(ignored_ids.len().saturating_add(4)) {
+            let hit: NSInteger = msg_send![
+                class!(NSWindow),
+                windowNumberAtPoint: mouse,
+                belowWindowWithWindowNumber: below
+            ];
+            if hit <= 0 {
+                return None;
+            }
+            let hit_id = hit as isize;
+            if ignored_ids.contains(&hit_id) {
+                if hit == below {
+                    return None;
+                }
+                below = hit;
+                continue;
+            }
+            return candidate_ids.contains(&hit_id).then_some(hit_id);
+        }
+        None
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn topmost_window_under_cursor(
     _candidate_hwnds: &[isize],
     _ignored_hwnds: &[isize],
@@ -1336,10 +1613,106 @@ pub fn cursor_client_position(
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn cursor_client_position(
+    window: &gpui_kit::Window,
+) -> Option<gpui_kit::Point<gpui_kit::Pixels>> {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{class, msg_send};
+    use objc2_foundation::{NSPoint, NSRect};
+
+    let ns_view = macos_ns_view(window)?;
+    let ns_window: *mut AnyObject = unsafe { msg_send![ns_view, window] };
+    if ns_window.is_null() {
+        return None;
+    }
+    autoreleasepool(|_| unsafe {
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let window_pt: NSPoint = msg_send![ns_window, convertPointFromScreen: mouse];
+        let view_pt: NSPoint = msg_send![
+            ns_view,
+            convertPoint: window_pt,
+            fromView: core::ptr::null_mut::<AnyObject>()
+        ];
+        let bounds: NSRect = msg_send![ns_view, bounds];
+        let is_flipped: Bool = msg_send![ns_view, isFlipped];
+        Some(macos_view_point_to_gpui(
+            view_pt.x as f64,
+            view_pt.y as f64,
+            bounds.size.height as f64,
+            is_flipped.as_bool(),
+        ))
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn cursor_client_position(
     _window: &gpui_kit::Window,
 ) -> Option<gpui_kit::Point<gpui_kit::Pixels>> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+pub fn cursor_detached_window_placement(
+    preferred_size: gpui_kit::Size<gpui_kit::Pixels>,
+) -> Option<crate::ui::windowing::DetachedWindowPlacement> {
+    use objc2::ffi::NSUInteger;
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::{NSPoint, NSRect, NSString};
+
+    autoreleasepool(|_| unsafe {
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        let screens_obj: *mut AnyObject = msg_send![class!(NSScreen), screens];
+        if screens_obj.is_null() {
+            return None;
+        }
+        let count: NSUInteger = msg_send![screens_obj, count];
+        let key = NSString::from_str("NSScreenNumber");
+        let mut screens = Vec::with_capacity(count);
+        for index in 0..count {
+            let screen: *mut AnyObject = msg_send![screens_obj, objectAtIndex: index];
+            if screen.is_null() {
+                continue;
+            }
+            let desc: *mut AnyObject = msg_send![screen, deviceDescription];
+            if desc.is_null() {
+                continue;
+            }
+            let screen_number: *mut AnyObject = msg_send![desc, objectForKey: &*key];
+            if screen_number.is_null() {
+                continue;
+            }
+            let display_id: u32 = msg_send![screen_number, unsignedIntValue];
+            let frame: NSRect = msg_send![screen, frame];
+            let visible: NSRect = msg_send![screen, visibleFrame];
+            screens.push(MacosScreenRect {
+                display_id,
+                frame_x: frame.origin.x as f64,
+                frame_y: frame.origin.y as f64,
+                frame_w: frame.size.width as f64,
+                frame_h: frame.size.height as f64,
+                visible_x: visible.origin.x as f64,
+                visible_y: visible.origin.y as f64,
+                visible_w: visible.size.width as f64,
+                visible_h: visible.size.height as f64,
+            });
+        }
+        compute_macos_detached_window_placement(
+            mouse.x as f64,
+            mouse.y as f64,
+            preferred_size,
+            &screens,
+        )
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cursor_detached_window_placement(
+    _preferred_size: gpui_kit::Size<gpui_kit::Pixels>,
+) -> Option<crate::ui::windowing::DetachedWindowPlacement> {
     None
 }
 
@@ -1373,7 +1746,11 @@ pub fn supports_floating_drag_ghost(source_window: &gpui_kit::Window) -> bool {
         (x11_window_and_connection(source_window).is_some() && linux_xcb::api().is_some())
             || is_wayland_window(source_window)
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_ns_window(source_window).is_some()
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = source_window;
         false
@@ -1564,7 +1941,56 @@ pub fn configure_drag_ghost_window(
     })
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub fn configure_drag_ghost_window(
+    window: &gpui_kit::Window,
+    grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
+    _logical_height: f32,
+    _corner_radius: f32,
+) -> anyhow::Result<DragGhostNativeHandle> {
+    use objc2::ffi::{NSInteger, NSUInteger};
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{class, msg_send};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU32},
+    };
+
+    let ns_window = macos_ns_window(window)
+        .ok_or_else(|| anyhow::anyhow!("GPUI did not expose an AppKit drag ghost NSWindow"))?;
+    let window_number: NSInteger = unsafe { msg_send![ns_window, windowNumber] };
+    autoreleasepool(|_| unsafe {
+        const NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL: NSUInteger = 1 << 7;
+        const NS_POPUP_WINDOW_LEVEL: NSInteger = 101;
+        const NS_WINDOW_ANIMATION_BEHAVIOR_NONE: NSInteger = 2;
+
+        // Switching to Borderless | NonactivatingPanel eliminates the 1px
+        // titled window bezel that AppKit draws on transparent popup windows.
+        let _: () = msg_send![ns_window, setStyleMask: NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL];
+        let clear_color: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![ns_window, setOpaque: Bool::NO];
+        let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
+        let _: () = msg_send![ns_window, setHasShadow: Bool::NO];
+        let _: () = msg_send![ns_window, setIgnoresMouseEvents: Bool::YES];
+        let _: () = msg_send![ns_window, setLevel: NS_POPUP_WINDOW_LEVEL];
+        let _: () = msg_send![ns_window, setAnimationBehavior: NS_WINDOW_ANIMATION_BEHAVIOR_NONE];
+    });
+
+    Ok(DragGhostNativeHandle {
+        inner: Arc::new(DragGhostNativeInner {
+            ns_window: ns_window as usize,
+            window_number: window_number as isize,
+            alive: AtomicBool::new(true),
+            needs_order_front: AtomicBool::new(true),
+            move_scheduled: AtomicBool::new(false),
+            grab_offset_x: AtomicU32::new(f32::from(grab_offset.x).to_bits()),
+            grab_offset_y: AtomicU32::new(f32::from(grab_offset.y).to_bits()),
+        }),
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn configure_drag_ghost_window(
     _window: &gpui_kit::Window,
     _grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
@@ -1775,7 +2201,85 @@ pub fn schedule_drag_ghost_move(
         .detach();
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub fn schedule_drag_ghost_move(
+    handle: &DragGhostNativeHandle,
+    _target_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    _local_origin: gpui_kit::Point<gpui_kit::Pixels>,
+    _scale_factor: f32,
+    grab_offset: gpui_kit::Point<gpui_kit::Pixels>,
+    _logical_height: f32,
+    _corner_radius: f32,
+    cx: &gpui_kit::App,
+) {
+    use objc2::ffi::NSUInteger;
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSPoint;
+    use std::sync::{Arc, atomic::Ordering};
+
+    if !handle.inner.alive.load(Ordering::Acquire) {
+        return;
+    }
+    handle
+        .inner
+        .grab_offset_x
+        .store(f32::from(grab_offset.x).to_bits(), Ordering::Relaxed);
+    handle
+        .inner
+        .grab_offset_y
+        .store(f32::from(grab_offset.y).to_bits(), Ordering::Relaxed);
+    if handle.inner.move_scheduled.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let inner = Arc::clone(&handle.inner);
+    cx.foreground_executor()
+        .spawn(async move {
+            inner.move_scheduled.store(false, Ordering::Release);
+            if !inner.alive.load(Ordering::Acquire) {
+                return;
+            }
+            autoreleasepool(|_| unsafe {
+                let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+                if app.is_null() {
+                    return;
+                }
+                let windows: *mut AnyObject = msg_send![app, windows];
+                if windows.is_null() {
+                    return;
+                }
+                let count: NSUInteger = msg_send![windows, count];
+                let mut live = false;
+                for index in 0..count {
+                    let candidate: *mut AnyObject = msg_send![windows, objectAtIndex: index];
+                    if candidate as usize == inner.ns_window {
+                        live = true;
+                        break;
+                    }
+                }
+                if !live {
+                    inner.alive.store(false, Ordering::Release);
+                    return;
+                }
+
+                let ns_window = inner.ns_window as *mut AnyObject;
+                let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+                let offset_x = f32::from_bits(inner.grab_offset_x.load(Ordering::Relaxed));
+                let offset_y = f32::from_bits(inner.grab_offset_y.load(Ordering::Relaxed));
+                let (x, y) =
+                    macos_ghost_top_left(mouse.x as f64, mouse.y as f64, offset_x, offset_y);
+                let _: () = msg_send![ns_window, setFrameTopLeftPoint: NSPoint::new(x, y)];
+                if inner.needs_order_front.swap(false, Ordering::AcqRel) {
+                    let _: () = msg_send![ns_window, orderFrontRegardless];
+                }
+            });
+        })
+        .detach();
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn schedule_drag_ghost_move(
     _handle: &DragGhostNativeHandle,
     _target_origin: gpui_kit::Point<gpui_kit::Pixels>,
@@ -1786,6 +2290,22 @@ pub fn schedule_drag_ghost_move(
     _corner_radius: f32,
     _cx: &gpui_kit::App,
 ) {
+}
+
+pub fn native_window_hit_id(window: &gpui_kit::Window) -> Option<isize> {
+    #[cfg(windows)]
+    {
+        window_hwnd(window)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_window_number(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = window;
+        None
+    }
 }
 
 #[cfg(windows)]
@@ -1969,7 +2489,7 @@ fn enter_winrt_apartment() -> anyhow::Result<WinRtApartment> {
     }
 }
 
-#[cfg(all(test, any(windows, target_os = "linux")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2006,11 +2526,120 @@ mod tests {
         );
     }
 
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     #[test]
     fn drag_ghost_native_handle_invalidate_marks_dead() {
         let handle = DragGhostNativeHandle::dummy_for_test();
         assert!(handle.is_alive());
         handle.invalidate();
         assert!(!handle.is_alive());
+    }
+
+    #[test]
+    fn macos_ghost_top_left_flips_grab_offset_y_for_appkit() {
+        assert_eq!(
+            macos_ghost_top_left(300.0, 750.0, 24.0, 12.0),
+            (276.0, 762.0)
+        );
+        assert_eq!(
+            macos_ghost_top_left(-150.0, 500.0, 10.0, 5.0),
+            (-160.0, 505.0)
+        );
+    }
+
+    #[test]
+    fn macos_view_point_converts_flipped_and_unflipped_coordinates() {
+        assert_eq!(
+            macos_view_point_to_gpui(120.0, 770.0, 800.0, false),
+            gpui_kit::point(gpui_kit::px(120.0), gpui_kit::px(30.0))
+        );
+        assert_eq!(
+            macos_view_point_to_gpui(120.0, 30.0, 800.0, true),
+            gpui_kit::point(gpui_kit::px(120.0), gpui_kit::px(30.0))
+        );
+    }
+
+    #[test]
+    fn macos_detached_window_placement_handles_multi_monitor_and_visible_frame() {
+        let screens = vec![
+            // Primary screen: 1440x900 with 25px menu bar at top (visible_y..900 -> 0..875 -> 25px top inset)
+            // and 50px bottom dock (visible_y = 50 -> height = 825).
+            MacosScreenRect {
+                display_id: 1,
+                frame_x: 0.0,
+                frame_y: 0.0,
+                frame_w: 1440.0,
+                frame_h: 900.0,
+                visible_x: 0.0,
+                visible_y: 50.0,
+                visible_w: 1440.0,
+                visible_h: 825.0,
+            },
+            // Right monitor: 1920x1080 positioned to the right, bottom-aligned at y = 0.
+            MacosScreenRect {
+                display_id: 2,
+                frame_x: 1440.0,
+                frame_y: 0.0,
+                frame_w: 1920.0,
+                frame_h: 1080.0,
+                visible_x: 1440.0,
+                visible_y: 0.0,
+                visible_w: 1920.0,
+                visible_h: 1055.0,
+            },
+            // Left monitor with negative AppKit X: 1280x800 to the left of primary.
+            MacosScreenRect {
+                display_id: 3,
+                frame_x: -1280.0,
+                frame_y: 100.0,
+                frame_w: 1280.0,
+                frame_h: 800.0,
+                visible_x: -1220.0,
+                visible_y: 100.0,
+                visible_w: 1220.0,
+                visible_h: 775.0,
+            },
+        ];
+        let preferred = gpui_kit::size(gpui_kit::px(1000.0), gpui_kit::px(700.0));
+
+        // Drop near the top menu bar of primary screen -> clamps below 25px menu bar.
+        let primary_top =
+            compute_macos_detached_window_placement(500.0, 895.0, preferred, &screens)
+                .expect("primary screen placement");
+        assert_eq!(primary_top.display_id(), Some(gpui_kit::DisplayId::new(1)));
+        assert_eq!(
+            primary_top.bounds(),
+            gpui_kit::Bounds::new(
+                gpui_kit::point(gpui_kit::px(380.0), gpui_kit::px(25.0)),
+                preferred,
+            )
+        );
+
+        // Drop on secondary right monitor -> selects display 2 and converts to display-local coords.
+        // mouse = (2000, 600) => local = (560, 1080 - 600 = 480) => minus (120, 28) => (440, 452)
+        // max_y = 25 + 1055 - 700 = 380, so Y clamps to 380!
+        let right_mid = compute_macos_detached_window_placement(2000.0, 600.0, preferred, &screens)
+            .expect("right screen placement");
+        assert_eq!(right_mid.display_id(), Some(gpui_kit::DisplayId::new(2)));
+        assert_eq!(
+            right_mid.bounds(),
+            gpui_kit::Bounds::new(
+                gpui_kit::point(gpui_kit::px(440.0), gpui_kit::px(380.0)),
+                preferred,
+            )
+        );
+
+        // Drop near the left dock of the negative-X monitor -> clears 60px dock and clamps above bottom edge.
+        let left_dock =
+            compute_macos_detached_window_placement(-1260.0, 750.0, preferred, &screens)
+                .expect("left screen placement");
+        assert_eq!(left_dock.display_id(), Some(gpui_kit::DisplayId::new(3)));
+        assert_eq!(
+            left_dock.bounds(),
+            gpui_kit::Bounds::new(
+                gpui_kit::point(gpui_kit::px(60.0), gpui_kit::px(100.0)),
+                preferred,
+            )
+        );
     }
 }

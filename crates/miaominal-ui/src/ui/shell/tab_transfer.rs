@@ -4,7 +4,7 @@ use super::app_view::{FloatingTabDragGhost, FloatingTabDragGhostBackend, Hovered
 use super::panes::{PaneTabDropTarget, PaneTabDropZone};
 use super::*;
 use crate::ui::bridge_security_platform::{
-    DragGhostVisualSpec, cursor_client_position, topmost_window_under_cursor, window_hwnd,
+    DragGhostVisualSpec, cursor_client_position, native_window_hit_id, topmost_window_under_cursor,
 };
 use crate::ui::contracts::snippets::TransferredSnippetsUi;
 use crate::ui::windowing::{
@@ -27,6 +27,8 @@ use std::{
 
 pub(in crate::ui::shell) const TAB_DRAG_DETACH_MARGIN: f32 = 24.0;
 const RIGHT_WINDOW_CONTROLS_BASE_WIDTH: f32 = 128.0;
+const MACOS_TRAFFIC_LIGHT_EXCLUSION_BASE_WIDTH: f32 = 71.0;
+const MACOS_TITLEBAR_LEFT_INSET_BASE_WIDTH: f32 = 12.0;
 
 static WAYLAND_TAB_DRAG_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -126,16 +128,19 @@ fn resolve_tab_drag_ghost_feedback(
 pub(in crate::ui::shell) fn hit_test_topbar_drop(
     local_pos: Point<Pixels>,
     geometry: &TopbarDropGeometry,
+    exclude_left_controls_width: f32,
     exclude_right_controls_width: f32,
 ) -> Option<usize> {
     let bar = geometry.bar_bounds?;
     let bar_left = f32::from(bar.origin.x);
     let bar_top = f32::from(bar.origin.y);
-    let right_limit =
-        (bar_left + f32::from(bar.size.width) - exclude_right_controls_width).max(bar_left + 16.0);
+    let left_limit = (bar_left + exclude_left_controls_width)
+        .min((bar_left + f32::from(bar.size.width) - 16.0).max(bar_left));
+    let right_limit = (bar_left + f32::from(bar.size.width) - exclude_right_controls_width)
+        .max(left_limit + 16.0);
     let x = f32::from(local_pos.x);
     let y = f32::from(local_pos.y);
-    if x < bar_left
+    if x < left_limit
         || x > right_limit
         || y < bar_top
         || y > bar_top + f32::from(bar.size.height) + 12.0
@@ -634,6 +639,11 @@ impl AppView {
             return None;
         }
         let scale = (f32::from(window.rem_size()) / 14.0).max(0.5);
+        let exclude_left_controls_width = if cfg!(target_os = "macos") && !window.is_fullscreen() {
+            MACOS_TRAFFIC_LIGHT_EXCLUSION_BASE_WIDTH + MACOS_TITLEBAR_LEFT_INSET_BASE_WIDTH * scale
+        } else {
+            0.0
+        };
         let exclude_right_controls_width = if cfg!(target_os = "macos") {
             0.0
         } else {
@@ -642,6 +652,7 @@ impl AppView {
         if let Some(insertion_index) = hit_test_topbar_drop(
             local_pos,
             &self.shell.topbar_drop_geometry.borrow(),
+            exclude_left_controls_width,
             exclude_right_controls_width,
         ) {
             return Some(ExternalTabDropTarget::TabBar { insertion_index });
@@ -811,33 +822,33 @@ impl AppView {
             return None;
         }
 
-        if let Some(source_hwnd) = window_hwnd(source_window) {
-            let mut hwnd_candidates: Vec<(isize, AppWindowRegistration)> = Vec::new();
+        if let Some(source_hit_id) = native_window_hit_id(source_window) {
+            let mut hit_candidates: Vec<(isize, AppWindowRegistration)> = Vec::new();
             for reg in candidates {
-                if let Ok(Some(hwnd)) = reg
+                if let Ok(Some(hit_id)) = reg
                     .window
-                    .update(cx, |_, target_win, _| window_hwnd(target_win))
-                    && hwnd != source_hwnd
+                    .update(cx, |_, target_win, _| native_window_hit_id(target_win))
+                    && hit_id != source_hit_id
                 {
-                    hwnd_candidates.push((hwnd, reg));
+                    hit_candidates.push((hit_id, reg));
                 }
             }
-            if hwnd_candidates.is_empty() {
+            if hit_candidates.is_empty() {
                 return None;
             }
-            let candidate_hwnds: Vec<isize> =
-                hwnd_candidates.iter().map(|(hwnd, _)| *hwnd).collect();
-            let ignored_hwnds: Vec<isize> = self
+            let candidate_ids: Vec<isize> =
+                hit_candidates.iter().map(|(hit_id, _)| *hit_id).collect();
+            let ignored_ids: Vec<isize> = self
                 .shell
                 .tab_drag_ghost
                 .as_ref()
-                .and_then(|ghost| ghost.native.raw_hwnd())
+                .and_then(|ghost| ghost.native.native_hit_id())
                 .into_iter()
                 .collect();
-            let target_hwnd = topmost_window_under_cursor(&candidate_hwnds, &ignored_hwnds)?;
-            let (_, reg) = hwnd_candidates
+            let target_hit_id = topmost_window_under_cursor(&candidate_ids, &ignored_ids)?;
+            let (_, reg) = hit_candidates
                 .into_iter()
-                .find(|(hwnd, _)| *hwnd == target_hwnd)?;
+                .find(|(hit_id, _)| *hit_id == target_hit_id)?;
             let target_view = reg.view.upgrade()?;
             let view_for_hit = target_view.clone();
             let target = reg
@@ -987,6 +998,12 @@ impl AppView {
         if !should_use_drop_window_placement() {
             return None;
         }
+        let preferred_size = window.window_bounds().get_bounds().size;
+        if let Some(placement) =
+            crate::ui::bridge_security_platform::cursor_detached_window_placement(preferred_size)
+        {
+            return Some(placement);
+        }
         let mut displays: Vec<(DisplayId, Bounds<Pixels>)> = cx
             .displays()
             .into_iter()
@@ -998,7 +1015,6 @@ impl AppView {
             displays.push((display.id(), display.bounds()));
         }
         let source_bounds = window.bounds();
-        let preferred_size = window.window_bounds().get_bounds().size;
         compute_detached_window_placement(source_bounds, preferred_size, drop_position, &displays)
     }
 
@@ -1841,17 +1857,26 @@ mod tests {
             tab_bounds: Vec::new(),
         };
         assert_eq!(
-            hit_test_topbar_drop(point(px(120.0), px(24.0)), &empty, 128.0),
+            hit_test_topbar_drop(point(px(120.0), px(24.0)), &empty, 0.0, 128.0),
             Some(0)
         );
         // Right window controls exclusion zone.
         assert_eq!(
-            hit_test_topbar_drop(point(px(720.0), px(24.0)), &empty, 128.0),
+            hit_test_topbar_drop(point(px(720.0), px(24.0)), &empty, 0.0, 128.0),
             None
+        );
+        // Left traffic-light exclusion zone on macOS.
+        assert_eq!(
+            hit_test_topbar_drop(point(px(48.0), px(24.0)), &empty, 83.0, 0.0),
+            None
+        );
+        assert_eq!(
+            hit_test_topbar_drop(point(px(90.0), px(24.0)), &empty, 83.0, 0.0),
+            Some(0)
         );
         // Vertical margin below topbar.
         assert_eq!(
-            hit_test_topbar_drop(point(px(120.0), px(65.0)), &empty, 128.0),
+            hit_test_topbar_drop(point(px(120.0), px(65.0)), &empty, 0.0, 128.0),
             None
         );
 
@@ -1873,17 +1898,17 @@ mod tests {
         };
         // Left of tab 1 midpoint (108) -> index 0.
         assert_eq!(
-            hit_test_topbar_drop(point(px(60.0), px(24.0)), &geometry, 128.0),
+            hit_test_topbar_drop(point(px(60.0), px(24.0)), &geometry, 0.0, 128.0),
             Some(0)
         );
         // Right of tab 1 midpoint, left of tab 2 midpoint (280) -> index 1.
         assert_eq!(
-            hit_test_topbar_drop(point(px(220.0), px(24.0)), &geometry, 128.0),
+            hit_test_topbar_drop(point(px(220.0), px(24.0)), &geometry, 0.0, 128.0),
             Some(1)
         );
         // Right of tab 2 midpoint -> index 2 after tab 2.
         assert_eq!(
-            hit_test_topbar_drop(point(px(340.0), px(24.0)), &geometry, 128.0),
+            hit_test_topbar_drop(point(px(340.0), px(24.0)), &geometry, 0.0, 128.0),
             Some(2)
         );
     }
