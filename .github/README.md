@@ -53,8 +53,8 @@ Download the package for your operating system and processor architecture from [
 Linux AppImage example (replace the filename with the one you downloaded):
 
 ```bash
-chmod +x Miaominal-0.3.0-x86_64.AppImage
-./Miaominal-0.3.0-x86_64.AppImage
+chmod +x Miaominal-0.3.1-x86_64.AppImage
+./Miaominal-0.3.1-x86_64.AppImage
 ```
 
 The Windows Standalone version uses the standard data directory by default. Choose the Portable package to carry your data with the program; see [portable mode](#data-directories-and-portable-mode) below.

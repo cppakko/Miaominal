@@ -53,8 +53,8 @@
 Linux AppImage 示例（请替换为实际下载的文件名）：
 
 ```bash
-chmod +x Miaominal-0.3.0-x86_64.AppImage
-./Miaominal-0.3.0-x86_64.AppImage
+chmod +x Miaominal-0.3.1-x86_64.AppImage
+./Miaominal-0.3.1-x86_64.AppImage
 ```
 
 Windows 的 Standalone 版默认使用常规数据目录。需要随程序携带数据时，请选择 Portable 版，详见下方[便携模式](#数据目录与便携模式)。
